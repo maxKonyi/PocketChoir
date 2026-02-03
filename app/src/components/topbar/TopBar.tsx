@@ -2,34 +2,45 @@
    TOP BAR COMPONENT
    
    Global navigation and settings bar at the top of the app.
-   Matches mockup: Synth controls | Level/Preset | Range | Mic Setup | Display | Play/Create
+   Controls: Library, Mic Setup, Display Settings, Theme, Mode Toggle
    ============================================================ */
 
-import { Play, SkipForward } from 'lucide-react';
+import { Library, Mic, Eye, Palette } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
-import { THEME_NAMES, getThemeLabel, applyTheme } from '../../utils/colors';
-import type { ThemeName } from '../../utils/colors';
+import { applyTheme, type ThemeName } from '../../utils/colors';
+
+/* ------------------------------------------------------------
+   Theme options for the dropdown
+   ------------------------------------------------------------ */
+
+const THEME_OPTIONS: { value: ThemeName; label: string }[] = [
+  { value: 'default', label: 'Default' },
+  { value: 'cosmic', label: 'Cosmic' },
+  { value: 'minimal-dark', label: 'Minimal Dark' },
+  { value: 'minimal-light', label: 'Minimal Light' },
+  { value: 'sunset', label: 'Sunset' },
+  { value: 'ocean', label: 'Ocean' },
+];
 
 /* ------------------------------------------------------------
    Component
    ------------------------------------------------------------ */
 
 export function TopBar() {
-  // Get state and actions from store
+  // Get state from store
   const arrangement = useAppStore((state) => state.arrangement);
   const mode = useAppStore((state) => state.mode);
   const theme = useAppStore((state) => state.theme);
-  const playback = useAppStore((state) => state.playback);
+  
+  // Get actions from store
   const setLibraryOpen = useAppStore((state) => state.setLibraryOpen);
   const setMicSetupOpen = useAppStore((state) => state.setMicSetupOpen);
-  const setRangeSetupOpen = useAppStore((state) => state.setRangeSetupOpen);
   const setDisplaySettingsOpen = useAppStore((state) => state.setDisplaySettingsOpen);
   const setMode = useAppStore((state) => state.setMode);
   const setTheme = useAppStore((state) => state.setTheme);
-  const setPlaying = useAppStore((state) => state.setPlaying);
 
   /**
-   * Handle theme change.
+   * Handle theme change from dropdown.
    */
   const handleThemeChange = (newTheme: ThemeName) => {
     setTheme(newTheme);
@@ -37,159 +48,136 @@ export function TopBar() {
   };
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 bg-[var(--bg-secondary)]/60 backdrop-blur-md border-b border-white/5">
-      {/* Left side - Synth controls (like mockup) */}
-      <div className="flex items-center gap-2">
-        {/* Synth play button */}
-        <button
-          onClick={() => setPlaying(!playback.isPlaying)}
+    <header className="
+      h-12 px-4
+      bg-[var(--panel-bg)]/90 backdrop-blur-md
+      border-b border-[var(--border-color)]
+      flex items-center justify-between
+      relative z-20
+    ">
+      {/* Left section - App title and arrangement selector */}
+      <div className="flex items-center gap-4">
+        {/* App logo/title */}
+        <span className="text-lg font-bold text-[var(--accent-primary)]">
+          ♫ Harmony
+        </span>
+        
+        {/* Library / Arrangement selector */}
+        <button 
+          onClick={() => setLibraryOpen(true)}
           className="
             flex items-center gap-2 px-3 py-1.5
-            bg-[var(--accent-primary)]/20 
-            hover:bg-[var(--accent-primary)]/30
-            border border-[var(--accent-primary)]/30
-            rounded-full
-            text-[var(--text-primary)] text-sm font-medium
-            transition-all
+            bg-[var(--button-bg)] text-[var(--text-primary)]
+            rounded-lg text-sm font-medium
+            hover:bg-[var(--button-bg-hover)] transition-colors
+            border border-[var(--border-color)]
           "
-          disabled={!arrangement}
+          title="Open Library"
         >
-          <Play size={14} fill="currentColor" className={playback.isPlaying ? 'text-[var(--accent-primary)]' : ''} />
-          <span>Synth</span>
-        </button>
-        
-        {/* Skip forward */}
-        <button
-          className="
-            p-1.5 rounded-full
-            text-[var(--text-secondary)]
-            hover:text-[var(--text-primary)]
-            hover:bg-white/5
-            transition-colors
-          "
-          title="Skip forward"
-        >
-          <SkipForward size={14} />
+          <Library size={14} />
+          <span className="max-w-[200px] truncate">
+            {arrangement?.title || 'Choose Arrangement...'}
+          </span>
         </button>
       </div>
 
-      {/* Center - Navigation buttons (pill-shaped like mockup) */}
+      {/* Center - Arrangement info (when loaded) */}
+      {arrangement && (
+        <div className="flex items-center gap-4 text-sm text-[var(--text-muted)]">
+          <span>Key: <span className="text-[var(--text-primary)] font-medium">{arrangement.tonic} {arrangement.scale}</span></span>
+          <span>•</span>
+          <span>Tempo: <span className="text-[var(--text-primary)] font-medium">{arrangement.tempo} BPM</span></span>
+          <span>•</span>
+          <span><span className="text-[var(--text-primary)] font-medium">{arrangement.bars}</span> bars</span>
+          <span>•</span>
+          <span><span className="text-[var(--text-primary)] font-medium">{arrangement.voices.length}</span> voices</span>
+        </div>
+      )}
+
+      {/* Right section - Settings buttons and mode toggle */}
       <div className="flex items-center gap-2">
-        {/* Level/Preset button */}
-        <button
-          onClick={() => setLibraryOpen(true)}
-          className="
-            px-4 py-1.5
-            bg-[var(--button-bg)]/60 hover:bg-[var(--button-bg)]
-            border border-white/10
-            rounded-full
-            text-[var(--text-primary)] text-sm
-            transition-colors
-          "
-        >
-          {arrangement ? arrangement.title : 'LEVEL/PRESET'}
-        </button>
-
-        <button
-          onClick={() => setRangeSetupOpen(true)}
-          className="
-            px-4 py-1.5
-            bg-[var(--button-bg)]/60 hover:bg-[var(--button-bg)]
-            border border-white/10
-            rounded-full
-            text-[var(--text-primary)] text-sm
-            transition-colors
-          "
-          title="Vocal Range Settings"
-        >
-          RANGE
-        </button>
-
-        <button
+        {/* Mic Setup */}
+        <button 
           onClick={() => setMicSetupOpen(true)}
           className="
-            px-4 py-1.5
-            bg-[var(--button-bg)]/60 hover:bg-[var(--button-bg)]
-            border border-white/10
-            rounded-full
-            text-[var(--text-primary)] text-sm
+            p-2 rounded-lg
+            bg-[var(--button-bg)] text-[var(--text-secondary)]
+            hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
             transition-colors
           "
           title="Microphone Setup"
         >
-          MIC SETUP
+          <Mic size={16} />
         </button>
 
-        <button
+        {/* Display Settings */}
+        <button 
           onClick={() => setDisplaySettingsOpen(true)}
           className="
-            px-4 py-1.5
-            bg-[var(--button-bg)]/60 hover:bg-[var(--button-bg)]
-            border border-white/10
-            rounded-full
-            text-[var(--text-primary)] text-sm
+            p-2 rounded-lg
+            bg-[var(--button-bg)] text-[var(--text-secondary)]
+            hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
             transition-colors
           "
           title="Display Settings"
         >
-          DISPLAY
+          <Eye size={16} />
         </button>
 
-        {/* Theme selector (compact) */}
-        <select
-          value={theme}
-          onChange={(e) => handleThemeChange(e.target.value as ThemeName)}
-          className="
-            px-3 py-1.5 text-xs
-            bg-[var(--button-bg)]/60
-            border border-white/10
-            rounded-full
-            text-[var(--text-primary)]
-            cursor-pointer
-            appearance-none
-          "
-          title="Change Theme"
-        >
-          {THEME_NAMES.map((t) => (
-            <option key={t} value={t}>
-              {getThemeLabel(t)}
-            </option>
-          ))}
-        </select>
-      </div>
+        {/* Theme selector */}
+        <div className="flex items-center gap-1 px-2 py-1 bg-[var(--button-bg)] rounded-lg">
+          <Palette size={14} className="text-[var(--text-muted)]" />
+          <select
+            value={theme}
+            onChange={(e) => handleThemeChange(e.target.value as ThemeName)}
+            className="
+              bg-transparent text-[var(--text-secondary)] text-sm
+              cursor-pointer outline-none
+            "
+            title="Change Theme"
+          >
+            {THEME_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      {/* Right side - Mode toggle (pill style) */}
-      <div className="flex items-center">
-        <div className="flex bg-[var(--button-bg)]/60 rounded-full border border-white/10 p-0.5">
+        {/* Divider */}
+        <div className="w-px h-6 bg-[var(--border-color)] mx-1" />
+
+        {/* Mode toggle */}
+        <div className="flex items-center gap-1 bg-[var(--button-bg)] rounded-lg p-0.5">
           <button
             onClick={() => setMode('play')}
             className={`
-              px-4 py-1 text-sm font-medium rounded-full transition-all
+              px-3 py-1 rounded-md text-xs font-semibold uppercase tracking-wide transition-all
               ${mode === 'play' 
-                ? 'bg-[var(--accent-secondary)] text-white shadow-lg' 
+                ? 'bg-[var(--accent-primary)] text-white shadow-sm' 
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }
             `}
           >
-            PLAY
+            Play
           </button>
           <button
             onClick={() => setMode('create')}
             disabled
             className={`
-              px-4 py-1 text-sm font-medium rounded-full transition-all
+              px-3 py-1 rounded-md text-xs font-semibold uppercase tracking-wide transition-all
               ${mode === 'create' 
-                ? 'bg-[var(--accent-secondary)] text-white shadow-lg' 
-                : 'text-[var(--text-muted)] cursor-not-allowed'
+                ? 'bg-[var(--accent-primary)] text-white shadow-sm' 
+                : 'text-[var(--text-muted)] cursor-not-allowed opacity-50'
               }
             `}
-            title="Create mode coming soon"
+            title="Coming soon"
           >
-            CREATE
+            Create
           </button>
         </div>
       </div>
-    </div>
+    </header>
   );
 }
 

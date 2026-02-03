@@ -246,13 +246,26 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
 
   // -- Arrangement --
   setArrangement: (arrangement) => {
-    set({ arrangement, transposition: 0 });
+    // Clear recordings and armed voice when changing arrangement
+    set({ 
+      arrangement, 
+      transposition: 0,
+      recordings: new Map(),
+      livePitchTrace: [],
+      armedVoiceId: null,
+    });
     if (arrangement) {
       get().initializeVoiceStates(arrangement.voices);
-      // Set loop end to arrangement length
+      // Set loop end to arrangement length and reset position
       const totalSixteenths = arrangement.bars * 16; // Assuming 4/4
       set((state) => ({
-        playback: { ...state.playback, loopEnd: totalSixteenths },
+        playback: { 
+          ...state.playback, 
+          loopEnd: totalSixteenths,
+          position: 0,
+          isPlaying: false,
+          isRecording: false,
+        },
       }));
     }
   },

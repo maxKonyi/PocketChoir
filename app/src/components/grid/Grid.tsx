@@ -128,9 +128,9 @@ export function Grid({ arrangement, className = '' }: GridProps) {
       }
     }
     
-    // Add padding
-    minDeg = Math.max(1, minDeg - 1);
-    maxDeg = maxDeg + 1;
+    // Add generous padding for breathing room (at least 2 degrees on each side)
+    minDeg = Math.max(-2, minDeg - 3);
+    maxDeg = maxDeg + 3;
     
     // Calculate frequency range
     const minFreq = scaleDegreeToFrequency(minDeg, arrangement.tonic, arrangement.scale, 4, -1);
@@ -200,11 +200,19 @@ export function Grid({ arrangement, className = '' }: GridProps) {
     const startT16 = 0;
     const endT16 = totalT16;
     
-    // Draw horizontal pitch lines
-    ctx.strokeStyle = pitchLineColor;
-    ctx.lineWidth = 1;
+    // Draw horizontal pitch lines (degree 1 is brighter for orientation)
     for (let deg = Math.ceil(minDegree); deg <= Math.floor(maxDegree); deg++) {
       const y = degreeToY(deg, 0, minDegree, maxDegree, gridTop, gridHeight);
+      
+      // Make degree 1 (tonic) brighter and thicker for orientation
+      if (deg === 1 || deg === 8) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 2;
+      } else {
+        ctx.strokeStyle = pitchLineColor;
+        ctx.lineWidth = 1;
+      }
+      
       ctx.beginPath();
       ctx.moveTo(gridLeft, y);
       ctx.lineTo(gridLeft + gridWidth, y);
@@ -247,46 +255,43 @@ export function Grid({ arrangement, className = '' }: GridProps) {
       ctx.fillText(`${bar + 1}`, x, gridTop - 10);
     }
     
-    // Draw chord track (if enabled and chords exist) - styled as colored pills like mockup
+    // Draw chord track - blocks that touch end to end
     if (display.showChordTrack && arrangement.chords) {
-      // Chord colors based on position (cycling through voice colors for variety)
       const chordColors = ['#ff6b9d', '#4ecdc4', '#a78bfa', '#ffe66d', '#ff8c42', '#34d399'];
+      const blockHeight = 24;
+      const blockY = gridTop - 30;
       
       for (let i = 0; i < arrangement.chords.length; i++) {
         const chord = arrangement.chords[i];
-        const x = t16ToX(chord.t16, startT16, endT16, gridLeft, gridWidth);
         const chordColor = chordColors[i % chordColors.length];
         
-        // Measure text width for pill sizing
-        ctx.font = 'bold 12px system-ui';
-        const textWidth = ctx.measureText(chord.name).width;
-        const pillWidth = textWidth + 16;
-        const pillHeight = 22;
-        const pillY = gridTop - 32;
+        // Calculate block start and end positions
+        const blockStartX = t16ToX(chord.t16, startT16, endT16, gridLeft, gridWidth);
+        const blockEndX = t16ToX(chord.t16 + chord.duration16, startT16, endT16, gridLeft, gridWidth);
+        const blockWidth = blockEndX - blockStartX;
         
-        // Draw pill background with slight transparency
-        ctx.fillStyle = chordColor + '40'; // 25% opacity
-        ctx.strokeStyle = chordColor;
+        // Draw block background
+        ctx.fillStyle = chordColor + '30'; // 20% opacity
+        ctx.fillRect(blockStartX, blockY, blockWidth, blockHeight);
+        
+        // Draw block border (left, top, bottom - not right to touch next block)
+        ctx.strokeStyle = chordColor + '60';
         ctx.lineWidth = 1;
-        
-        // Rounded rectangle for pill
-        const radius = pillHeight / 2;
         ctx.beginPath();
-        ctx.moveTo(x + radius, pillY);
-        ctx.lineTo(x + pillWidth - radius, pillY);
-        ctx.arc(x + pillWidth - radius, pillY + radius, radius, -Math.PI/2, Math.PI/2);
-        ctx.lineTo(x + radius, pillY + pillHeight);
-        ctx.arc(x + radius, pillY + radius, radius, Math.PI/2, -Math.PI/2);
-        ctx.closePath();
-        ctx.fill();
+        ctx.moveTo(blockStartX, blockY);
+        ctx.lineTo(blockStartX, blockY + blockHeight);
+        ctx.moveTo(blockStartX, blockY);
+        ctx.lineTo(blockEndX, blockY);
+        ctx.moveTo(blockStartX, blockY + blockHeight);
+        ctx.lineTo(blockEndX, blockY + blockHeight);
         ctx.stroke();
         
-        // Draw chord text
+        // Draw chord text centered in block
         ctx.fillStyle = chordColor;
-        ctx.font = 'bold 12px system-ui';
+        ctx.font = 'bold 13px system-ui';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(chord.name, x + pillWidth / 2, pillY + pillHeight / 2);
+        ctx.fillText(chord.name, blockStartX + blockWidth / 2, blockY + blockHeight / 2);
       }
     }
     
