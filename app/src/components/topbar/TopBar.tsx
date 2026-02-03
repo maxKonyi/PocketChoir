@@ -2,12 +2,10 @@
    TOP BAR COMPONENT
    
    Global navigation and settings bar at the top of the app.
-   Contains: Level/Preset, Range, Mic Setup, Display, Mode toggle
+   Matches mockup: Synth controls | Level/Preset | Range | Mic Setup | Display | Play/Create
    ============================================================ */
 
-import { Music, Mic, Settings, Library } from 'lucide-react';
-import { Button } from '../ui/Button';
-import { Panel } from '../ui/Panel';
+import { Play, SkipForward } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { THEME_NAMES, getThemeLabel, applyTheme } from '../../utils/colors';
 import type { ThemeName } from '../../utils/colors';
@@ -21,12 +19,14 @@ export function TopBar() {
   const arrangement = useAppStore((state) => state.arrangement);
   const mode = useAppStore((state) => state.mode);
   const theme = useAppStore((state) => state.theme);
+  const playback = useAppStore((state) => state.playback);
   const setLibraryOpen = useAppStore((state) => state.setLibraryOpen);
   const setMicSetupOpen = useAppStore((state) => state.setMicSetupOpen);
   const setRangeSetupOpen = useAppStore((state) => state.setRangeSetupOpen);
   const setDisplaySettingsOpen = useAppStore((state) => state.setDisplaySettingsOpen);
   const setMode = useAppStore((state) => state.setMode);
   const setTheme = useAppStore((state) => state.setTheme);
+  const setPlaying = useAppStore((state) => state.setPlaying);
 
   /**
    * Handle theme change.
@@ -37,67 +37,116 @@ export function TopBar() {
   };
 
   return (
-    <Panel 
-      variant="solid" 
-      className="flex items-center justify-between px-4 py-2 rounded-none border-x-0 border-t-0"
-    >
-      {/* Left side - Level/Preset button */}
+    <div className="flex items-center justify-between px-4 py-2 bg-[var(--bg-secondary)]/60 backdrop-blur-md border-b border-white/5">
+      {/* Left side - Synth controls (like mockup) */}
       <div className="flex items-center gap-2">
-        <Button
-          variant="default"
-          onClick={() => setLibraryOpen(true)}
-          className="gap-2"
+        {/* Synth play button */}
+        <button
+          onClick={() => setPlaying(!playback.isPlaying)}
+          className="
+            flex items-center gap-2 px-3 py-1.5
+            bg-[var(--accent-primary)]/20 
+            hover:bg-[var(--accent-primary)]/30
+            border border-[var(--accent-primary)]/30
+            rounded-full
+            text-[var(--text-primary)] text-sm font-medium
+            transition-all
+          "
+          disabled={!arrangement}
         >
-          <Library size={16} />
-          <span className="hidden sm:inline">
-            {arrangement ? arrangement.title : 'Select Arrangement'}
-          </span>
-        </Button>
+          <Play size={14} fill="currentColor" className={playback.isPlaying ? 'text-[var(--accent-primary)]' : ''} />
+          <span>Synth</span>
+        </button>
+        
+        {/* Skip forward */}
+        <button
+          className="
+            p-1.5 rounded-full
+            text-[var(--text-secondary)]
+            hover:text-[var(--text-primary)]
+            hover:bg-white/5
+            transition-colors
+          "
+          title="Skip forward"
+        >
+          <SkipForward size={14} />
+        </button>
       </div>
 
-      {/* Center - Settings buttons */}
+      {/* Center - Navigation buttons (pill-shaped like mockup) */}
       <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
+        {/* Level/Preset button */}
+        <button
+          onClick={() => setLibraryOpen(true)}
+          className="
+            px-4 py-1.5
+            bg-[var(--button-bg)]/60 hover:bg-[var(--button-bg)]
+            border border-white/10
+            rounded-full
+            text-[var(--text-primary)] text-sm
+            transition-colors
+          "
+        >
+          {arrangement ? arrangement.title : 'LEVEL/PRESET'}
+        </button>
+
+        <button
           onClick={() => setRangeSetupOpen(true)}
+          className="
+            px-4 py-1.5
+            bg-[var(--button-bg)]/60 hover:bg-[var(--button-bg)]
+            border border-white/10
+            rounded-full
+            text-[var(--text-primary)] text-sm
+            transition-colors
+          "
           title="Vocal Range Settings"
         >
-          <Music size={16} />
-          <span className="hidden md:inline ml-1">Range</span>
-        </Button>
+          RANGE
+        </button>
 
-        <Button
-          variant="ghost"
-          size="sm"
+        <button
           onClick={() => setMicSetupOpen(true)}
+          className="
+            px-4 py-1.5
+            bg-[var(--button-bg)]/60 hover:bg-[var(--button-bg)]
+            border border-white/10
+            rounded-full
+            text-[var(--text-primary)] text-sm
+            transition-colors
+          "
           title="Microphone Setup"
         >
-          <Mic size={16} />
-          <span className="hidden md:inline ml-1">Mic Setup</span>
-        </Button>
+          MIC SETUP
+        </button>
 
-        <Button
-          variant="ghost"
-          size="sm"
+        <button
           onClick={() => setDisplaySettingsOpen(true)}
+          className="
+            px-4 py-1.5
+            bg-[var(--button-bg)]/60 hover:bg-[var(--button-bg)]
+            border border-white/10
+            rounded-full
+            text-[var(--text-primary)] text-sm
+            transition-colors
+          "
           title="Display Settings"
         >
-          <Settings size={16} />
-          <span className="hidden md:inline ml-1">Display</span>
-        </Button>
+          DISPLAY
+        </button>
 
-        {/* Theme selector */}
+        {/* Theme selector (compact) */}
         <select
           value={theme}
           onChange={(e) => handleThemeChange(e.target.value as ThemeName)}
           className="
-            h-7 px-2 text-xs
-            bg-[var(--button-bg)] 
-            border border-[var(--border-color)]
-            rounded-[var(--radius-sm)]
+            px-3 py-1.5 text-xs
+            bg-[var(--button-bg)]/60
+            border border-white/10
+            rounded-full
             text-[var(--text-primary)]
             cursor-pointer
+            appearance-none
           "
           title="Change Theme"
         >
@@ -109,26 +158,38 @@ export function TopBar() {
         </select>
       </div>
 
-      {/* Right side - Mode toggle */}
-      <div className="flex items-center gap-1 bg-[var(--button-bg)] rounded-[var(--radius-md)] p-1">
-        <Button
-          variant={mode === 'play' ? 'primary' : 'ghost'}
-          size="sm"
-          onClick={() => setMode('play')}
-        >
-          Play
-        </Button>
-        <Button
-          variant={mode === 'create' ? 'primary' : 'ghost'}
-          size="sm"
-          onClick={() => setMode('create')}
-          disabled  // Create mode disabled for MVP
-          title="Create mode coming soon"
-        >
-          Create
-        </Button>
+      {/* Right side - Mode toggle (pill style) */}
+      <div className="flex items-center">
+        <div className="flex bg-[var(--button-bg)]/60 rounded-full border border-white/10 p-0.5">
+          <button
+            onClick={() => setMode('play')}
+            className={`
+              px-4 py-1 text-sm font-medium rounded-full transition-all
+              ${mode === 'play' 
+                ? 'bg-[var(--accent-secondary)] text-white shadow-lg' 
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }
+            `}
+          >
+            PLAY
+          </button>
+          <button
+            onClick={() => setMode('create')}
+            disabled
+            className={`
+              px-4 py-1 text-sm font-medium rounded-full transition-all
+              ${mode === 'create' 
+                ? 'bg-[var(--accent-secondary)] text-white shadow-lg' 
+                : 'text-[var(--text-muted)] cursor-not-allowed'
+              }
+            `}
+            title="Create mode coming soon"
+          >
+            CREATE
+          </button>
+        </div>
       </div>
-    </Panel>
+    </div>
   );
 }
 

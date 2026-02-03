@@ -91,6 +91,9 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-full: 9999px;
+  
+  /* -- Background gradient (cosmic default) -- */
+  --bg-gradient: linear-gradient(135deg, #1a1625 0%, #2d1f47 30%, #3d2a5c 60%, #251a38 100%);
 }
 
 /* ============================================================
@@ -104,6 +107,7 @@
   --bg-grid: #120d1f;
   --accent-primary: #a855f7;
   --accent-secondary: #ec4899;
+  --bg-gradient: linear-gradient(135deg, #1a0f2e 0%, #2d1b4e 25%, #4a2c7a 50%, #2d1b4e 75%, #1a0f2e 100%);
 }
 
 /* ============================================================
@@ -119,6 +123,7 @@
   --accent-secondary: #60a5fa;
   --glow-intensity: 0.3;
   --panel-blur: 0px;
+  --bg-gradient: linear-gradient(180deg, #121212 0%, #1a1a1a 100%);
 }
 
 /* ============================================================
@@ -130,6 +135,7 @@
   --bg-secondary: #f1f5f9;
   --bg-tertiary: #e2e8f0;
   --bg-grid: #ffffff;
+  --bg-gradient: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
   --text-primary: #1e293b;
   --text-secondary: #64748b;
   --text-muted: #94a3b8;
@@ -167,6 +173,7 @@
   --voice-4: #ec4899;
   --voice-5: #f472b6;
   --voice-6: #fcd34d;
+  --bg-gradient: linear-gradient(135deg, #1a0f0f 0%, #3d1515 30%, #5c1f1f 50%, #3d1515 70%, #1a0f0f 100%);
 }
 
 /* ============================================================
@@ -186,6 +193,7 @@
   --voice-4: #a78bfa;
   --voice-5: #34d399;
   --voice-6: #2dd4bf;
+  --bg-gradient: linear-gradient(135deg, #0a1628 0%, #0f2942 30%, #153d5c 50%, #0f2942 70%, #0a1628 100%);
 }
 
 /* ============================================================

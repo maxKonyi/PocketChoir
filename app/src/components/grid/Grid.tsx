@@ -10,10 +10,10 @@
    ============================================================ */
 
 import { useRef, useEffect, useCallback } from 'react';
-import type { Arrangement, Voice, Node, PitchPoint } from '../../types';
+import type { Arrangement, Voice, PitchPoint } from '../../types';
 import { useAppStore } from '../../stores/appStore';
-import { scaleDegreeToFrequency, frequencyToMidi } from '../../utils/music';
-import { generateGridLines, t16ToMs, sixteenthDurationMs } from '../../utils/timing';
+import { scaleDegreeToFrequency } from '../../utils/music';
+import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 
 /* ------------------------------------------------------------
    Types
@@ -247,15 +247,46 @@ export function Grid({ arrangement, className = '' }: GridProps) {
       ctx.fillText(`${bar + 1}`, x, gridTop - 10);
     }
     
-    // Draw chord track (if enabled and chords exist)
+    // Draw chord track (if enabled and chords exist) - styled as colored pills like mockup
     if (display.showChordTrack && arrangement.chords) {
-      ctx.font = 'bold 14px system-ui';
-      ctx.textAlign = 'left';
-      ctx.fillStyle = textColor;
+      // Chord colors based on position (cycling through voice colors for variety)
+      const chordColors = ['#ff6b9d', '#4ecdc4', '#a78bfa', '#ffe66d', '#ff8c42', '#34d399'];
       
-      for (const chord of arrangement.chords) {
+      for (let i = 0; i < arrangement.chords.length; i++) {
+        const chord = arrangement.chords[i];
         const x = t16ToX(chord.t16, startT16, endT16, gridLeft, gridWidth);
-        ctx.fillText(chord.name, x + 4, gridTop - 25);
+        const chordColor = chordColors[i % chordColors.length];
+        
+        // Measure text width for pill sizing
+        ctx.font = 'bold 12px system-ui';
+        const textWidth = ctx.measureText(chord.name).width;
+        const pillWidth = textWidth + 16;
+        const pillHeight = 22;
+        const pillY = gridTop - 32;
+        
+        // Draw pill background with slight transparency
+        ctx.fillStyle = chordColor + '40'; // 25% opacity
+        ctx.strokeStyle = chordColor;
+        ctx.lineWidth = 1;
+        
+        // Rounded rectangle for pill
+        const radius = pillHeight / 2;
+        ctx.beginPath();
+        ctx.moveTo(x + radius, pillY);
+        ctx.lineTo(x + pillWidth - radius, pillY);
+        ctx.arc(x + pillWidth - radius, pillY + radius, radius, -Math.PI/2, Math.PI/2);
+        ctx.lineTo(x + radius, pillY + pillHeight);
+        ctx.arc(x + radius, pillY + radius, radius, Math.PI/2, -Math.PI/2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Draw chord text
+        ctx.fillStyle = chordColor;
+        ctx.font = 'bold 12px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(chord.name, x + pillWidth / 2, pillY + pillHeight / 2);
       }
     }
     
@@ -291,25 +322,38 @@ export function Grid({ arrangement, className = '' }: GridProps) {
       ctx.lineWidth = 2;
       drawVoiceContour(ctx, voice, minDegree, maxDegree, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight);
       
-      // Draw nodes
-      ctx.fillStyle = voiceColor;
+      // Draw nodes - larger circles with scale degree numbers (like mockup)
+      const nodeRadius = 12; // Larger nodes to fit numbers
+      
       for (const node of voice.nodes) {
+        if (node.term) continue; // Skip termination nodes
+        
         const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
         const y = degreeToY(node.deg, node.octave || 0, minDegree, maxDegree, gridTop, gridHeight);
         
-        ctx.beginPath();
-        ctx.arc(x, y, 6, 0, Math.PI * 2);
-        ctx.fill();
-        
-        // Draw scale degree number if enabled
-        if (display.showScaleDegrees) {
-          ctx.fillStyle = '#000';
-          ctx.font = 'bold 10px system-ui';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(String(node.deg), x, y);
-          ctx.fillStyle = voiceColor;
+        // Draw node glow
+        if (display.glowIntensity > 0) {
+          ctx.shadowColor = voiceColor;
+          ctx.shadowBlur = 8 * display.glowIntensity;
         }
+        
+        // Draw node circle with stroke (outlined style like mockup)
+        ctx.beginPath();
+        ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = voiceColor + '30'; // Semi-transparent fill
+        ctx.fill();
+        ctx.strokeStyle = voiceColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        ctx.shadowBlur = 0;
+        
+        // Always draw scale degree number inside node (white text for contrast)
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(node.deg), x, y + 0.5);
       }
       
       ctx.restore();

@@ -10,7 +10,7 @@ import { TopBar } from './components/topbar';
 import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
 import { Grid } from './components/grid';
-import { LibraryModal } from './components/modals';
+import { LibraryModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal } from './components/modals';
 import { useAppStore } from './stores/appStore';
 import { AudioService } from './services/AudioService';
 import { playbackEngine } from './services/PlaybackEngine';
@@ -22,7 +22,6 @@ function App() {
   const playback = useAppStore((state) => state.playback);
   const theme = useAppStore((state) => state.theme);
   const setPosition = useAppStore((state) => state.setPosition);
-  const setPlaying = useAppStore((state) => state.setPlaying);
 
   /**
    * Initialize audio on first user interaction.
@@ -105,21 +104,24 @@ function App() {
 
   return (
     <div 
-      className="h-screen w-screen flex flex-col bg-[var(--bg-primary)] overflow-hidden"
+      className="h-screen w-screen flex flex-col overflow-hidden relative"
+      style={{
+        background: 'var(--bg-gradient, linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%))',
+      }}
       onClick={initializeAudio}
     >
       {/* Top bar with global controls */}
       <TopBar />
 
-      {/* Main content area: Sidebar + Grid */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left sidebar with voice controls */}
-        <VoiceSidebar />
-
-        {/* Main grid visualization */}
-        <div className="flex-1 p-2">
+      {/* Main content area with grid - relative for floating sidebar */}
+      <div className="flex-1 relative overflow-hidden">
+        {/* Main grid visualization - full width, sidebar floats over it */}
+        <div className="absolute inset-0 p-4 pl-36">
           <Grid arrangement={arrangement} className="h-full" />
         </div>
+
+        {/* Floating left sidebar with voice controls */}
+        <VoiceSidebar />
       </div>
 
       {/* Bottom transport bar */}
@@ -127,6 +129,9 @@ function App() {
 
       {/* Modals */}
       <LibraryModal />
+      <MicSetupModal />
+      <RangeSetupModal />
+      <DisplaySettingsModal />
 
       {/* Welcome message when no arrangement is loaded */}
       {!arrangement && (

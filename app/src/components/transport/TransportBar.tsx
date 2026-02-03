@@ -2,13 +2,12 @@
    TRANSPORT BAR COMPONENT
    
    Playback controls at the bottom of the app.
-   Contains: Play/Pause, Record, Loop, Speed, Zoom
+   Matches mockup: Speed selector | Record | Play | Loop | Zoom controls
    ============================================================ */
 
-import { Play, Pause, Circle, Repeat, ZoomIn, ZoomOut } from 'lucide-react';
-import { Button } from '../ui/Button';
-import { Panel } from '../ui/Panel';
+import { Play, Pause, Circle, Repeat, ZoomIn, ZoomOut, Search } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+import { useRecording } from '../../hooks/useRecording';
 
 /* ------------------------------------------------------------
    Component
@@ -17,16 +16,18 @@ import { useAppStore } from '../../stores/appStore';
 export function TransportBar() {
   // Get state from store
   const playback = useAppStore((state) => state.playback);
-  const armedVoiceId = useAppStore((state) => state.armedVoiceId);
   const arrangement = useAppStore((state) => state.arrangement);
   const display = useAppStore((state) => state.display);
+  const armedVoiceId = useAppStore((state) => state.armedVoiceId);
   
   // Get actions from store
   const setPlaying = useAppStore((state) => state.setPlaying);
-  const setRecording = useAppStore((state) => state.setRecording);
   const setLoopEnabled = useAppStore((state) => state.setLoopEnabled);
   const setTempoMultiplier = useAppStore((state) => state.setTempoMultiplier);
   const setZoomLevel = useAppStore((state) => state.setZoomLevel);
+
+  // Recording hook
+  const { toggleRecording, isRecording } = useRecording();
 
   // Speed options
   const speedOptions = [0.5, 0.75, 1.0];
@@ -36,26 +37,6 @@ export function TransportBar() {
    */
   const handlePlayPause = () => {
     setPlaying(!playback.isPlaying);
-  };
-
-  /**
-   * Handle record button click.
-   */
-  const handleRecord = () => {
-    if (!armedVoiceId) {
-      alert('Please arm a voice for recording first (click the red circle button next to a voice)');
-      return;
-    }
-    
-    if (playback.isRecording) {
-      // Stop recording
-      setRecording(false);
-      setPlaying(false);
-    } else {
-      // Start recording (will also start playback)
-      setRecording(true);
-      setPlaying(true);
-    }
   };
 
   /**
@@ -72,118 +53,144 @@ export function TransportBar() {
     setZoomLevel(Math.max(0.5, display.zoomLevel - 0.5));
   };
 
-  /**
-   * Format position as Bar.Beat.
-   */
-  const formatPosition = (t16: number) => {
-    if (!arrangement) return '1.1';
-    const bar = Math.floor(t16 / 16) + 1;
-    const beat = Math.floor((t16 % 16) / 4) + 1;
-    return `${bar}.${beat}`;
-  };
-
   return (
-    <Panel 
-      variant="solid" 
-      className="flex items-center justify-between px-4 py-2 rounded-none border-x-0 border-b-0"
-    >
-      {/* Left side - Position display */}
-      <div className="flex items-center gap-4 w-32">
-        <div className="text-lg font-mono text-[var(--text-primary)]">
-          {formatPosition(playback.position)}
+    <div className="flex items-center justify-center gap-6 px-4 py-3 bg-[var(--bg-secondary)]/60 backdrop-blur-md border-t border-white/5">
+      {/* Speed selector (left) */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-[var(--text-muted)]">
+          {playback.tempoMultiplier}x speed
+        </span>
+        <div className="flex bg-[var(--button-bg)]/60 rounded-full border border-white/10 p-0.5">
+          {speedOptions.map((speed) => (
+            <button
+              key={speed}
+              onClick={() => setTempoMultiplier(speed)}
+              className={`
+                px-2 py-0.5 text-xs font-medium rounded-full transition-all
+                ${playback.tempoMultiplier === speed 
+                  ? 'bg-[var(--accent-primary)] text-white' 
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }
+              `}
+            >
+              {speed}x
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Center - Main transport controls */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         {/* Record button */}
-        <Button
-          variant={playback.isRecording ? 'record' : 'default'}
-          size="icon"
-          onClick={handleRecord}
-          disabled={!arrangement}
-          title={playback.isRecording ? 'Stop Recording' : 'Start Recording'}
+        <button
+          onClick={toggleRecording}
+          disabled={!arrangement || !armedVoiceId}
           className={`
-            h-10 w-10
-            ${playback.isRecording ? 'animate-pulse' : ''}
-            ${armedVoiceId ? '' : 'opacity-50'}
+            w-10 h-10 rounded-full
+            flex items-center justify-center
+            transition-all
+            ${isRecording 
+              ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400' 
+              : armedVoiceId 
+                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50' 
+                : 'bg-white/5 text-[var(--text-muted)] cursor-not-allowed'
+            }
           `}
+          title={isRecording ? 'Stop Recording' : armedVoiceId ? 'Start Recording' : 'Arm a voice first'}
         >
-          <Circle 
-            size={20} 
-            fill={playback.isRecording ? 'currentColor' : 'none'}
-          />
-        </Button>
+          <Circle size={16} fill={isRecording ? 'currentColor' : 'none'} />
+        </button>
 
-        {/* Play/Pause button */}
-        <Button
-          variant="primary"
-          size="icon"
+        {/* Play/Pause button - large and prominent */}
+        <button
           onClick={handlePlayPause}
           disabled={!arrangement}
+          className={`
+            w-12 h-12 rounded-full
+            flex items-center justify-center
+            transition-all
+            ${arrangement 
+              ? 'bg-white/10 hover:bg-white/20 text-white' 
+              : 'bg-white/5 text-[var(--text-muted)] cursor-not-allowed'
+            }
+            ${playback.isPlaying ? 'ring-2 ring-[var(--accent-primary)] shadow-lg' : ''}
+          `}
           title={playback.isPlaying ? 'Pause' : 'Play'}
-          className="h-12 w-12"
         >
           {playback.isPlaying ? (
-            <Pause size={24} />
+            <Pause size={20} />
           ) : (
-            <Play size={24} className="ml-1" />
+            <Play size={20} className="ml-0.5" fill="currentColor" />
           )}
-        </Button>
+        </button>
 
         {/* Loop toggle */}
-        <Button
-          variant={playback.loopEnabled ? 'primary' : 'ghost'}
-          size="icon"
+        <button
           onClick={() => setLoopEnabled(!playback.loopEnabled)}
           disabled={!arrangement}
+          className={`
+            w-10 h-10 rounded-full
+            flex items-center justify-center
+            transition-all
+            ${playback.loopEnabled 
+              ? 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]/50' 
+              : 'bg-white/5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/10'
+            }
+          `}
           title={playback.loopEnabled ? 'Disable Loop' : 'Enable Loop'}
-          className="h-10 w-10"
         >
-          <Repeat size={18} />
-        </Button>
+          <Repeat size={16} />
+        </button>
       </div>
 
-      {/* Right side - Speed and Zoom */}
-      <div className="flex items-center gap-4 w-32 justify-end">
-        {/* Speed selector */}
-        <div className="flex items-center gap-1 bg-[var(--button-bg)] rounded-[var(--radius-md)] p-1">
-          {speedOptions.map((speed) => (
-            <Button
-              key={speed}
-              variant={playback.tempoMultiplier === speed ? 'primary' : 'ghost'}
-              size="sm"
-              onClick={() => setTempoMultiplier(speed)}
-              className="px-2 text-xs"
-            >
-              {speed}x
-            </Button>
-          ))}
-        </div>
-
-        {/* Zoom controls */}
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleZoomOut}
-            title="Zoom Out"
-            className="h-7 w-7"
-          >
-            <ZoomOut size={14} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleZoomIn}
-            title="Zoom In"
-            className="h-7 w-7"
-          >
-            <ZoomIn size={14} />
-          </Button>
-        </div>
+      {/* Zoom controls (right) */}
+      <div className="flex items-center gap-2">
+        {/* Magnifying glass / fit to screen */}
+        <button
+          onClick={() => setZoomLevel(1)}
+          className="
+            w-8 h-8 rounded-full
+            flex items-center justify-center
+            bg-white/5 text-[var(--text-secondary)]
+            hover:bg-white/10 hover:text-[var(--text-primary)]
+            transition-all
+          "
+          title="Fit to screen"
+        >
+          <Search size={14} />
+        </button>
+        
+        {/* Zoom out */}
+        <button
+          onClick={handleZoomOut}
+          className="
+            w-8 h-8 rounded-full
+            flex items-center justify-center
+            bg-white/5 text-[var(--text-secondary)]
+            hover:bg-white/10 hover:text-[var(--text-primary)]
+            transition-all
+          "
+          title="Zoom Out"
+        >
+          <ZoomOut size={14} />
+        </button>
+        
+        {/* Zoom in */}
+        <button
+          onClick={handleZoomIn}
+          className="
+            w-8 h-8 rounded-full
+            flex items-center justify-center
+            bg-white/5 text-[var(--text-secondary)]
+            hover:bg-white/10 hover:text-[var(--text-primary)]
+            transition-all
+          "
+          title="Zoom In"
+        >
+          <ZoomIn size={14} />
+        </button>
       </div>
-    </Panel>
+    </div>
   );
 }
 
