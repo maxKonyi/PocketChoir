@@ -23,7 +23,11 @@ import { playbackEngine } from '../../services/PlaybackEngine';
 interface GridProps {
   arrangement: Arrangement | null;
   className?: string;
+  hideChords?: boolean;
+  onlyChords?: boolean;
 }
+
+
 
 /* ------------------------------------------------------------
    Helper Functions
@@ -125,7 +129,13 @@ interface DragState {
   isDragging: boolean;
 }
 
-export function Grid({ arrangement: arrangementProp, className = '' }: GridProps) {
+export function Grid({
+  arrangement: arrangementProp,
+  className = '',
+  hideChords = false,
+  onlyChords = false
+}: GridProps) {
+
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -264,77 +274,81 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
     const endT16 = totalT16;
 
     // Draw horizontal pitch lines (semitone-based chromatic grid)
-    // Each line is one semitone. Tonic (0) and octave (12) are brighter.
-    for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
-      const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
-      const label = semitoneToLabel(semi);
+    if (!onlyChords) {
+      for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
+        const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
+        const label = semitoneToLabel(semi);
 
-      // Make tonic (1) and octave brighter for orientation
-      if (semi % 12 === 0) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = 2;
-      } else if (label === '3' || label === '5' || label === '4') {
-        // Highlight important scale degrees (major third, fourth, fifth)
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-        ctx.lineWidth = 1;
-      } else {
-        ctx.strokeStyle = pitchLineColor;
-        ctx.lineWidth = 1;
-      }
-
-      ctx.beginPath();
-      ctx.moveTo(gridLeft, y);
-      ctx.lineTo(gridLeft + gridWidth, y);
-      ctx.stroke();
-
-      // Draw semitone label on the left
-      if (semi >= minSemitone + 1 && semi <= maxSemitone - 1) {
-        ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.3)';
-        ctx.font = '10px system-ui';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, gridLeft - 8, y);
-      }
-    }
-
-    // Draw vertical grid lines
-    const gridLines = generateGridLines(arrangement.bars, arrangement.timeSig);
-    for (const line of gridLines) {
-      const x = t16ToX(line.t16, startT16, endT16, gridLeft, gridWidth);
-
-      switch (line.type) {
-        case 'bar':
-          ctx.strokeStyle = barLineColor;
+        // Make tonic (1) and octave brighter for orientation
+        if (semi % 12 === 0) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
           ctx.lineWidth = 2;
-          break;
-        case 'beat':
-          ctx.strokeStyle = beatLineColor;
+        } else if (label === '3' || label === '5' || label === '4') {
+          // Highlight important scale degrees (major third, fourth, fifth)
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
           ctx.lineWidth = 1;
-          break;
-        case 'subdivision':
-          ctx.strokeStyle = subdivLineColor;
+        } else {
+          ctx.strokeStyle = pitchLineColor;
           ctx.lineWidth = 1;
-          break;
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(gridLeft, y);
+        ctx.lineTo(gridLeft + gridWidth, y);
+        ctx.stroke();
+
+        // Draw semitone label on the left
+        if (semi >= minSemitone + 1 && semi <= maxSemitone - 1) {
+          ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.3)';
+          ctx.font = '10px system-ui';
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, gridLeft - 8, y);
+        }
       }
 
-      ctx.beginPath();
-      ctx.moveTo(x, gridTop);
-      ctx.lineTo(x, gridTop + gridHeight);
-      ctx.stroke();
+      // Draw vertical grid lines
+      const gridLines = generateGridLines(arrangement.bars, arrangement.timeSig);
+      for (const line of gridLines) {
+        const x = t16ToX(line.t16, startT16, endT16, gridLeft, gridWidth);
+
+        switch (line.type) {
+          case 'bar':
+            ctx.strokeStyle = barLineColor;
+            ctx.lineWidth = 2;
+            break;
+          case 'beat':
+            ctx.strokeStyle = beatLineColor;
+            ctx.lineWidth = 1;
+            break;
+          case 'subdivision':
+            ctx.strokeStyle = subdivLineColor;
+            ctx.lineWidth = 1;
+            break;
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(x, gridTop);
+        ctx.lineTo(x, gridTop + gridHeight);
+        ctx.stroke();
+      }
+
+      // Draw bar numbers
+      ctx.fillStyle = textColor;
+      ctx.font = '12px system-ui';
+      ctx.textAlign = 'center';
+      for (let bar = 0; bar <= arrangement.bars; bar++) {
+        const t16 = bar * 16;
+        const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
+        ctx.fillText(`${bar + 1}`, x, gridTop - 10);
+      }
     }
 
-    // Draw bar numbers
-    ctx.fillStyle = textColor;
-    ctx.font = '12px system-ui';
-    ctx.textAlign = 'center';
-    for (let bar = 0; bar <= arrangement.bars; bar++) {
-      const t16 = bar * 16;
-      const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
-      ctx.fillText(`${bar + 1}`, x, gridTop - 10);
-    }
+    // Draw chord track
+    if (!hideChords && display.showChordTrack && arrangement.chords) {
+      // ... (rest of the drawing code)
 
-    // Draw chord track - blocks that touch end to end
-    if (display.showChordTrack && arrangement.chords) {
+
       const chordColors = ['#ff6b9d', '#4ecdc4', '#a78bfa', '#ffe66d', '#ff8c42', '#34d399'];
       const blockHeight = 24;
       const blockY = gridTop - 30;
@@ -348,21 +362,25 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
         const blockEndX = t16ToX(chord.t16 + chord.duration16, startT16, endT16, gridLeft, gridWidth);
         const blockWidth = blockEndX - blockStartX;
 
-        // Draw block background
-        ctx.fillStyle = chordColor + '30'; // 20% opacity
-        ctx.fillRect(blockStartX, blockY, blockWidth, blockHeight);
+        // Draw glass-like rounded block with gap
+        const gap = 6;
+        const radius = 8;
+        const bStartX = blockStartX + gap / 2;
+        const bWidth = Math.max(0, blockWidth - gap);
 
-        // Draw block border (left, top, bottom - not right to touch next block)
-        ctx.strokeStyle = chordColor + '60';
-        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(blockStartX, blockY);
-        ctx.lineTo(blockStartX, blockY + blockHeight);
-        ctx.moveTo(blockStartX, blockY);
-        ctx.lineTo(blockEndX, blockY);
-        ctx.moveTo(blockStartX, blockY + blockHeight);
-        ctx.lineTo(blockEndX, blockY + blockHeight);
+        if ((ctx as any).roundRect) {
+          (ctx as any).roundRect(bStartX, blockY, bWidth, blockHeight, radius);
+        } else {
+          ctx.rect(bStartX, blockY, bWidth, blockHeight);
+        }
+
+        ctx.fillStyle = chordColor + '15'; // Very transparent fill
+        ctx.fill();
+        ctx.strokeStyle = chordColor + '80'; // Bright border
+        ctx.lineWidth = 1.5;
         ctx.stroke();
+
 
         // Draw chord text centered in block
         ctx.fillStyle = chordColor;
@@ -373,129 +391,131 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
       }
     }
 
-    // Draw contour lines for each voice
-    for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
-      const voice = arrangement.voices[voiceIndex];
-      const voiceState = voiceStates.find(v => v.voiceId === voice.id);
+    if (!onlyChords) {
+      // Draw contour lines for each voice
+      for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
+        const voice = arrangement.voices[voiceIndex];
+        const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
-      // Skip if muted (but not if soloed)
-      const hasSolo = voiceStates.some(v => v.synthSolo);
-      if (hasSolo && !voiceState?.synthSolo) continue;
-      if (!hasSolo && voiceState?.synthMuted) continue;
+        // Skip if muted (but not if soloed)
+        const hasSolo = voiceStates.some(v => v.synthSolo);
+        if (hasSolo && !voiceState?.synthSolo) continue;
+        if (!hasSolo && voiceState?.synthMuted) continue;
 
-      // Get voice color
-      const voiceColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
-      const glowColor = voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
+        // Get voice color
+        const voiceColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+        const glowColor = voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
 
-      // Draw contour with glow effect
-      ctx.save();
+        // Draw contour with glow effect
+        ctx.save();
 
-      // Glow layer
-      if (display.glowIntensity > 0) {
-        ctx.shadowColor = glowColor;
-        ctx.shadowBlur = 10 * display.glowIntensity;
-        ctx.strokeStyle = voiceColor;
-        ctx.lineWidth = 3;
-        drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
-      }
-
-      // Main line
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = voiceColor;
-      ctx.lineWidth = 2;
-      drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
-
-      // Draw nodes - larger circles with scale degree numbers (like mockup)
-      const nodeRadius = 12; // Larger nodes to fit numbers
-
-      for (const node of voice.nodes) {
-        if (node.term) continue; // Skip termination nodes
-
-        const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
-        const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
-
-        // Draw node glow
+        // Glow layer
         if (display.glowIntensity > 0) {
-          ctx.shadowColor = voiceColor;
-          ctx.shadowBlur = 8 * display.glowIntensity;
+          ctx.shadowColor = glowColor;
+          ctx.shadowBlur = 10 * display.glowIntensity;
+          ctx.strokeStyle = voiceColor;
+          ctx.lineWidth = 3;
+          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
         }
 
-        // Draw node circle with opaque fill (mockup style)
-        ctx.beginPath();
-        ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
-        ctx.fillStyle = voiceColor; // Fully opaque fill
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-
+        // Main line
         ctx.shadowBlur = 0;
+        ctx.strokeStyle = voiceColor;
+        ctx.lineWidth = 2;
+        drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
 
-        // Always draw scale degree number inside node (white text for contrast)
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 12px system-ui';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(node.deg), x, y + 0.5);
+        // Draw nodes - larger circles with scale degree numbers (like mockup)
+        const nodeRadius = 12; // Larger nodes to fit numbers
+
+        for (const node of voice.nodes) {
+          if (node.term) continue; // Skip termination nodes
+
+          const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
+          const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+          // Draw node glow
+          if (display.glowIntensity > 0) {
+            ctx.shadowColor = voiceColor;
+            ctx.shadowBlur = 8 * display.glowIntensity;
+          }
+
+          // Draw node circle with opaque fill (mockup style)
+          ctx.beginPath();
+          ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
+          ctx.fillStyle = voiceColor; // Fully opaque fill
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          ctx.shadowBlur = 0;
+
+          // Always draw scale degree number inside node (white text for contrast)
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 12px system-ui';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(node.deg), x, y + 0.5);
+        }
+
+        ctx.restore();
       }
 
-      ctx.restore();
-    }
+      // Draw recorded pitch traces
+      for (const [voiceId, recording] of recordings.entries()) {
+        const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
+        if (voiceIndex === -1) continue;
 
-    // Draw recorded pitch traces
-    for (const [voiceId, recording] of recordings.entries()) {
-      const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
-      if (voiceIndex === -1) continue;
+        const voice = arrangement.voices[voiceIndex];
+        const voiceColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
 
-      const voice = arrangement.voices[voiceIndex];
-      const voiceColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+        ctx.strokeStyle = voiceColor;
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.6;
 
-      ctx.strokeStyle = voiceColor;
-      ctx.lineWidth = 1.5;
-      ctx.globalAlpha = 0.6;
+        drawPitchTrace(ctx, recording.pitchTrace, minFreq, maxFreq, startT16, endT16,
+          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
 
-      drawPitchTrace(ctx, recording.pitchTrace, minFreq, maxFreq, startT16, endT16,
-        arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
+        ctx.globalAlpha = 1;
+      }
 
-      ctx.globalAlpha = 1;
-    }
+      // Draw live pitch trace (during recording)
+      if (livePitchTrace.length > 0 && armedVoiceId) {
+        const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
+        const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
+        const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
 
-    // Draw live pitch trace (during recording)
-    if (livePitchTrace.length > 0 && armedVoiceId) {
-      const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
-      const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
-      const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
+        ctx.strokeStyle = traceColor;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.8;
 
-      ctx.strokeStyle = traceColor;
+        drawPitchTrace(ctx, livePitchTrace, minFreq, maxFreq, startT16, endT16,
+          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
+
+        ctx.globalAlpha = 1;
+      }
+
+      // Draw playhead - read directly from engine for smooth animation
+      const playheadT16 = playbackEngine.getCurrentPositionT16();
+      const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
+
+      ctx.strokeStyle = playheadColor;
       ctx.lineWidth = 2;
-      ctx.globalAlpha = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(playheadX, gridTop);
+      ctx.lineTo(playheadX, gridTop + gridHeight);
+      ctx.stroke();
 
-      drawPitchTrace(ctx, livePitchTrace, minFreq, maxFreq, startT16, endT16,
-        arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
-
-      ctx.globalAlpha = 1;
+      // Playhead glow
+      ctx.shadowColor = playheadColor;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.moveTo(playheadX, gridTop);
+      ctx.lineTo(playheadX, gridTop + gridHeight);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
     }
 
-    // Draw playhead - read directly from engine for smooth animation
-    const playheadT16 = playbackEngine.getCurrentPositionT16();
-    const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
-
-    ctx.strokeStyle = playheadColor;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, gridTop);
-    ctx.lineTo(playheadX, gridTop + gridHeight);
-    ctx.stroke();
-
-    // Playhead glow
-    ctx.shadowColor = playheadColor;
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, gridTop);
-    ctx.lineTo(playheadX, gridTop + gridHeight);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
 
   }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange]);
 

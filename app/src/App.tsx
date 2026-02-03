@@ -121,10 +121,17 @@ function App() {
       className="h-screen w-screen overflow-hidden relative"
       onClick={initializeAudio}
     >
-      {/* Main grid visualization - background layer */}
-      <div className="absolute inset-0 pt-24 pb-28 pl-44 pr-8">
-        <Grid arrangement={arrangement} className="h-full w-full" />
+      {/* Main grid visualization - background layer (masked lines/voices) */}
+      <div className="absolute inset-0 pt-24 pb-28 pl-44 pr-8 mask-vertical-fade">
+        <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
       </div>
+
+      {/* Chord Track layer - floating on top, not masked */}
+      <div className="absolute inset-0 pt-24 pb-28 pl-44 pr-8 pointer-events-none">
+        <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} />
+      </div>
+
+
 
       {/* UI Overlays - Floating panes */}
       <TopBar />

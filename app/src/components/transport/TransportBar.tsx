@@ -5,7 +5,8 @@
    Layout: Position | Speed | [Record Play Loop] | Zoom
    ============================================================ */
 
-import { Play, Pause, Circle, Repeat, SkipBack, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { Play, Pause, Circle, Repeat, SkipBack, ZoomIn, ZoomOut } from 'lucide-react';
+
 import { useAppStore } from '../../stores/appStore';
 import { useRecording } from '../../hooks/useRecording';
 
@@ -64,182 +65,104 @@ export function TransportBar() {
 
   return (
     <div className="
-      absolute bottom-6 left-6 right-6
+      absolute bottom-12 left-1/2 -translate-x-1/2
       flex items-center justify-between
-      h-16 px-8
-      glass-pane glass-high rounded-2xl
-      shadow-2xl z-20
+      w-[800px] h-20 px-4
+      glass-pane glass-high rounded-full
+      shadow-[0_20px_50px_rgba(0,0,0,0.4)] z-40
+      border border-white/5
     ">
-
-
-      {/* Left: Position display */}
-      <div className="flex items-center gap-4 min-w-[180px]">
-        {/* Current position */}
-        <div className="text-center">
-          <div className="text-2xl font-mono font-bold text-[var(--text-primary)] tabular-nums">
-            {arrangement ? formatPosition(playback.position, arrangement.timeSig) : '--:--'}
-          </div>
-          <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">
-            Bar:Beat
-          </div>
+      {/* Left Section: Position & Basic Controls */}
+      <div className="flex-1 flex items-center gap-4 pl-6">
+        <div className="text-2xl font-mono font-bold text-[var(--text-primary)] tabular-nums min-w-[70px]">
+          {arrangement ? formatPosition(playback.position, arrangement.timeSig) : '--:--'}
         </div>
 
-        {/* Divider */}
-        <div className="w-px h-8 bg-[var(--border-color)]" />
+        <div className="w-px h-6 bg-white/10 mx-2" />
 
-        {/* Speed selector */}
-        <div className="flex flex-col items-start gap-1">
-          <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Speed</span>
-          <div className="flex bg-[var(--button-bg)] rounded-md p-0.5">
-            {speedOptions.map((speed) => (
-              <button
-                key={speed}
-                onClick={() => setTempoMultiplier(speed)}
-                className={`
-                  px-2 py-0.5 text-xs font-medium rounded transition-all
-                  ${playback.tempoMultiplier === speed
-                    ? 'bg-[var(--accent-primary)] text-white'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }
-                `}
-              >
-                {speed}×
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Center: Main transport controls */}
-      <div className="flex items-center gap-2">
-        {/* Restart button */}
         <button
           onClick={handleRestart}
           disabled={!arrangement}
-          className="
-            w-9 h-9 rounded-lg
-            flex items-center justify-center
-            bg-[var(--button-bg)] text-[var(--text-secondary)]
-            hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
-            disabled:opacity-40 disabled:cursor-not-allowed
-            transition-all
-          "
-          title="Go to start"
+          className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 text-white/70 transition-all disabled:opacity-20"
         >
-          <SkipBack size={16} />
+          <SkipBack size={20} />
         </button>
 
-        {/* Record button */}
         <button
           onClick={toggleRecording}
           disabled={!arrangement || !armedVoiceId}
           className={`
-            w-10 h-10 rounded-lg
-            flex items-center justify-center
-            transition-all
+            w-10 h-10 rounded-full flex items-center justify-center transition-all
             ${isRecording
-              ? 'bg-red-500 text-white animate-pulse'
+              ? 'bg-red-500 shadow-[0_0_20px_rgba(239,68,68,0.5)]'
               : armedVoiceId
-                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30'
-                : 'bg-[var(--button-bg)] text-[var(--text-muted)] cursor-not-allowed'
+                ? 'bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20'
+                : 'bg-white/5 text-white/20'
             }
           `}
-          title={isRecording ? 'Stop Recording' : armedVoiceId ? 'Record' : 'Arm a voice to record'}
         >
           <Circle size={18} fill={isRecording ? 'currentColor' : 'none'} />
         </button>
+      </div>
 
-        {/* Play/Pause button - prominent */}
+      {/* Center Section: Main Action */}
+      <div className="flex-none relative w-20 flex justify-center">
         <button
           onClick={handlePlayPause}
           disabled={!arrangement}
-          className={`
-            w-14 h-14 rounded-xl
-            flex items-center justify-center
-            transition-all
-            ${arrangement
-              ? playback.isPlaying
-                ? 'bg-[var(--accent-primary)] text-white shadow-lg shadow-[var(--accent-primary)]/30'
-                : 'bg-[var(--accent-primary)] text-white hover:brightness-110'
-              : 'bg-[var(--button-bg)] text-[var(--text-muted)] cursor-not-allowed'
-            }
-          `}
-          title={playback.isPlaying ? 'Pause' : 'Play'}
+          className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-[0_0_30px_rgba(255,255,255,0.3)] hover:scale-105 active:scale-95 transition-all disabled:opacity-20"
         >
-          {playback.isPlaying ? (
-            <Pause size={24} />
-          ) : (
-            <Play size={24} className="ml-1" fill="currentColor" />
-          )}
+          {playback.isPlaying ? <Pause size={28} /> : <Play size={28} className="ml-1" fill="currentColor" />}
         </button>
+      </div>
 
-        {/* Loop toggle */}
+      {/* Right Section: Configuration & View */}
+      <div className="flex-1 flex items-center justify-end gap-4 pr-6">
         <button
           onClick={() => setLoopEnabled(!playback.loopEnabled)}
           disabled={!arrangement}
           className={`
-            w-10 h-10 rounded-lg
-            flex items-center justify-center
-            transition-all
+            w-10 h-10 rounded-full flex items-center justify-center transition-all
             ${playback.loopEnabled
-              ? 'bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary)] border border-[var(--accent-secondary)]/30'
-              : 'bg-[var(--button-bg)] text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]'
+              ? 'bg-[var(--accent-secondary)] text-white shadow-lg shadow-[var(--accent-secondary)]/30'
+              : 'text-white/40 hover:bg-white/10 hover:text-white'
             }
-            disabled:opacity-40 disabled:cursor-not-allowed
+            disabled:opacity-20
           `}
-          title={playback.loopEnabled ? 'Loop On' : 'Loop Off'}
         >
-          <Repeat size={16} />
+          <Repeat size={20} />
         </button>
-      </div>
 
-      {/* Right: Zoom controls */}
-      <div className="flex items-center gap-3 min-w-[180px] justify-end">
-        {/* Zoom label */}
-        <span className="text-xs text-[var(--text-muted)]">
-          {Math.round(display.zoomLevel * 100)}%
-        </span>
+        <div className="w-px h-6 bg-white/10 mx-2" />
 
-        {/* Zoom buttons */}
-        <div className="flex items-center gap-1">
+        <div className="flex bg-white/5 rounded-full p-1 border border-white/5">
+          {speedOptions.map((speed) => (
+            <button
+              key={speed}
+              onClick={() => setTempoMultiplier(speed)}
+              className={`
+                px-2.5 py-1 text-[10px] font-bold rounded-full transition-all
+                ${playback.tempoMultiplier === speed
+                  ? 'bg-white/20 text-white'
+                  : 'text-white/40 hover:text-white/60'
+                }
+              `}
+            >
+              {speed}x
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-1 bg-white/5 rounded-full p-1 border border-white/5">
           <button
             onClick={() => setZoomLevel(Math.max(0.5, display.zoomLevel - 0.25))}
-            className="
-              w-8 h-8 rounded-md
-              flex items-center justify-center
-              bg-[var(--button-bg)] text-[var(--text-secondary)]
-              hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
-              transition-all
-            "
-            title="Zoom Out"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
           >
             <ZoomOut size={14} />
           </button>
-
-          <button
-            onClick={() => setZoomLevel(1)}
-            className="
-              w-8 h-8 rounded-md
-              flex items-center justify-center
-              bg-[var(--button-bg)] text-[var(--text-secondary)]
-              hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
-              transition-all
-            "
-            title="Fit to View"
-          >
-            <Maximize2 size={14} />
-          </button>
-
           <button
             onClick={() => setZoomLevel(Math.min(4, display.zoomLevel + 0.25))}
-            className="
-              w-8 h-8 rounded-md
-              flex items-center justify-center
-              bg-[var(--button-bg)] text-[var(--text-secondary)]
-              hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
-              transition-all
-            "
-            title="Zoom In"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
           >
             <ZoomIn size={14} />
           </button>

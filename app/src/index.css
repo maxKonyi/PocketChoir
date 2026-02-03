@@ -80,7 +80,8 @@
   /* Bar lines */
   --grid-line-beat: rgba(255, 255, 255, 0.08);
   /* Beat lines */
-  --grid-line-subdivision: rgba(255, 255, 255, 0.04);
+  --grid-line-subdivision: transparent;
+
   /* 16th note lines */
   --grid-pitch-line: rgba(255, 255, 255, 0.05);
   /* Horizontal pitch lines */
@@ -188,6 +189,21 @@
     transform: translateX(100%) rotate(45deg);
   }
 }
+
+.mask-vertical-fade {
+  mask-image: linear-gradient(to bottom,
+      transparent 150px,
+      black 250px,
+      black calc(100% - 250px),
+      transparent calc(100% - 150px));
+  -webkit-mask-image: linear-gradient(to bottom,
+      transparent 150px,
+      black 250px,
+      black calc(100% - 250px),
+      transparent calc(100% - 150px));
+}
+
+
 
 
 /* ============================================================
