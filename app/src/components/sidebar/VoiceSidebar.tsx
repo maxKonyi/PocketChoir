@@ -163,10 +163,12 @@ export function VoiceSidebar() {
       className="
         absolute left-6 top-1/2 -translate-y-1/2 z-20
         flex flex-col gap-4 p-4
-        glass-pane glass-med rounded-[2rem]
-        shadow-2xl
+        glass-pane glass-sidebar glass-noise rounded-[2.5rem]
+        shadow-2xl border border-white/10
       "
     >
+
+
 
       {/* Header label */}
       <div className="text-xs text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-2 justify-center">

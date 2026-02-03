@@ -68,10 +68,11 @@ export function TransportBar() {
       absolute bottom-12 left-1/2 -translate-x-1/2
       flex items-center justify-between
       w-[800px] h-20 px-4
-      glass-pane glass-high rounded-full
+      glass-pane glass-med rounded-full
       shadow-[0_20px_50px_rgba(0,0,0,0.4)] z-40
       border border-white/5
     ">
+
       {/* Left Section: Position & Basic Controls */}
       <div className="flex-1 flex items-center gap-4 pl-6">
         <div className="text-2xl font-mono font-bold text-[var(--text-primary)] tabular-nums min-w-[70px]">

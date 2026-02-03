@@ -138,25 +138,70 @@
 }
 
 .glass-pane {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+
+
+.glass-pane::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, transparent 50%, transparent 100%);
+  pointer-events: none;
+}
+
+.glass-pane::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.3), transparent);
+  pointer-events: none;
+}
+
+.glass-noise {}
+
+
+.glass-noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.03;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+
+.glass-sidebar {
+  backdrop-filter: blur(60px) saturate(170%);
+  -webkit-backdrop-filter: blur(60px) saturate(170%);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .glass-low {
-  backdrop-filter: blur(var(--panel-blur-low));
-  -webkit-backdrop-filter: blur(var(--panel-blur-low));
+  backdrop-filter: blur(var(--panel-blur-low)) saturate(120%);
+  -webkit-backdrop-filter: blur(var(--panel-blur-low)) saturate(120%);
 }
 
 .glass-med {
-  backdrop-filter: blur(var(--panel-blur-med));
-  -webkit-backdrop-filter: blur(var(--panel-blur-med));
+  backdrop-filter: blur(var(--panel-blur-med)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--panel-blur-med)) saturate(150%);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .glass-high {
-  backdrop-filter: blur(var(--panel-blur-high));
-  -webkit-backdrop-filter: blur(var(--panel-blur-high));
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  background: rgba(255, 255, 255, 0.08);
+  /* Rougher/more opaque */
 }
+
 
 .shimmer {
   position: relative;

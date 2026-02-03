@@ -1,0 +1,3970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Harmonic Prism</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.26/Tone.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    /* Global body and container styles */
+    body {
+      margin: 0;
+      padding: 0;
+      background: #2a2a2a;
+      font-family: 'Montserrat', sans-serif;
+      color: #eee;
+      height: 100vh;
+      display: flex;
+    }
+    .container {
+      flex: 1;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+    }
+    /* Sidebar styling */
+    .sidebar {
+      width: 260px;
+      background: #2f2f2f;
+      padding: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      overflow-y: auto;
+    }
+    .section {
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid #555;
+    }
+    .group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-top: 0.6rem;
+    }
+    .group.inline {
+      flex-direction: row;
+      align-items: center;
+      gap: 0.6rem;
+      margin-top: 0.6rem;
+    }
+    .sidebar button {
+      background: #444;
+      color: #eee;
+      border: none;
+      padding: 0.3rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .sidebar button:hover {
+      background: #555;
+    }
+    .sidebar button.active {
+      background: #888;
+      color: #fff;
+    }
+    .sidebar input[type="range"] {
+      -webkit-appearance: none;
+      height: 4px;
+      background: #666;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+      width: 100px;
+    }
+    .sidebar input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ff6b6b;
+      cursor: pointer;
+      box-shadow: 0 0 2px rgba(0,0,0,0.5);
+    }
+    /* Main content and SVG progression styles */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .current-key-display {
+      padding: 0.5rem;
+      font-size: 1rem;
+      text-align: center;
+      background: #1f1f1f;
+    }
+    .progression-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .chord-svg {
+      background: #1f1f1f;
+      border: 1px solid #444;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+    }
+    .degree-text {
+      fill: #999;
+      font-size: 12px;
+      text-anchor: middle;
+      font-family: 'Montserrat', sans-serif;
+    }
+    .degree-text-root {
+      fill: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      text-anchor: middle;
+      font-family: 'Montserrat', sans-serif;
+    }
+    .chord-name-text {
+      fill: #eee;
+      font-size: 16px;
+      text-anchor: middle;
+      font-weight: 700;
+      font-family: 'Montserrat', sans-serif;
+    }
+    /* Updated: use inline style transitions for marker animations */
+    .voice-marker {
+      stroke-width: 2;
+      fill: #1f1f1f;
+      transition: stroke-width 0.2s ease, stroke 0.2s ease, fill 0.5s ease;
+    }
+    /* New CSS classes for rise and decay phases */
+    .marker-rise {
+      stroke-width: 4px !important;
+      stroke: var(--pulse-stroke) !important;
+      transition: stroke-width 0.2s ease, stroke 0.2s ease, fill 0.5s ease !important;
+    }
+    .marker-decay {
+      stroke-width: 2px !important;
+      transition: stroke-width 1s ease, stroke 1s ease, fill 1s ease !important;
+    }
+    .label-soprano { color: #4dc3ff; }
+    .label-alto    { color: #8ee4af; } 
+    .label-tenor   { color: #ffa94d; }
+    .label-bass    { color: #ff6b6b; }
+    /* Synth control panel popup styling */
+    #synthControlPanel {
+      display: none;
+      position: fixed;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      padding: 20px;
+      border-radius: 8px;
+      z-index: 2000;
+      color: #fff;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.8);
+      font-size: 0.9rem;
+    }
+    #synthControlPanel h3 {
+      margin-top: 0;
+      font-size: 1rem;
+    }
+    #synthControlPanel label {
+      display: block;
+      margin: 8px 0 4px;
+    }
+    #synthControlPanel input[type="range"] {
+      width: 100%;
+    }
+    #synthControlPanel button {
+      margin-top: 12px;
+      padding: 4px 8px;
+      background: #555;
+      border: none;
+      border-radius: 4px;
+      color: #eee;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    #synthControlPanel button:hover {
+      background: #777;
+    }
+    /* Voice controls styling */
+    .voice-controls {
+      /* Each voice has two “rows” stacked: 
+        row 1 = label + slider 
+        row 2 = M / S / T buttons */
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem; /* small vertical spacing between the two rows */
+    }
+
+    /* Make the voice name labels look clickable (show hand cursor) */
+    .voice-controls label[data-voice] {
+      cursor: pointer;
+    }
+
+    /* TOP ROW: label on left, slider on right */
+    .voice-name-slider {
+      display: flex;
+      align-items: center;
+      justify-content: space-between; /* label at left, slider at right */
+      width: 100%;                   /* ensure it spans the container */
+    }
+
+    /* If you want the label to have a fixed width, you can do this: */
+    .voice-name-slider label {
+      width: 70px; /* Or however wide you need */
+      text-align: left;
+    }
+
+    /* BOTTOM ROW: your M / S / T buttons */
+    .voice-buttons {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    /* Chorus control panel popup styling */
+    #chorusControlPanel {
+      display: none;
+      position: fixed;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      padding: 20px;
+      border-radius: 8px;
+      z-index: 2000;
+      color: #fff;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.8);
+      font-size: 0.9rem;
+    }
+    #chorusControlPanel h3 {
+      margin-top: 0;
+      font-size: 1rem;
+    }
+    #chorusControlPanel label {
+      display: block;
+      margin: 8px 0 4px;
+    }
+    #chorusControlPanel input[type="range"] {
+      width: 100%;
+    }
+    #chorusControlPanel button {
+      margin-top: 12px;
+      padding: 4px 8px;
+      background: #555;
+      border: none;
+      border-radius: 4px;
+      color: #eee;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    #chorusControlPanel button:hover {
+      background: #777;
+    }
+    /* Transcribe Mode controls */
+    #transcribeSection {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .clear-btn {
+      display: none;
+      margin-left: 5px;
+      font-size: 0.75rem;
+      padding: 2px 5px;
+    }
+      /* By default, let text ignore clicks for transcribe-mode usage */
+    text {
+      pointer-events: none;
+    }
+
+    /* EXCEPTION: chord names remain clickable */
+    .chord-name-text {
+      pointer-events: auto;
+    }
+
+    /* ===== CHOIR MODE STYLES ===== */
+    /* Choir Mode section styling */
+    #choirModeSection {
+      display: none; /* Hidden until Choir Mode is enabled */
+    }
+    #choirModeSection.active {
+      display: block;
+    }
+    /* Record button styling - shows which voice is being recorded */
+    .record-btn {
+      background: #444;
+      color: #eee;
+      border: none;
+      padding: 0.3rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.85rem;
+      margin: 2px;
+    }
+    .record-btn:hover {
+      background: #555;
+    }
+    .record-btn.recording {
+      background: #ff4444;
+      color: #fff;
+      animation: pulse-recording 1s infinite;
+    }
+    @keyframes pulse-recording {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    /* Choir toggle buttons */
+    .choir-toggle {
+      background: #444;
+    }
+    .choir-toggle.active {
+      background: #6a6;
+    }
+    /* Voice recording status indicators */
+    .voice-recorded {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #666;
+      margin-left: 5px;
+    }
+    .voice-recorded.has-recording {
+      background: #6a6;
+    }
+    /* Pitch trace path styling - thicker, desaturated, behind primary contour */
+    .pitch-trace-path {
+      fill: none;
+      stroke-width: 12; /* Thicker line as requested */
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 1; /* Slightly transparent */
+      filter: blur(0px); /* Slight blur for a "glow" or soft look */
+      transition: stroke-opacity 0.3s ease; /* Smooth opacity transitions */
+    }
+    /* Count-in display overlay */
+    #countInDisplay {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 120px;
+      font-weight: bold;
+      color: #fff;
+      text-shadow: 0 0 20px rgba(0,0,0,0.8);
+      z-index: 3000;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Sidebar with controls -->
+    <div class="sidebar">
+      <div class="section">
+        <div class="group inline">
+          <button id="keyToggleBtn">Major Key</button>
+        </div>
+        <div class="group inline">
+          <button id="generateBtn">Generate (G)</button>
+        </div>
+        <div class="group inline">
+          <label for="chordCountSelect">Chords:</label>
+          <select id="chordCountSelect">
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8" selected>8</option>
+          </select>
+        </div>
+      </div>
+      <div class="section">
+        <div class="group inline">
+          <button id="relativeModeBtn">Relative Mode: OFF</button>
+          <button id="toggleChordDisplayBtn">Display Roman</button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="group inline">
+          <button id="playPauseBtn">Play (space)</button>
+          <button id="restartBtn">Restart (S)</button>
+        </div>
+        <div class="group inline">
+          <label for="tempoSlider">Tempo:</label>
+          <input type="range" id="tempoSlider" min="50" max="400" value="200" />
+          <span id="tempoValue">100</span> BPM
+        </div>
+        <div class="group inline">
+          <label for="masterVolumeSlider">Master Vol:</label>
+          <input type="range" id="masterVolumeSlider" min="-60" max="0" value="0" />
+          <span id="masterVolumeValue">0</span> dB
+        </div>
+        <div class="group inline">
+          <label for="inputGainSlider">Mic Gain:</label>
+          <input type="range" id="inputGainSlider" min="-20" max="20" step="0.5" value="0" />
+          <span id="inputGainValue">0</span> dB
+        </div>
+        <div class="group inline" style="vertical-align: middle;">
+           <label style="margin-right: 5px; font-size: 0.8rem;">In Lvl:</label>
+           <div style="display: inline-block; width: 80px; height: 10px; background: #222; border: 1px solid #555; position: relative; top: 1px;">
+             <div id="inputMeterBar" style="width: 0%; height: 100%; background: #0f0; transition: background-color 0.1s;"></div>
+           </div>
+        </div>
+        <div class="group inline">
+          <label for="degreeGridSlider">Degree Grid:</label>
+          <input type="range" id="degreeGridSlider" min="0" max="1" step="0.01" value="1" />
+          <span id="degreeGridValue">1.00</span>
+        </div>
+        <div class="group inline">
+          <label for="latencySlider">Voc Latency:</label>
+          <input type="range" id="latencySlider" min="0" max="500" step="1" value="100" />
+          <span id="latencyValue">100</span> ms
+        </div>
+      </div>
+      <!-- Voice Controls for individual parts -->
+      <div class="section">
+        <div class="group">
+          <div class="voice-controls">
+            <div class="voice-name-slider">
+              <label class="label-soprano" data-voice="0">Soprano</label>
+              <input type="range" class="voice-volume" data-voice="0" min="-60" max="0" value="-12" />
+            </div>
+            <div class="voice-buttons">
+              <button class="mute-btn" data-voice="0">M</button>
+              <button class="solo-btn" data-voice="0">S</button>
+              <span class="transcribe-radio" style="display: none; margin-left: 5px;">
+                <input type="radio" name="transcribeVoice" value="0" id="transcribeVoice0" checked>
+                <label for="transcribeVoice0" style="font-size: 0.75rem; margin: 0;">T</label>
+                <button class="clear-btn" data-voice="0">Clear (C)</button>
+              </span>
+            </div>
+        </div>
+        </div>
+        <div class="group">
+          <div class="voice-controls">
+            <div class="voice-name-slider">
+              <label class="label-alto" data-voice="1">Alto</label>
+              <input type="range" class="voice-volume" data-voice="1" min="-60" max="0" value="-12" />
+            </div>
+            <div class="voice-buttons">
+              <button class="mute-btn" data-voice="1">M</button>
+              <button class="solo-btn" data-voice="1">S</button>
+              <span class="transcribe-radio" style="display: none; margin-left: 5px;">
+                <input type="radio" name="transcribeVoice" value="1" id="transcribeVoice1">
+                <label for="transcribeVoice1" style="font-size: 0.75rem; margin: 0;">T</label>
+                <button class="clear-btn" data-voice="1">Clear (C)</button>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="voice-controls">
+            <div class="voice-name-slider">
+              <label class="label-tenor" data-voice="2">Tenor</label>
+              <input type="range" class="voice-volume" data-voice="2" min="-60" max="0" value="-12" />
+            </div>
+            <div class="voice-buttons">
+              <button class="mute-btn" data-voice="2">M</button>
+              <button class="solo-btn" data-voice="2">S</button>
+              <span class="transcribe-radio" style="display: none; margin-left: 5px;">
+                <input type="radio" name="transcribeVoice" value="2" id="transcribeVoice2">
+                <label for="transcribeVoice2" style="font-size: 0.75rem; margin: 0;">T</label>
+                <button class="clear-btn" data-voice="2">Clear (C)</button>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="voice-controls">
+            <div class="voice-name-slider">
+              <label class="label-bass" data-voice="3">Bass</label>
+              <input type="range" class="voice-volume" data-voice="3" min="-60" max="0" value="-12" />
+            </div>
+            <div class="voice-buttons">
+              <button class="mute-btn" data-voice="3">M</button>
+              <button class="solo-btn" data-voice="3">S</button>
+              <span class="transcribe-radio" style="display: none; margin-left: 5px;">
+                <input type="radio" name="transcribeVoice" value="3" id="transcribeVoice3">
+                <label for="transcribeVoice3" style="font-size: 0.75rem; margin: 0;">T</label>
+                <button class="clear-btn" data-voice="3">Clear (C)</button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Inversion toggle for chord voicing -->
+      <div class="section">
+        <div class="group inline">
+          <button id="invertBtn">Invert: OFF</button>
+        </div>
+      </div>
+      <!-- Create Mode Toggle -->
+      <div class="section">
+        <div class="group inline">
+          <button id="createModeToggleBtn">Create Mode: OFF</button>
+        </div>
+      </div>
+      <!-- Transcribe Mode Controls -->
+      <div class="section" id="transcribeSection">
+        <div class="group inline">
+          <button id="transcribeModeToggleBtn">Transcribe Mode: OFF</button>
+          <button id="transcribeSubmitBtn" style="display: none;">Submit Transcription</button>
+        </div>
+      </div>
+      <!-- Chorus control access -->
+      <div class="section">
+        <div class="group inline">
+          <button id="chorusBtn">CHORUS</button>
+        </div>
+      </div>
+
+      <!-- ===== CHOIR MODE CONTROLS ===== -->
+      <!-- Main Choir Mode toggle -->
+      <div class="section">
+        <div class="group inline">
+          <button id="choirModeToggleBtn">Choir Mode: OFF</button>
+        </div>
+        <div class="group inline">
+          <button id="clickTrackToggleBtn" class="choir-toggle">Click: OFF</button>
+        </div>
+      </div>
+
+      <!-- Choir Mode recording and playback controls (shown when Choir Mode is ON) -->
+      <div class="section" id="choirModeSection">
+        <div class="group">
+          <label style="font-size: 0.85rem; color: #aaa;">Record Voice:</label>
+          <div class="group inline" style="flex-wrap: wrap;">
+            <button class="record-btn" data-voice="0">● S<span class="voice-recorded" data-voice="0"></span></button>
+            <button class="record-btn" data-voice="1">● A<span class="voice-recorded" data-voice="1"></span></button>
+            <button class="record-btn" data-voice="2">● T<span class="voice-recorded" data-voice="2"></span></button>
+            <button class="record-btn" data-voice="3">● B<span class="voice-recorded" data-voice="3"></span></button>
+          </div>
+        </div>
+        <div class="group inline">
+          <button id="stopRecordingBtn" style="background: #833;">Stop Rec</button>
+        </div>
+        <div class="group">
+          <label style="font-size: 0.85rem; color: #aaa;">Playback:</label>
+          <div class="group inline">
+            <button id="playSynthToggleBtn" class="choir-toggle active">Synth</button>
+            <button id="playVocalsToggleBtn" class="choir-toggle active">Vocals</button>
+          </div>
+        </div>
+        <div class="group inline">
+          <button id="clearAllRecordingsBtn" style="background: #633; font-size: 0.75rem;">Clear All Recordings</button>
+          <button id="openVocalReverbBtn" style="font-size: 0.75rem;">Vocal Reverb</button>
+        </div>
+      </div>
+    </div>
+    <!-- Main content area showing the current key and chord progression -->
+    <div class="main-content">
+      <div id="currentKeyDisplay" class="current-key-display"></div>
+      <div class="progression-container">
+        <svg id="chordSvg" class="chord-svg" preserveAspectRatio="xMidYMid meet" width="1200" height="850"></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Synth Control Popup Panel -->
+  <div id="synthControlPanel">
+    <h3 id="synthControlHeader">Synth Controls</h3>
+    <label for="cutoffSlider">Low-Pass Cutoff (Hz)</label>
+    <input type="range" id="cutoffSlider" min="100" max="5000" value="1200" />
+    <span id="cutoffVal">1200</span>
+    <label for="panSlider">Pan (-1 to 1)</label>
+    <input type="range" id="panSlider" min="-1" max="1" step="0.01" value="0" />
+    <span id="panVal">0</span>
+    <label for="portamentoSlider">Portamento (ms)</label>
+    <input type="range" id="portamentoSlider" min="0" max="100" value="100" />
+    <span id="portamentoVal">100</span>
+    <button id="closeSynthPanel">Close</button>
+  </div>
+
+  <!-- Chorus Control Popup Panel -->
+  <div id="chorusControlPanel">
+    <h3>Chorus Controls</h3>
+    <label for="chorusFrequency">Frequency (Hz)</label>
+    <input type="range" id="chorusFrequency" min="0.1" max="5" step="0.1" value="0.1">
+    <span id="chorusFrequencyVal">0.1</span>
+    
+    <label for="chorusDelay">Delay Time (ms)</label>
+    <input type="range" id="chorusDelay" min="1" max="10" step="0.1" value="10">
+    <span id="chorusDelayVal">10</span>
+    
+    <label for="chorusDepth">Depth</label>
+    <input type="range" id="chorusDepth" min="0" max="1" step="0.01" value="0.71">
+    <span id="chorusDepthVal">0.71</span>
+    
+    <label for="chorusFeedback">Feedback</label>
+    <input type="range" id="chorusFeedback" min="0" max="1" step="0.01" value="0.47">
+    <span id="chorusFeedbackVal">0.47</span>
+    
+    <label for="chorusSpread">Spread (°)</label>
+    <input type="range" id="chorusSpread" min="0" max="360" step="1" value="181">
+    <span id="chorusSpreadVal">181</span>
+    
+    <label for="chorusWet">Wet</label>
+    <input type="range" id="chorusWet" min="0" max="1" step="0.01" value="0.04">
+    <span id="chorusWetVal">0.04</span>
+    
+    <button id="closeChorusPanel">Close</button>
+  </div>
+
+  <!-- Vocal Reverb Control Popup Panel -->
+  <div id="vocalReverbControlPanel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:#222; padding:20px; border:2px solid #555; border-radius:10px; z-index:1000; min-width:250px;">
+    <h3>Vocal Reverb</h3>
+    <label for="vocalReverbDecay">Decay (s)</label>
+    <input type="range" id="vocalReverbDecay" min="0.1" max="10" step="0.1" value="2.9">
+    <span id="vocalReverbDecayVal">2.9</span>
+    
+    <label for="vocalReverbWet">Wet/Dry</label>
+    <input type="range" id="vocalReverbWet" min="0" max="1" step="0.01" value="0.40">
+    <span id="vocalReverbWetVal">0.40</span>
+    
+    <br><br>
+    <button id="closeVocalReverbPanel">Close</button>
+  </div>
+
+  <!-- ===== CHOIR MODE: Count-in display overlay ===== -->
+  <div id="countInDisplay"></div>
+
+  <script>
+    /***** GLOBAL VARIABLES AND INITIAL SETUP *****/
+    let relativeMode = false;
+    let displayRoman = false;
+    let keyIsMinor = false;
+    let isPlaying = false;
+    let currentKey = null;
+    let currentProgression = null;
+    let currentVoicedChords = null;
+    let currentPart = null;
+    let globalInitialSteps = [0, 0, 0];
+    let chordHighlightRects = [];
+
+    let isInverted = false;
+    let baseVoicedChords = null;
+
+    // Transcribe Mode flag and storage for user-drawn markers
+    let transcribeModeEnabled = false;
+    let userTranscriptions = [[], [], [], []];
+
+    // Global flag for Create Mode (add near your other global mode flags)
+    let createModeEnabled = false;
+
+    let createModeMarkers = [[], [], [], []];
+
+    // Helper: fully clear Create Mode state (markers, playback, cached chords)
+    function clearCreateModeAll() {
+      // Reset marker storage for all voices
+      createModeMarkers = [[], [], [], []];
+      // Stop any playback and clear cached data
+      stopPlayback();
+      currentProgression = [];
+      currentVoicedChords = [];
+      // Redraw empty grid when in Create Mode
+      if (createModeEnabled) {
+        drawProgression([]);
+        updateSvgSize();
+      } else {
+        updateCreateModeMarkers();
+      }
+    }
+
+
+    const synthFilters = [];
+    const synthPanners = [];
+    const userMuteStates = [false, false, false, false];
+    const soloStates = [false, false, false, false];
+    const numVoices = 4;
+    const synths = [];
+    const voiceGains = [];
+
+    const numRows = 22;
+    const rowSpacing = 35;
+    const BACKGROUND_TEXT_OFFSET = -3;
+    const MARKER_CIRCLE_OFFSET = -6;
+
+    Tone.Destination.volume.value = 0;
+    let currentTempo = 200;
+    let isDummyGrid = true;
+    const FIXED_WIDTH = 1200;
+    const FIXED_HEIGHT = 850;
+
+    const globalChorus = new Tone.Chorus({
+      frequency: 0.1,
+      delayTime: 10,
+      depth: 0.71,
+      feedback: 0.47,
+      spread: 181,
+      wet: 0.04
+    }).start();
+
+    // Subtle Hall Reverb for Vocals
+    const vocalReverb = new Tone.Reverb({
+      decay: 2.9, // 2.9s decay
+      preDelay: 0.01,
+      wet: 0.40 // 0.40 wet
+    }).toDestination();
+    // Need to generate the reverb impulse response
+    vocalReverb.generate();
+
+    // New globals for pause/resume functionality
+    let currentChordIndex = 0;
+    let pausedChordIndex = null;
+    let isPaused = false;
+
+    // Create synth chains for each voice
+    for (let i = 0; i < numVoices; i++) {
+      let filterFreq = 1200, panVal = 0;
+      if (i === 1) { filterFreq = 2000; panVal = -0.8; }
+      else if (i === 2) { filterFreq = 2500; panVal = 0.8; }
+      const synth = new Tone.Synth({
+        oscillator: { type: "triangle" },
+        envelope: { attack: 0.01, decay: 0.1, sustain: 0.8, release: 0.2 },
+        volume: -10,
+        portamento: 0.1 
+      });
+      const filter = new Tone.Filter({ frequency: filterFreq, type: "lowpass", rolloff: -12 });
+      const gain = new Tone.Gain(Math.pow(10, -6 / 20));
+      const panner = new Tone.Panner(panVal);
+      synth.chain(filter, gain, panner, globalChorus, Tone.Destination);
+      synths.push(synth);
+      synthFilters.push(filter);
+      synthPanners.push(panner);
+      voiceGains.push(gain);
+    }
+
+    let selectedChordCount = 8;
+    document.getElementById("chordCountSelect").addEventListener("change", function(e) {
+      selectedChordCount = parseInt(e.target.value, 10);
+    });
+
+    const allMajorKeys = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+    const chordNamesMajor = ["I", "ii", "iii", "IV", "V", "vi"];
+    const chordScaleDegreesMajor = {
+      I: [1, 3, 5],
+      ii: [2, 4, 6],
+      iii: [3, 5, 7],
+      IV: [4, 6, 1],
+      V: [5, 7, 2],
+      vi: [6, 1, 3]
+    };
+    const chordNamesMinor = ["i", "ii°", "III", "iv", "V", "VI", "VII"];
+    const chordScaleDegreesMinor = {
+      i: [1, 3, 5],
+      "ii°": [2, 4, 6],
+      III: [3, 5, 7],
+      iv: [4, 6, 1],
+      V: [5, 7, 2],
+      VI: [6, 1, 3],
+      VII: [7, 2, 4]
+    };
+    const majorScale = [0, 2, 4, 5, 7, 9, 11];
+    const naturalMinorScale = [0, 2, 3, 5, 7, 8, 10];
+    const noteToSemitone = {
+      "C": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3,
+      "E": 4, "F": 5, "F#": 6, "GB": 6, "G": 7, "G#": 8,
+      "AB": 8, "A": 9, "A#": 10, "BB": 10, "B": 11, "CB": 11
+    };
+    const modeMappingMajor = {
+      "I":   ["1", "2", "3", "4", "5", "6", "7"],
+      "ii":  ["1", "2", "♭3", "4", "5", "6", "♭7"],
+      "iii": ["1", "♭2", "♭3", "4", "5", "♭6", "♭7"],
+      "IV":  ["1", "2", "3", "#4", "5", "6", "7"],
+      "V":   ["1", "2", "3", "4", "5", "6", "♭7"],
+      "vi":  ["1", "2", "♭3", "4", "5", "♭6", "♭7"]
+    };
+    const modeMappingMinor = {
+      "i":   ["1", "2", "♭3", "4", "5", "♭6", "♭7"],
+      "ii°": ["1", "♭2", "♭3", "4", "♭5", "♭6", "♭7"],
+      "III": ["1", "2", "3", "4", "5", "6", "7"],
+      "iv":  ["1", "2", "♭3", "4", "5", "6", "♭7"],
+      "V":   ["1", "♭2", "3", "4", "5", "♭6", "♭7"],
+      "VI":  ["1", "2", "3", "#4", "5", "6", "7"],
+      "VII": ["1", "2", "3", "4", "5", "6", "♭7"]
+    };
+
+    /***** HELPER FUNCTIONS FOR MUSIC THEORY CALCULATIONS *****/
+    function usesFlats(keyName) {
+      const flatKeys = new Set(["F", "Bb", "Eb", "Ab", "Db", "Gb", "Cb"]);
+      return (keyName.includes("b") || flatKeys.has(keyName));
+    }
+    function semitoneToNoteName(st, keyName) {
+      const sharps = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+      const flats  = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+      return usesFlats(keyName) ? flats[st] : sharps[st];
+    }
+    function getMinorSemitone(deg, isChordV) {
+      if (deg < 1 || deg > 7) return 0;
+      if (deg === 7 && isChordV) return 11;
+      return naturalMinorScale[deg - 1];
+    }
+    function getChordSemitones(keyRoot, degArray, isMinor, isChordV) {
+      const keyBase = noteToSemitone[keyRoot.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      if (!isMinor) {
+        return degArray.map(d => (keyBase + majorScale[d - 1]) % 12);
+      } else {
+        return degArray.map(d => {
+          const semi = getMinorSemitone(d, isChordV);
+          return (keyBase + semi) % 12;
+        });
+      }
+    }
+    function getChordName(key, chordSymbol) {
+      const majorMap = { "I":1, "ii":2, "iii":3, "IV":4, "V":5, "vi":6 };
+      const minorMap = { "i":1, "ii°":2, "III":3, "iv":4, "V":5, "VI":6, "VII":7 };
+      let isMinorChord = false;
+      let deg = 1;
+      if (minorMap[chordSymbol] !== undefined) {
+        isMinorChord = true;
+        deg = minorMap[chordSymbol];
+      } else {
+        deg = majorMap[chordSymbol];
+      }
+      const keyBase = noteToSemitone[key.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      let offset = 0;
+      const chordV = (chordSymbol === "V" && isMinorChord);
+      if (isMinorChord) {
+        offset = getMinorSemitone(deg, chordV);
+      } else {
+        offset = majorScale[deg - 1];
+      }
+      const chordRoot = (keyBase + offset) % 12;
+      const chordRootName = semitoneToNoteName(chordRoot, key);
+      if (chordSymbol.includes("°")) return chordRootName + "°";
+      const isUpper = (chordSymbol.charAt(0) === chordSymbol.charAt(0).toUpperCase());
+      return isUpper ? chordRootName : chordRootName + "m";
+    }
+    function getScaleDegree(midi, key, isMinor) {
+      const noteMod = midi % 12;
+      const keyBase = noteToSemitone[key.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      
+      // Define scale degrees and their corresponding semitones
+      if (!isMinor) {
+        // Major scale: standard diatonic scale degrees
+        const majorScaleMap = {
+          0: 1,  // Tonic
+          2: 2,  // Supertonic
+          4: 3,  // Mediant
+          5: 4,  // Subdominant
+          7: 5,  // Dominant
+          9: 6,  // Submediant
+          11: 7  // Leading tone
+        };
+        
+        for (const [semitone, degree] of Object.entries(majorScaleMap)) {
+          if ((keyBase + parseInt(semitone)) % 12 === noteMod) return degree;
+        }
+        return -1;
+      } else {
+        // Minor scale: special case for leading tone in V chords
+        const minorScaleMap = {
+          0: 1,  // Tonic
+          2: 2,  // Supertonic
+          3: 3,  // Mediant (flat)
+          5: 4,  // Subdominant
+          7: 5,  // Dominant
+          8: 6,  // Submediant (flat)
+          10: 7, // Subtonic (flat 7)
+          11: 7  // Leading tone (natural 7, used in V chords)
+        };
+        
+        for (const [semitone, degree] of Object.entries(minorScaleMap)) {
+          if ((keyBase + parseInt(semitone)) % 12 === noteMod) return degree;
+        }
+        return -1;
+      }
+    }
+    function getAbsoluteDiatonicStep(midi, key, isMinor) {
+      const keyBase = noteToSemitone[key.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      let scale = isMinor ? naturalMinorScale : majorScale;
+      let diff = midi - keyBase;
+      let octave = Math.floor(diff / 12);
+      let noteMod = diff % 12;
+      if (noteMod < 0) { noteMod += 12; octave -= 1; }
+      let scaleIndex = scale.indexOf(noteMod);
+      if (scaleIndex === -1) scaleIndex = 0;
+      return octave * 7 + scaleIndex + 1;
+    }
+    function findNearestChordTone(oldNote, chordTones) {
+      let best = chordTones[0], minDiff = Infinity;
+      chordTones.forEach(ct => {
+        const diff = Math.abs(ct - oldNote);
+        if (diff < minDiff) { minDiff = diff; best = ct; }
+      });
+      return best;
+    }
+    function reorderChordByPitch(chord) {
+      let combined = chord.notes.map((midi, idx) => ({ midi, deg: chord.voiceDegrees[idx] }));
+      combined.sort((a, b) => b.midi - a.midi);
+      for (let i = 0; i < 4; i++) {
+        chord.notes[i] = combined[i].midi;
+        chord.voiceDegrees[i] = combined[i].deg;
+      }
+    }
+    function reorderVoicesByPitch(voicedChords) {
+      for (let chord of voicedChords) {
+        reorderChordByPitch(chord);
+      }
+      return voicedChords;
+    }
+    function getMultiOctaveChordTones(chordOffsets, minMidi = 36, maxMidi = 84) {
+      const out = [];
+      for (let octave = 0; octave < 10; octave++) {
+        for (let off of chordOffsets) {
+          const midi = 12 * octave + off;
+          if (midi >= minMidi && midi <= maxMidi) out.push(midi);
+        }
+      }
+      return out;
+    }
+    function generateDummyProgression() {
+      const dummy = [];
+      for (let i = 0; i < selectedChordCount; i++) {
+        dummy.push({ chordSymbol: "I" });
+      }
+      return dummy;
+    }
+
+    /***** NEW HELPER: Lighten a HEX color by a given fraction *****/
+    function lightenColor(hex, amount) {
+      hex = hex.replace('#', '');
+      let num = parseInt(hex, 16);
+      let r = (num >> 16) & 0xFF;
+      let g = (num >> 8) & 0xFF;
+      let b = num & 0xFF;
+      r = Math.round(r + (255 - r) * amount);
+      g = Math.round(g + (255 - g) * amount);
+      b = Math.round(b + (255 - b) * amount);
+      return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    }
+
+    /**
+     * Helper to desaturate a hex color for user pitch traces.
+     * @param {string} hex - The hex color (e.g., "#4dc3ff")
+     * @param {number} factor - Desaturation factor (0 to 1)
+     * @returns {string} - The desaturated hex color
+     */
+    function desaturateColor(hex, factor) {
+      // Remove # if present
+      hex = hex.replace(/^#/, '');
+      let r = parseInt(hex.substring(0, 2), 16);
+      let g = parseInt(hex.substring(2, 4), 16);
+      let b = parseInt(hex.substring(4, 6), 16);
+
+      // Convert RGB to HSL
+      r /= 255, g /= 255, b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h, s, l = (max + min) / 2;
+
+      if (max === min) {
+        h = s = 0; // achromatic
+      } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+
+      // Reduce saturation
+      s *= (1 - factor);
+
+      // Convert HSL back to RGB
+      const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+      };
+
+      let q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      let p = 2 * l - q;
+      r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+      g = Math.round(hue2rgb(p, q, h) * 255);
+      b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+
+      return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+    }
+
+    /***** HELPER FUNCTION: Get voice colour *****/
+    function getVoiceColor(v) {
+      if (userMuteStates[v] || (soloStates.some(s => s) && !soloStates[v])) {
+        return "#808080";
+      }
+      const colors = ["#4dc3ff", "#8ee4af", "#ffa94d", "#ff6b6b"];
+      return colors[v];
+    }
+    function updateDegreeGridOpacity(opacity) {
+      const degreeGridValue = document.getElementById("degreeGridValue");
+      degreeGridValue.textContent = opacity.toFixed(2);
+      const degElements = document.querySelectorAll(".degree-text, .degree-text-root");
+      degElements.forEach(el => {
+        el.style.opacity = opacity;
+      });
+    }
+    function forceReleaseAll() {
+      synths.forEach(s => s.triggerRelease());
+    }
+    function stopPlayback() {
+      if (currentPart) {
+        currentPart.dispose();
+        currentPart = null;
+      }
+      Tone.Transport.cancel(0);
+      Tone.Transport.stop();
+      forceReleaseAll();
+      
+      // Also stop all vocal players explicitly to be safe
+      stopVocalPlayback();
+      
+      isPlaying = false;
+      isPaused = false;
+      pausedChordIndex = null;
+      currentChordIndex = 0;
+      document.getElementById("playPauseBtn").textContent = "Play (space)";
+      document.getElementById("restartBtn").disabled = false;
+    }
+
+    /*--- Updated schedulePlayback(): now uses CSS classes for the pulse ---*/
+    function schedulePlayback(voicedChords, tempo) {
+      // Clean up any existing playback without resetting isPlaying flag
+      if (currentPart) {
+        currentPart.dispose();
+        currentPart = null;
+      }
+      Tone.Transport.cancel(0);
+      
+      // If we're explicitly stopping playback, use stopPlayback()
+      // But if we're in the middle of playback or changing things, don't reset flags
+      if (!isPlaying) {
+        stopPlayback();
+      } else {
+        // Make sure any hanging notes are released
+        forceReleaseAll();
+      }
+
+      Tone.Transport.bpm.value = tempo;
+      const chordDuration = "1n";
+      const events = [];
+      for (let i = 0; i < voicedChords.length; i++) {
+        const chord = voicedChords[i];
+        for (let v = 0; v < numVoices; v++) {
+          // Only include unmuted voices that have a valid MIDI note (not -1)
+          if (!userMuteStates[v] && chord.notes[v] !== -1) {
+            const midi = chord.notes[v];
+            const freq = Tone.Frequency(midi, "midi").toFrequency();
+            events.push({
+              time: i + "m",
+              voiceIdx: v,
+              freq,
+              chordIndex: i
+            });
+          }
+        }
+      }
+
+      
+      currentPart = new Tone.Part((schedTime, ev) => {
+        if (ev.time === "0m") {
+          synths[ev.voiceIdx].triggerAttack(ev.freq, schedTime, 1);
+        } else {
+          synths[ev.voiceIdx].setNote(ev.freq, schedTime);
+        }
+        // When voiceIdx===0, record the current chord index and (if available) trigger the pulse for the chord column
+        if (ev.voiceIdx === 0) {
+          currentChordIndex = ev.chordIndex;
+          if (chordHighlightRects && chordHighlightRects.length) {
+            chordHighlightRects.forEach(rect => rect.setAttribute("fill", "none"));
+            if (chordHighlightRects[ev.chordIndex]) {
+              chordHighlightRects[ev.chordIndex].setAttribute("fill", "#c864c8");
+              Tone.Transport.scheduleOnce(() => {
+                if (chordHighlightRects[ev.chordIndex]) {
+                  chordHighlightRects[ev.chordIndex].setAttribute("fill", "none");
+                }
+              }, schedTime + Tone.Time(chordDuration));
+            }
+          }
+
+          // Loop over all marker circles in this chord column using rise and decay classes
+          for (let v = 0; v < numVoices; v++) {
+            const marker = document.getElementById("marker-circle-" + ev.chordIndex + "-" + v);
+            if (marker) {
+              const origColor = getVoiceColor(v);
+              const pulseColor = lightenColor(origColor, 0.4);
+              marker.style.setProperty('--pulse-stroke', pulseColor);
+              marker.classList.add("marker-rise");
+              setTimeout(() => {
+                marker.classList.remove("marker-rise");
+                marker.classList.add("marker-decay");
+                setTimeout(() => {
+                  marker.classList.remove("marker-decay");
+                }, 1000);
+              }, 200);
+            }
+          }
+        }
+      }, events).start(0);
+      
+      currentPart.loop = true;
+      currentPart.loopEnd = voicedChords.length + "m";
+
+      // Also set the Transport to loop so that synced vocal players follow the loop
+      Tone.Transport.loop = true;
+      Tone.Transport.loopEnd = voicedChords.length + "m";
+      
+      // We're now in a playing state, although transport may be started later
+      isPlaying = true;
+      document.getElementById("playPauseBtn").textContent = "Pause (space)";
+      
+      // When starting fresh playback, ensure pause/resume buttons are in the correct state
+      if (!isPaused) {
+        document.getElementById("restartBtn").disabled = true;
+      }
+      
+      // Re-sync all vocal players after cancel(0)
+      syncAllVocalPlayers();
+
+      // Ensure click track is active if enabled (cancel(0) stops it)
+      if (clickTrackEnabled) {
+        startClickTrack();
+      }
+
+      // Schedule micro-fades for vocal loops to prevent clicks at the end/start of loop
+      const loopTime = voicedChords.length + "m";
+      vocalFaderGains.forEach(gainNode => {
+        if (gainNode) {
+          // Fade out slightly before the loop end
+          Tone.Transport.scheduleRepeat((time) => {
+            gainNode.gain.setValueAtTime(1, time - 0.05);
+            gainNode.gain.linearRampToValueAtTime(0, time);
+            gainNode.gain.linearRampToValueAtTime(1, time + 0.05);
+          }, loopTime);
+        }
+      });
+    }
+    function updateMutes() {
+      for (let v = 0; v < numVoices; v++) {
+        const slider = document.querySelector(`.voice-volume[data-voice="${v}"]`);
+        const sliderValDb = parseFloat(slider.value);
+        // Convert dB to linear gain: linear = 10^(db/20)
+        const linearGain = Math.pow(10, sliderValDb / 20);
+        
+        // Mute logic: a voice is audible if (not muted by user) AND (no one is soloed OR I am soloed)
+        const isSoloActive = soloStates.some(s => s);
+        const shouldBeAudible = !userMuteStates[v] && (!isSoloActive || soloStates[v]);
+        
+        // Apply to synth
+        if (synths[v]) {
+          // RESPECT playSynthEnabled TOGGLE
+          if (shouldBeAudible && playSynthEnabled) {
+            voiceGains[v].gain.rampTo(linearGain, 0.1);
+          } else {
+            voiceGains[v].gain.rampTo(0, 0.1);
+          }
+        }
+        
+        // Apply to vocal player
+        if (vocalGains[v]) {
+          // RESPECT playVocalsEnabled TOGGLE
+          // Also, if we are currently recording this voice, we should mute the player to avoid feedback
+          const isCurrentlyRecordingThisVoice = isRecording && recordingVoiceIndex === v;
+          if (shouldBeAudible && playVocalsEnabled && !isCurrentlyRecordingThisVoice) {
+            // Apply a +6dB boost to vocals to help them cut through the synth
+            const vocalBoost = Math.pow(10, 6 / 20); 
+            vocalGains[v].gain.rampTo(linearGain * vocalBoost, 0.1);
+          } else {
+            vocalGains[v].gain.rampTo(0, 0.1);
+          }
+        }
+
+        // Update UI
+        const muteBtn = document.querySelector(`.mute-btn[data-voice="${v}"]`);
+        const soloBtn = document.querySelector(`.solo-btn[data-voice="${v}"]`);
+        if (muteBtn) muteBtn.classList.toggle('active', userMuteStates[v]);
+        if (soloBtn) soloBtn.classList.toggle('active', soloStates[v]);
+      }
+      
+      // Redraw traces to reflect mute state colors
+      redrawAllPitchTraces();
+    }
+    function toggleMute(voiceIdx) {
+      userMuteStates[voiceIdx] = !userMuteStates[voiceIdx];
+      updateMutes();
+    }
+    function toggleSolo(voiceIdx) {
+      soloStates[voiceIdx] = !soloStates[voiceIdx];
+      updateMutes();
+    }
+    function updateCreateModeMarkers() {
+      const svg = document.getElementById("chordSvg");
+      // Remove any existing Create Mode markers AND lines
+      const oldMarkers = svg.querySelectorAll(".create-marker, .create-marker-text, .create-marker-path");
+      oldMarkers.forEach(el => el.remove());
+
+      // --- 1) Draw connecting lines for each voice ---
+      for (let voice = 0; voice < numVoices; voice++) {
+        // Gather all marker points in this voice
+        const points = [];
+        if (createModeMarkers[voice]) {
+          createModeMarkers[voice].forEach((marker) => {
+            if (marker) points.push({ x: marker.x, y: marker.y });
+          });
+        }
+        // If fewer than 2 markers, no path to draw
+        if (points.length < 2) continue;
+
+        // Build a smooth path using Q (quadratic) segments
+        let dPath = `M ${points[0].x} ${points[0].y} `;
+        for (let i = 1; i < points.length; i++) {
+          const prev = points[i - 1];
+          const curr = points[i];
+          // Midpoint for the Q curve
+          const midX = (prev.x + curr.x) / 2;
+          const midY = (prev.y + curr.y) / 2;
+          dPath += `Q ${midX} ${midY}, ${curr.x} ${curr.y} `;
+        }
+
+        // Create a <path> element and style it
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", dPath);
+        path.setAttribute("stroke", getVoiceColor(voice));
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke-width", "2");
+        // Add a class so we can remove it later
+        path.classList.add("create-marker-path");
+        svg.appendChild(path);
+      }
+
+      // --- 2) Draw the circle markers and text labels ---
+      for (let voice = 0; voice < numVoices; voice++) {
+        if (!createModeMarkers[voice]) continue;
+        createModeMarkers[voice].forEach((marker, colIndex) => {
+          if (marker) {
+            // Circle marker
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("cx", marker.x);
+            circle.setAttribute("cy", marker.y);
+            circle.setAttribute("r", "12");
+            circle.setAttribute("class", "voice-marker create-marker");
+            circle.setAttribute("id", "marker-circle-" + colIndex + "-" + voice);
+            circle.setAttribute("stroke", getVoiceColor(voice));
+            circle.setAttribute("fill", "#1f1f1f");
+            circle.setAttribute("stroke-width", "2");
+            svg.appendChild(circle);
+
+            // Text label
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("x", marker.x);
+            text.setAttribute("y", marker.y);
+            text.setAttribute("text-anchor", "middle");
+            text.setAttribute("dominant-baseline", "middle");
+            text.setAttribute("font-size", "16px");
+            text.setAttribute("fill", "#fff");
+            text.textContent = marker.degree;
+            text.classList.add("create-marker-text");
+            svg.appendChild(text);
+          }
+        });
+      }
+      
+    }
+    // ----- BEGIN: Marker-to-MIDI Conversion Functions -----
+    function convertDegreeToMidi(degreeStr, key, isMinor, voiceIndex, rowIndex) {
+      // Define base octave for each voice (adjust these values as needed)
+      // These represent the base octave for the BOTTOM 1–7 block of the grid.
+      // Higher rows (rowIndex) will add octave blocks on top of this.
+      const voiceOctaves = [4, 4, 4, 3]; // Soprano, Alto, Tenor, Bass (align S/A/T)
+      const baseOctave = voiceOctaves[voiceIndex] || 4;
+      let accidental = 0;
+      let degreeNumberStr = degreeStr;
+      if (degreeStr.startsWith("♭")) {
+        accidental = -1;
+        degreeNumberStr = degreeStr.slice(1);
+      }
+      let degreeNumber = parseInt(degreeNumberStr, 10);
+      if (isNaN(degreeNumber) || degreeNumber < 1 || degreeNumber > 7) {
+        degreeNumber = 1; // default to tonic if invalid
+      }
+      // Use the appropriate scale array: majorScale or naturalMinorScale
+      const scaleArray = isMinor ? naturalMinorScale : majorScale;
+      let semitoneOffset = scaleArray[degreeNumber - 1] + accidental;
+      // Get the tonic's semitone value from the global noteToSemitone lookup
+      let tonic = noteToSemitone[key.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      // Determine octave block from the clicked grid row. Each 7-row group is one octave.
+      // Bottom block (rows 1–7) => blockIndex 0; rows 8–14 => 1; rows 15–21 => 2; etc.
+      let blockIndex = Math.floor(Math.max(1, rowIndex || 1) - 1) / 7 | 0;
+      // Allow top-capping "1" row to be one octave above the preceding 7.
+      // Grid has 3 full 1–7 blocks plus a top 1 => permit block index up to 3.
+      if (blockIndex > 3) blockIndex = 3;
+      const octave = baseOctave + blockIndex;
+      // Compute the MIDI note: octave * 12 plus the note (mod 12)
+      // Within a block: 1 is lowest, 7 is highest. No special-casing.
+      let midiNote = octave * 12 + ((tonic + semitoneOffset) % 12);
+      if (midiNote < 0) midiNote += 12;
+      return midiNote;
+    }
+
+    function convertCreateMarkersToMidi() {
+      const progression = [];
+      // Loop over each column (the number of columns is determined by selectedChordCount)
+      for (let col = 0; col < selectedChordCount; col++) {
+        const chordNotes = [];
+        // For each voice, check if a marker exists in this column
+        for (let voice = 0; voice < numVoices; voice++) {
+          if (createModeMarkers[voice] && createModeMarkers[voice][col]) {
+            const marker = createModeMarkers[voice][col];
+            // Convert the marker's degree label into a MIDI note using the current key and mode,
+            // and derive the octave from the stored row index.
+            const midi = convertDegreeToMidi(marker.degree, currentKey, keyIsMinor, voice, marker.row);
+            chordNotes[voice] = midi;
+          } else {
+            // Use -1 to indicate no note (silence) for this voice in this column
+            chordNotes[voice] = -1;
+          }
+        }
+        // Store the chord as an object with a 'notes' property to match the structure used in playback
+        progression.push({ notes: chordNotes });
+      }
+      console.log("Converted Create Mode progression:", progression);
+      return progression;
+    }
+    // ----- END: Marker-to-MIDI Conversion Functions -----
+
+
+
+
+    let currentSynthIndex = null;
+    const synthControlPanel = document.getElementById("synthControlPanel");
+    const cutoffSlider = document.getElementById("cutoffSlider");
+    const cutoffVal = document.getElementById("cutoffVal");
+    const panSlider = document.getElementById("panSlider");
+    const panVal = document.getElementById("panVal");
+    const portamentoSlider = document.getElementById("portamentoSlider");
+    const portamentoVal = document.getElementById("portamentoVal");
+    const synthControlHeader = document.getElementById("synthControlHeader");
+    const closeSynthPanel = document.getElementById("closeSynthPanel");
+
+    document.querySelectorAll(".voice-controls label").forEach(label => {
+  label.addEventListener("click", (e) => {
+    const voice = e.target.getAttribute("data-voice");
+    const voiceIndex = parseInt(voice, 10);
+
+    // If the panel is open and the current synth is the same as the clicked voice,
+    // then toggle it closed.
+    if (synthControlPanel.style.display === "block" && currentSynthIndex === voiceIndex) {
+      synthControlPanel.style.display = "none";
+      currentSynthIndex = null;
+    } else {
+      // Otherwise, update the panel for the selected voice.
+      currentSynthIndex = voiceIndex;
+      synthControlHeader.textContent = e.target.textContent + " Synth Controls";
+      cutoffSlider.value = synthFilters[currentSynthIndex].frequency.value;
+      cutoffVal.textContent = Math.round(synthFilters[currentSynthIndex].frequency.value);
+      panSlider.value = synthPanners[currentSynthIndex].pan.value;
+      panVal.textContent = synthPanners[currentSynthIndex].pan.value.toFixed(2);
+      portamentoSlider.value = synths[currentSynthIndex].portamento * 1000;
+      portamentoVal.textContent = (synths[currentSynthIndex].portamento * 1000).toFixed(0);
+      synthControlPanel.style.display = "block";
+    }
+  });
+});
+
+    closeSynthPanel.addEventListener("click", () => {
+      synthControlPanel.style.display = "none";
+    });
+    cutoffSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      cutoffVal.textContent = Math.round(val);
+      if (currentSynthIndex !== null) {
+        synthFilters[currentSynthIndex].frequency.value = val;
+      }
+    });
+    panSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      panVal.textContent = val.toFixed(2);
+      if (currentSynthIndex !== null) {
+        synthPanners[currentSynthIndex].pan.value = val;
+        // Also update vocal panner to match
+        if (vocalPanners[currentSynthIndex]) {
+          vocalPanners[currentSynthIndex].pan.value = val;
+        }
+      }
+    });
+    portamentoSlider.addEventListener("input", (e) => {
+      const msVal = parseFloat(e.target.value);
+      portamentoVal.textContent = msVal.toFixed(0);
+      if (currentSynthIndex !== null) {
+        synths[currentSynthIndex].portamento = msVal / 1000;
+      }
+    });
+
+    const chorusBtn = document.getElementById("chorusBtn");
+    const chorusPanel = document.getElementById("chorusControlPanel");
+    const closeChorusPanel = document.getElementById("closeChorusPanel");
+
+    const chorusFrequencySlider = document.getElementById("chorusFrequency");
+    const chorusFrequencyVal = document.getElementById("chorusFrequencyVal");
+
+    const chorusDelaySlider = document.getElementById("chorusDelay");
+    const chorusDelayVal = document.getElementById("chorusDelayVal");
+
+    const chorusDepthSlider = document.getElementById("chorusDepth");
+    const chorusDepthVal = document.getElementById("chorusDepthVal");
+
+    const chorusFeedbackSlider = document.getElementById("chorusFeedback");
+    const chorusFeedbackVal = document.getElementById("chorusFeedbackVal");
+
+    const chorusSpreadSlider = document.getElementById("chorusSpread");
+    const chorusSpreadVal = document.getElementById("chorusSpreadVal");
+
+    const chorusWetSlider = document.getElementById("chorusWet");
+    const chorusWetVal = document.getElementById("chorusWetVal");
+
+    chorusBtn.addEventListener("click", () => {
+      chorusPanel.style.display = "block";
+    });
+    closeChorusPanel.addEventListener("click", () => {
+      chorusPanel.style.display = "none";
+    });
+    chorusFrequencySlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusFrequencyVal.textContent = val;
+      globalChorus.frequency.value = val;
+    });
+    chorusDelaySlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusDelayVal.textContent = val;
+      globalChorus.delayTime = val;
+    });
+    chorusDepthSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusDepthVal.textContent = val;
+      globalChorus.depth = val;
+    });
+    chorusFeedbackSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusFeedbackVal.textContent = val;
+      globalChorus.feedback = val;
+    });
+    chorusSpreadSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusSpreadVal.textContent = val;
+      globalChorus.spread = val;
+    });
+    chorusWetSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusWetVal.textContent = val;
+      globalChorus.wet.value = val;
+    });
+
+    const keyToggleBtn = document.getElementById("keyToggleBtn");
+    const relativeModeBtn = document.getElementById("relativeModeBtn");
+    const toggleChordDisplayBtn = document.getElementById("toggleChordDisplayBtn");
+    const generateBtn = document.getElementById("generateBtn");
+    const playPauseBtn = document.getElementById("playPauseBtn");
+    const restartBtn = document.getElementById("restartBtn");
+    const tempoSliderEl = document.getElementById("tempoSlider");
+    const tempoValueEl = document.getElementById("tempoValue");
+    const masterVolumeSliderEl = document.getElementById("masterVolumeSlider");
+    const masterVolumeValueEl = document.getElementById("masterVolumeValue");
+    const degreeGridSliderEl = document.getElementById("degreeGridSlider");
+    const degreeGridValueEl = document.getElementById("degreeGridValue");
+    const currentKeyDisplay = document.getElementById("currentKeyDisplay");
+    const invertBtn = document.getElementById("invertBtn");
+
+    // Transcribe Mode elements
+    const transcribeModeToggleBtn = document.getElementById("transcribeModeToggleBtn");
+    const transcribeSubmitBtn = document.getElementById("transcribeSubmitBtn");
+
+    // Event listener for Create Mode button
+    const createModeToggleBtn = document.getElementById("createModeToggleBtn");
+    createModeToggleBtn.addEventListener("click", () => {
+      createModeEnabled = !createModeEnabled;
+      createModeToggleBtn.textContent = "Create Mode: " + (createModeEnabled ? "ON" : "OFF");
+
+      if (createModeEnabled) {
+        // Entering Create Mode: stop playback and show a blank degree grid
+        stopPlayback();
+        currentProgression = [];
+        currentVoicedChords = null; // Play button should require markers
+        createModeMarkers = [[], [], [], []];
+        drawProgression([]);
+        updateSvgSize();
+      } else {
+        // Leaving Create Mode: fully clear Create state and visuals (contours)
+        clearCreateModeAll();
+      }
+
+      // Disable Transcribe Mode when toggling Create Mode
+      transcribeModeEnabled = false;
+      document.getElementById("transcribeModeToggleBtn").textContent = "Transcribe Mode: OFF";
+
+      // Update UI visibility controls
+      document.querySelectorAll(".transcribe-radio").forEach(el => {
+        el.style.display = (transcribeModeEnabled || createModeEnabled) ? "inline-block" : "none";
+      });
+      document.querySelectorAll(".clear-btn").forEach(el => {
+        el.style.display = (transcribeModeEnabled || createModeEnabled) ? "inline-block" : "none";
+      });
+    });
+
+
+    playPauseBtn.addEventListener("click", async () => {
+      // If Create Mode is enabled, convert user markers to MIDI notes for playback
+      if (createModeEnabled) {
+        currentVoicedChords = convertCreateMarkersToMidi();
+        // Check if any marker was placed; if not, alert and exit
+        let hasMarkers = currentVoicedChords.some(chord => chord.notes.some(note => note !== -1));
+        if (!hasMarkers) {
+          alert("No markers placed in Create Mode!");
+          return;
+        }
+      }
+
+      if (!currentVoicedChords) {
+        alert("No chords generated yet! Click Generate first.");
+        return;
+      }
+      
+      // Proper pause functionality
+      if (isPlaying && !isPaused) {
+        forceReleaseAll();
+        pausedChordIndex = currentChordIndex;
+        Tone.Transport.pause();
+        isPaused = true;
+        playPauseBtn.textContent = "Play (space)";
+        restartBtn.disabled = false;
+      }
+      // If paused, resume playback
+      else if (isPlaying && isPaused) {
+        // Re-trigger the paused chord so sound is heard immediately
+        const resumeDelay = 0.1;
+        const resumeTime = Tone.now() + resumeDelay;
+        const chord = currentVoicedChords[pausedChordIndex];
+        if (chord) {
+          for (let v = 0; v < numVoices; v++) {
+            if (!userMuteStates[v]) { // Only play unmuted voices
+              const midi = chord.notes[v];
+              const freq = Tone.Frequency(midi, "midi").toFrequency();
+              synths[v].triggerAttack(freq, resumeTime, 1);
+            }
+          }
+          
+          // Trigger animation for the first chord markers if we're resuming from the beginning
+          if (pausedChordIndex === 0) {
+            for (let v = 0; v < numVoices; v++) {
+              const marker = document.getElementById("marker-circle-0-" + v);
+              if (marker) {
+                const origColor = getVoiceColor(v);
+                const pulseColor = lightenColor(origColor, 0.4);
+                marker.style.setProperty('--pulse-stroke', pulseColor);
+                marker.classList.add("marker-rise");
+                setTimeout(() => {
+                  marker.classList.remove("marker-rise");
+                  marker.classList.add("marker-decay");
+                  setTimeout(() => {
+                    marker.classList.remove("marker-decay");
+                  }, 1000);
+                }, 200);
+              }
+            }
+          }
+        }
+        
+        // Restart the click track schedule (it was cleared by Transport.cancel or pause)
+        if (clickTrackEnabled) {
+          startClickTrack();
+        }
+        
+        Tone.Transport.start("+" + resumeDelay, pausedChordIndex + "m");
+        isPaused = false;
+        playPauseBtn.textContent = "Pause (space)";
+        restartBtn.disabled = false;
+      }
+      // If not playing at all, start fresh playback
+      else {
+        await Tone.start();
+        currentTempo = parseInt(tempoSliderEl.value, 10);
+        Tone.Transport.bpm.value = currentTempo;
+        schedulePlayback(currentVoicedChords, currentTempo);
+        Tone.Transport.start("+0.1");
+        playPauseBtn.textContent = "Pause (space)";
+        restartBtn.disabled = false;
+      }
+    });
+
+    restartBtn.addEventListener("click", () => {
+      if (!currentVoicedChords) {
+        alert("No chords generated yet! Click Generate first.");
+        return;
+      }
+      
+      // Reset to first chord
+      Tone.Transport.position = "0m";
+      currentChordIndex = 0;
+      
+      // If currently playing, stop and restart from beginning
+      if (isPlaying && !isPaused) {
+        // Update highlighting for chord 0
+        chordHighlightRects.forEach(rect => rect.setAttribute("fill", "none"));
+        if (chordHighlightRects[0]) {
+          chordHighlightRects[0].setAttribute("fill", "#c864c8");
+        }
+      } 
+      // If paused, just update the paused position
+      else if (isPlaying && isPaused) {
+        pausedChordIndex = 0;
+        // Update the chord highlight box to show the first chord when paused
+        chordHighlightRects.forEach(rect => rect.setAttribute("fill", "none"));
+        if (chordHighlightRects[0]) {
+          chordHighlightRects[0].setAttribute("fill", "#c864c8");
+        }
+      }
+      // If not playing at all, just reset the position
+      else {
+        // Update highlighting for chord 0
+        chordHighlightRects.forEach(rect => rect.setAttribute("fill", "none"));
+        if (chordHighlightRects[0]) {
+          chordHighlightRects[0].setAttribute("fill", "#c864c8");
+        }
+      }
+    });
+
+    invertBtn.addEventListener("click", async () => {
+      isInverted = !isInverted;
+      invertBtn.textContent = "Invert: " + (isInverted ? "ON" : "OFF");
+      
+      if (baseVoicedChords) {
+        // Save current state
+        const wasPlaying = isPlaying;
+        const wasPaused = isPaused;
+        let currentPosition = "0m";
+        let currentIdx = 0;
+        
+        if (wasPlaying) {
+          // If we're playing or paused, capture the current position
+          currentPosition = Tone.Transport.position;
+          currentIdx = wasPaused ? pausedChordIndex : currentChordIndex;
+          
+          // First release all notes to avoid hanging audio
+          forceReleaseAll();
+          
+          // If we're actively playing (not paused), pause the transport
+          if (!wasPaused) {
+            // Pause the transport
+            Tone.Transport.pause();
+            isPaused = true;
+            pausedChordIndex = currentIdx;
+            
+            // Update UI for paused state
+            document.getElementById("playPauseBtn").textContent = "Play (space)";
+            document.getElementById("restartBtn").disabled = false;
+          }
+          
+          // Stop the current part but don't reset other state yet
+          if (currentPart) {
+            currentPart.dispose();
+            currentPart = null;
+          }
+        }
+        
+        // Create a fresh copy of the progression with or without inversion
+        let newChords = JSON.parse(JSON.stringify(baseVoicedChords));
+        if (isInverted) {
+          applyInversion(newChords);
+        }
+        
+        // Update the current progression
+        currentVoicedChords = newChords;
+        drawProgression(currentVoicedChords);
+        
+        // If it was playing before, handle it
+        if (wasPlaying) {
+          // Ensure Tone.js is started
+          await Tone.start();
+          
+          // Create a new part but don't start the transport
+          schedulePlayback(currentVoicedChords, currentTempo);
+          
+          // Set the transport position
+          Tone.Transport.position = currentPosition;
+          
+          // Make sure it's in the correct state (paused)
+          isPaused = true;
+          pausedChordIndex = currentIdx;
+          
+          // Update UI for paused state
+          document.getElementById("playPauseBtn").textContent = "Play (space)";
+          document.getElementById("restartBtn").disabled = false;
+          
+          // Highlight the correct chord
+          chordHighlightRects.forEach(rect => rect.setAttribute("fill", "none"));
+          if (chordHighlightRects[pausedChordIndex]) {
+            chordHighlightRects[pausedChordIndex].setAttribute("fill", "#c864c8");
+          }
+        }
+      }
+    });
+
+    tempoSliderEl.addEventListener("input", e => {
+      currentTempo = parseInt(e.target.value, 10);
+      tempoValueEl.textContent = Math.round(currentTempo / 2);
+      Tone.Transport.bpm.value = currentTempo;
+    });
+    tempoSliderEl.addEventListener("dblclick", () => {
+      tempoSliderEl.value = 200;
+      currentTempo = 200;
+      tempoValueEl.textContent = Math.round(currentTempo / 2);
+      Tone.Transport.bpm.value = currentTempo;
+    });
+
+    keyToggleBtn.addEventListener("click", () => {
+      keyIsMinor = !keyIsMinor;
+      keyToggleBtn.textContent = keyIsMinor ? "Minor Key" : "Major Key";
+    });
+    relativeModeBtn.addEventListener("click", () => {
+      relativeMode = !relativeMode;
+      relativeModeBtn.textContent = "Relative Mode: " + (relativeMode ? "ON" : "OFF");
+      if (currentVoicedChords) drawProgression(currentVoicedChords);
+    });
+    toggleChordDisplayBtn.addEventListener("click", () => {
+      displayRoman = !displayRoman;
+      toggleChordDisplayBtn.textContent = displayRoman ? "Display Chord Names" : "Display Roman";
+      if (currentVoicedChords) drawProgression(currentVoicedChords);
+    });
+    degreeGridSliderEl.addEventListener("input", e => {
+      const val = parseFloat(e.target.value);
+      updateDegreeGridOpacity(val);
+    });
+
+    transcribeModeToggleBtn.addEventListener("click", () => {
+      // Toggle the transcribe mode state
+      transcribeModeEnabled = !transcribeModeEnabled;
+      
+      // Update button text
+      transcribeModeToggleBtn.textContent = "Transcribe Mode: " + (transcribeModeEnabled ? "ON" : "OFF");
+      
+      // Display the submit button
+      transcribeSubmitBtn.style.display = transcribeModeEnabled ? "inline-block" : "none";
+      
+      // Initialize empty transcriptions when entering transcribe mode
+      if (transcribeModeEnabled) {
+        userTranscriptions = [[], [], [], []];
+      }
+      
+      // Always trigger Generate when toggling Transcribe Mode
+      document.dispatchEvent(new KeyboardEvent('keydown', { 'key': 'g' }));
+      
+      // Show/hide chord SVG elements based on transcribe mode
+      const melodyPaths = document.querySelectorAll("path:not(.transcribe-path)");
+      melodyPaths.forEach(el => {
+        el.style.display = transcribeModeEnabled ? "none" : "block";
+      });
+      
+      // Show/hide chord names based on transcribe mode
+      const chordNames = document.querySelectorAll("text.chord-name-text");
+      chordNames.forEach(el => {
+        el.style.display = transcribeModeEnabled ? "none" : "block";
+      });
+      
+      // Redraw the progression with updated mode
+      if (currentVoicedChords) {
+        drawProgression(currentVoicedChords);
+      }
+      
+      // Update other UI elements based on transcribe mode state
+      if (transcribeModeEnabled) {
+        relativeModeBtn.disabled = true;
+        relativeModeBtn.style.opacity = "0.5";
+        relativeMode = false;
+        relativeModeBtn.textContent = "Relative Mode: OFF";
+
+        invertBtn.disabled = true;
+        invertBtn.style.opacity = "0.5";
+        isInverted = false;
+        invertBtn.textContent = "Invert: OFF";
+
+        degreeGridSliderEl.disabled = true;
+        degreeGridSliderEl.value = 1;
+        degreeGridValueEl.textContent = "1.00";
+        updateDegreeGridOpacity(1);
+      } else {
+        relativeModeBtn.disabled = false;
+        relativeModeBtn.style.opacity = "1";
+        invertBtn.disabled = false;
+        invertBtn.style.opacity = "1";
+        degreeGridSliderEl.disabled = false;
+      }
+      
+      // Show/hide transcribe radio buttons
+      document.querySelectorAll(".transcribe-radio").forEach(el => {
+        el.style.display = (transcribeModeEnabled || createModeEnabled) ? "inline-block" : "none";
+      });
+      
+      // Show/hide clear buttons
+      document.querySelectorAll(".clear-btn").forEach(el => {
+        el.style.display = (transcribeModeEnabled || createModeEnabled) ? "inline-block" : "none";
+      });
+      
+      // Update transcribe markers if in transcribe mode
+      if (transcribeModeEnabled) {
+        updateTranscribeMarkers();
+        updateActiveVoiceHitboxes();
+      }
+    });
+
+    transcribeSubmitBtn.addEventListener("click", () => {
+      for (let voice = 0; voice < numVoices; voice++) {
+        for (let i = 0; i < currentVoicedChords.length; i++) {
+          let userMarker = userTranscriptions[voice][i];
+          if (userMarker) {
+            let correctDegree = currentVoicedChords[i].voiceDegrees[voice];
+            let markerTextEl = document.querySelector(`text.transcribe-marker-text[data-chord-index="${i}"][data-voice="${voice}"]`);
+            if (markerTextEl) {
+              if (parseInt(userMarker.degree) === correctDegree) {
+                markerTextEl.setAttribute("fill", "green");
+              } else {
+                markerTextEl.setAttribute("fill", "red");
+              }
+            }
+          }
+        }
+      }
+    });
+
+    function onTranscribeGridClick(e) {
+      if (!transcribeModeEnabled) return;
+      
+      // Find the group element that has the data-chord-index attribute
+      let target = e.target;
+      while (target && !target.hasAttribute("data-chord-index")) {
+        target = target.parentNode;
+      }
+      
+      if (!target) return;
+      
+      const chordIndex = parseInt(target.getAttribute("data-chord-index"), 10);
+      if (isNaN(chordIndex)) return;
+      
+      const bbox = target.getBBox();
+      const centerX = bbox.x + bbox.width / 2;
+      const centerY = bbox.y + bbox.height / 2;
+      const textContent = target.querySelector("text")?.textContent || "";
+      const degreeMatch = textContent.match(/\d+/);
+      if (!degreeMatch) return;
+      const chosenDegree = parseInt(degreeMatch[0]);
+      const activeVoice = parseInt(document.querySelector('input[name="transcribeVoice"]:checked').value);
+      userTranscriptions[activeVoice][chordIndex] = { degree: chosenDegree, x: centerX, y: centerY };
+      updateTranscribeMarkers();
+    }
+
+    function onCreateGridClick(e) {
+      if (!createModeEnabled) return; // Only process clicks in Create Mode
+      const svg = document.getElementById("chordSvg");
+      let pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      let svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
+      
+      // Recalculate grid parameters (same as in drawProgression for Create Mode)
+      const numColumns = selectedChordCount;
+      const chordWidth = 120;
+      const totalWidth = chordWidth * numColumns;
+      const viewBoxWidth = getViewBoxWidth(numColumns);
+      const xOffset = viewBoxWidth > totalWidth ? (viewBoxWidth - totalWidth) / 2 : 0;
+      const topMargin = 50;
+      const gridBottom = topMargin + (numRows - 1) * rowSpacing;
+      
+      // Determine which column was clicked
+      let colIndex = Math.floor((svgP.x - xOffset) / chordWidth);
+      if (colIndex < 0 || colIndex >= numColumns) return;
+      
+      // Determine the closest row (the grid was drawn with rows 1 to numRows)
+      let rowIndex = Math.round((gridBottom - svgP.y) / rowSpacing) + 1;
+      rowIndex = Math.max(1, Math.min(rowIndex, numRows));
+      
+      // Calculate the center position for the marker
+      const colCenterX = xOffset + colIndex * chordWidth + chordWidth / 2;
+      const baseRowY = gridBottom - (rowIndex - 1) * rowSpacing;
+      const markerY = baseRowY + MARKER_CIRCLE_OFFSET;
+      
+      // Compute the scale degree label for this row
+      let degree = ((rowIndex - 1) % 7) + 1;
+      let degreeLabel;
+      if (!keyIsMinor) {
+        degreeLabel = degree.toString();
+      } else {
+        if (degree === 3) degreeLabel = "♭3";
+        else if (degree === 6) degreeLabel = "♭6";
+        else if (degree === 7) degreeLabel = "♭7";
+        else degreeLabel = degree.toString();
+      }
+      
+      // Get the active voice (using the same radio button selector as Transcribe Mode)
+      const activeVoice = parseInt(document.querySelector('input[name="transcribeVoice"]:checked').value);
+      
+      // Store the marker for this voice at the clicked column
+      if (!createModeMarkers[activeVoice]) {
+        createModeMarkers[activeVoice] = [];
+      }
+      // Store rowIndex to recover the octave block during MIDI conversion
+      createModeMarkers[activeVoice][colIndex] = { degree: degreeLabel, x: colCenterX, y: markerY, row: rowIndex };
+      
+      // Update the grid display to show the new marker
+      updateCreateModeMarkers();
+    }
+
+
+    function updateTranscribeMarkers() {
+      if (!transcribeModeEnabled) return;
+      const svg = document.getElementById("chordSvg");
+      const oldMarkers = svg.querySelectorAll(".transcribe-marker, .transcribe-marker-text, .transcribe-path");
+      oldMarkers.forEach(el => el.remove());
+      const chordCount = currentVoicedChords.length;
+      const chordWidth = 120;
+      const totalWidth = chordWidth * chordCount;
+      const viewBoxWidth = getViewBoxWidth(chordCount);
+      const xOffset = viewBoxWidth > totalWidth ? (viewBoxWidth - totalWidth) / 2 : 0;
+
+      const topMargin = 50;
+      const gridBottom = topMargin + (numRows - 1) * rowSpacing;
+      
+      // Get active voice for stacking order
+      const activeVoice = parseInt(document.querySelector('input[name="transcribeVoice"]:checked').value);
+      
+      // Store markers for drawing paths
+      const voiceMarkers = [[],[],[],[]];
+      
+      // First, create and store all markers but don't append them yet
+      const allMarkers = [];
+      const nonActiveMarkers = [];
+      const activeMarkers = [];
+      
+      // Draw connecting paths first (they should be at the bottom)
+      for (let voice = 0; voice < numVoices; voice++) {
+        // First pass: create all markers for each voice
+        for (let i = 0; i < chordCount; i++) {
+          const userMarker = userTranscriptions[voice][i];
+          if (userMarker) {
+            // Create circle element
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("cx", userMarker.x);
+            circle.setAttribute("cy", userMarker.y);
+            circle.setAttribute("r", "12");
+            circle.setAttribute("class", "transcribe-marker");
+            circle.setAttribute("id", "marker-circle-" + i + "-" + voice);
+            circle.setAttribute("stroke", getVoiceColor(voice));
+            circle.setAttribute("fill", "#1f1f1f");
+            circle.setAttribute("stroke-width", "2");
+            circle.setAttribute("data-voice", voice);
+            
+            // Create text element
+            const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            textEl.setAttribute("x", userMarker.x);
+            textEl.setAttribute("y", userMarker.y);
+            textEl.setAttribute("text-anchor", "middle");
+            textEl.setAttribute("dominant-baseline", "middle");
+            textEl.setAttribute("font-size", "16px");
+            textEl.setAttribute("fill", "#fff");
+            textEl.setAttribute("class", "transcribe-marker-text");
+            textEl.setAttribute("data-chord-index", i);
+            textEl.setAttribute("data-voice", voice);
+            const isVChord = currentVoicedChords[i].chordSymbol === "V";
+            textEl.textContent = keyIsMinor ? 
+              (userMarker.degree === 3 ? '♭3' : 
+               userMarker.degree === 6 ? '♭6' : 
+               (userMarker.degree === 7 && !isVChord) ? '♭7' : 
+               userMarker.degree) : 
+              userMarker.degree;
+            
+            // Always set pointer-events to none on text to ensure they don't interfere with clicks
+            textEl.style.pointerEvents = "none";
+            
+            // Sort markers into active and non-active groups based on current voice
+            if (voice === activeVoice) {
+              activeMarkers.push(circle);
+              activeMarkers.push(textEl);
+            } else {
+              nonActiveMarkers.push(circle);
+              nonActiveMarkers.push(textEl);
+            }
+            
+            voiceMarkers[voice].push({ x: userMarker.x, y: userMarker.y });
+          }
+        }
+      }
+      
+      // Draw voice connecting paths first (at the bottom)
+      for (let voice = 0; voice < numVoices; voice++) {
+        const markers = voiceMarkers[voice];
+        if (markers.length > 1) {
+          let dPath = "";
+          for (let j = 0; j < markers.length; j++) {
+            const pt = markers[j];
+            if (j === 0) {
+              dPath += `M ${pt.x} ${pt.y} `;
+            } else {
+            const prevPt = markers[j-1];
+            const circleRadius = 12;
+            const bendWidth = Math.min(40, (pt.x - prevPt.x) * 0.8);
+            const bendStartX = pt.x - bendWidth;
+            
+            // Draw a straight horizontal line to the start of the bend
+            dPath += `L ${bendStartX} ${prevPt.y} `;
+            
+            if (Math.abs(pt.y - prevPt.y) < 1) {
+              // Same pitch, just draw a straight line
+              dPath += `L ${pt.x} ${pt.y} `;
+            } else {
+              // Pitch changes: enter from bottom if moving up, top if moving down
+              const isMovingUp = pt.y < prevPt.y;
+              const entryY = isMovingUp ? pt.y + circleRadius : pt.y - circleRadius;
+              
+              // Curve to the entry point at the top/bottom of the circle
+              // cp1 maintains horizontal exit from the previous segment
+              // cp2 ensures vertical entry into the circle
+              const cp1x = bendStartX + bendWidth * 0.5;
+              const cp1y = prevPt.y;
+              const cp2x = pt.x;
+              const cp2y = prevPt.y;
+              
+              dPath += `C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${pt.x} ${entryY} `;
+              // Final vertical segment to the center
+              dPath += `L ${pt.x} ${pt.y} `;
+            }
+            }
+          }
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", dPath);
+          path.setAttribute("stroke", getVoiceColor(voice));
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke-width", "2");
+          path.setAttribute("class", "transcribe-path");
+          svg.appendChild(path);
+        }
+      }
+      
+      // Now add the non-active voice markers and text
+      nonActiveMarkers.forEach(el => {
+        // For non-active markers, add pointer-events: none to ensure they don't interfere with clicking
+        if (el.tagName.toLowerCase() === 'circle') {
+          el.style.pointerEvents = 'none';
+        }
+        svg.appendChild(el);
+      });
+      
+      // Finally add the active voice markers and text on top
+      activeMarkers.forEach(el => {
+        // For active voice circles, ensure pointer-events are enabled and cursor style is pointer
+        if (el.tagName.toLowerCase() === 'circle') {
+          el.style.pointerEvents = 'all';
+          el.style.cursor = 'pointer';
+        } else {
+          // Ensure text elements never block pointer events
+          el.style.pointerEvents = 'none';
+        }
+        svg.appendChild(el);
+      });
+    }
+
+    function updateActiveVoiceHitboxes() {
+      if (!transcribeModeEnabled) return;
+      
+      // Get the currently active voice
+      const activeVoice = parseInt(document.querySelector('input[name="transcribeVoice"]:checked').value);
+      
+      // Find all marker elements
+      const markers = document.querySelectorAll('.transcribe-marker');
+      
+      // First, make all markers semi-transparent to other pointer events
+      markers.forEach(marker => {
+        marker.style.pointerEvents = 'none';
+      });
+      
+      // Enable pointer events only for the active voice's hitboxes
+      document.querySelectorAll('#chordSvg g[data-chord-index]').forEach(group => {
+        // Reset all hitbox rectangles to allow pointer events
+        const rect = group.querySelector('rect');
+        if (rect) {
+          rect.style.pointerEvents = 'all';
+        }
+      });
+      
+      // Then redraw the transcribe markers to ensure proper layering
+      updateTranscribeMarkers();
+    }
+    
+    // Add event listeners to transcribe voice radio buttons to update hitboxes
+    document.querySelectorAll('input[name="transcribeVoice"]').forEach(radio => {
+      radio.addEventListener('change', updateActiveVoiceHitboxes);
+    });
+
+    document.addEventListener("keydown", e => {
+      if (e.key.toLowerCase() === "g") {
+        generateBtn.click();
+      } else if (e.code === "Space") {
+        e.preventDefault();
+        playPauseBtn.click();
+      } else if (e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        restartBtn.click();
+      } else if (transcribeModeEnabled && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        const clearButtons = document.querySelectorAll('.clear-btn');
+        // Trigger clear for currently selected line
+        clearButtons[parseInt(document.querySelector('input[name="transcribeVoice"]:checked').value)]?.click();
+      } else if (transcribeModeEnabled && ["1","2","3","4"].includes(e.key)) {
+    // NEW CODE for the number keys
+    e.preventDefault();
+    const voiceIndex = parseInt(e.key, 10) - 1;
+    document.getElementById("transcribeVoice" + voiceIndex).checked = true;
+    updateActiveVoiceHitboxes();
+      }
+    });
+    masterVolumeSliderEl.addEventListener("input", e => {
+      const vol = parseFloat(e.target.value);
+      masterVolumeValueEl.textContent = vol;
+      Tone.Destination.volume.value = vol;
+    });
+
+    document.querySelectorAll(".mute-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const voiceIdx = parseInt(btn.getAttribute("data-voice"), 10);
+        toggleMute(voiceIdx);
+      });
+    });
+    document.querySelectorAll(".solo-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const voiceIdx = parseInt(btn.getAttribute("data-voice"), 10);
+        toggleSolo(voiceIdx);
+      });
+    });
+    document.querySelectorAll(".voice-volume").forEach(slider => {
+      slider.addEventListener("input", () => {
+        const voiceIdx = parseInt(slider.getAttribute("data-voice"), 10);
+        const vol = parseFloat(slider.value);
+        const offsetDb = vol - (-12);
+        const newDb = -6 + offsetDb;
+        if (!userMuteStates[voiceIdx]) {
+          voiceGains[voiceIdx].gain.value = Math.pow(10, newDb / 20);
+        }
+      });
+      slider.addEventListener("dblclick", () => {
+        slider.value = -12;
+        const voiceIdx = parseInt(slider.getAttribute("data-voice"), 10);
+        const vol = parseFloat(slider.value);
+        const offsetDb = vol - (-12);
+        const newDb = -6 + offsetDb;
+        if (!userMuteStates[voiceIdx]) {
+          voiceGains[voiceIdx].gain.value = Math.pow(10, newDb / 20);
+        }
+      });
+    });
+
+    document.querySelectorAll(".clear-btn").forEach(btn => {
+      btn.addEventListener("click", function() {
+        const voiceIndex = parseInt(this.getAttribute("data-voice"));
+        if (createModeEnabled) {
+          // In Create Mode, clearing should wipe the entire contour and stored data
+          clearCreateModeAll();
+        } else {
+          // In Transcribe Mode, clear only the selected voice
+          userTranscriptions[voiceIndex] = [];
+          updateTranscribeMarkers();
+        }
+      });
+    });
+
+
+    if (!currentVoicedChords) {
+      currentKey = "C";
+      currentKeyDisplay.textContent = 'Press "G" to generate a progression!';
+      currentVoicedChords = generateDummyProgression();
+      drawProgression(currentVoicedChords);
+      updateSvgSize();
+    }
+
+    generateBtn.addEventListener("click", async () => {
+      // If Create Mode is enabled, do not generate anything—just clear the grid.
+      if (createModeEnabled) {
+        // In Create Mode, Generate acts as a full clear
+        clearCreateModeAll();
+        return;
+      }
+      
+      // Otherwise, proceed with normal generation.
+      isDummyGrid = false;
+      if (isPlaying) stopPlayback();
+      await Tone.start();
+      if (transcribeModeEnabled) {
+        userTranscriptions = [[], [], [], []];
+      }
+      const isMinor = keyIsMinor;
+      currentKey = allMajorKeys[Math.floor(Math.random() * allMajorKeys.length)];
+      currentKeyDisplay.textContent = "Key of " + currentKey + (isMinor ? " Minor" : " Major");
+      const progression = generateChordProgression(isMinor);
+      currentProgression = progression;
+      let rawChords = voiceLeadChords(currentKey, progression, isMinor);
+      baseVoicedChords = reorderVoicesByPitch(rawChords);
+      if (isInverted) {
+        let newChords = JSON.parse(JSON.stringify(baseVoicedChords));
+        applyInversion(newChords);
+        currentVoicedChords = newChords;
+      } else {
+        currentVoicedChords = baseVoicedChords;
+      }
+      drawProgression(currentVoicedChords);
+      updateSvgSize();
+    });
+
+    function drawProgression(voicedChords) {
+      const svg = document.getElementById("chordSvg");
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      chordHighlightRects = [];
+      
+      // If Create Mode is enabled, draw a blank grid and skip normal chord drawing.
+      if (createModeEnabled) {
+        const numColumns = selectedChordCount;
+        const chordWidth = 120;
+        const totalWidth = chordWidth * numColumns;
+        const viewBoxWidth = getViewBoxWidth(numColumns);
+        const xOffset = viewBoxWidth > totalWidth ? (viewBoxWidth - totalWidth) / 2 : 0;
+        const topMargin = 50;
+        const gridBottom = topMargin + (numRows - 1) * rowSpacing;
+        for (let i = 0; i < numColumns; i++) {
+          const colX = xOffset + i * chordWidth + chordWidth / 2;
+          for (let r = 1; r <= numRows; r++) {
+            // Instead of raw row numbers, compute scale degrees:
+            let degree = ((r - 1) % 7) + 1;
+            let labelStr;
+            if (!keyIsMinor) {
+              labelStr = degree.toString();
+            } else {
+              if (degree === 3) labelStr = "♭3";
+              else if (degree === 6) labelStr = "♭6";
+              else if (degree === 7) labelStr = "♭7";
+              else labelStr = degree.toString();
+            }
+            const baseRowY = gridBottom - (r - 1) * rowSpacing;
+            const textY = baseRowY + BACKGROUND_TEXT_OFFSET;
+            const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            txt.setAttribute("x", colX);
+            txt.setAttribute("y", textY);
+            txt.setAttribute("class", (labelStr === "1" ? "degree-text-root" : "degree-text"));
+            txt.textContent = labelStr;
+            svg.appendChild(txt);
+          }
+        }
+        updateDegreeGridOpacity(parseFloat(document.getElementById("degreeGridSlider").value));
+        return;
+      }
+      const chordWidth = 120;
+      const totalWidth = chordWidth * voicedChords.length;
+      const viewBoxWidth = getViewBoxWidth(voicedChords.length);
+      const xOffset = viewBoxWidth > totalWidth ? (viewBoxWidth - totalWidth) / 2 : 0;
+
+      const topMargin = 50;
+      const gridBottom = topMargin + (numRows - 1) * rowSpacing;
+      const chordNameY = gridBottom + 40;
+      const isMinor = keyIsMinor;
+
+      // 1) Draw background degree labels for each chord column (the grid)
+      for (let i = 0; i < voicedChords.length; i++) {
+        const chord = voicedChords[i];
+        const colX = xOffset + i * chordWidth + chordWidth / 2;
+        let chordNum = 1;
+        if (!isDummyGrid) {
+          chordNum = (function(chSym) {
+            const majorMap = { "I":1, "ii":2, "iii":3, "IV":4, "V":5, "vi":6 };
+            const minorMap = { "i":1, "ii°":2, "III":3, "iv":4, "V":5, "VI":6, "VII":7 };
+            return isMinor ? (minorMap[chSym] || 1) : (majorMap[chSym] || 1);
+          })(chord.chordSymbol);
+        }
+        const shift = chordNum - 1;
+
+        const chordMode = (relativeMode && !isDummyGrid)
+          ? (isMinor ? modeMappingMinor[chord.chordSymbol] : modeMappingMajor[chord.chordSymbol])
+          : null;
+
+        for (let r = 1; r <= numRows; r++) {
+          let labelStr;
+          if (chordMode) {
+            const idx = (((r - 1) - shift) + 7) % 7;
+            labelStr = chordMode[idx];
+          } else {
+            let labelNum = ((r - 1) % 7) + 1;
+            labelStr = labelNum.toString();
+            if (isMinor && !isDummyGrid) {
+              if (labelNum === 3) labelStr = "♭3";
+              if (labelNum === 6) labelStr = "♭6";
+              if (labelNum === 7) {
+                if (chord.chordSymbol === "V") {
+                  labelStr = "7";
+                } else {
+                  labelStr = "♭7";
+                }
+              }
+            }
+          }
+          const baseRowY = gridBottom - (r - 1) * rowSpacing;
+          const textY = baseRowY + BACKGROUND_TEXT_OFFSET;
+          const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          txt.setAttribute("x", colX);
+          txt.setAttribute("y", textY);
+          txt.setAttribute("class", labelStr === "1" ? "degree-text-root" : "degree-text");
+          txt.textContent = labelStr;
+          if (transcribeModeEnabled) {
+            const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            group.setAttribute("data-chord-index", i);
+            group.style.cursor = "pointer";
+            group.addEventListener("click", onTranscribeGridClick, true);
+            const hitRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            hitRect.setAttribute("x", colX - 30);
+            hitRect.setAttribute("y", textY - 18);
+            hitRect.setAttribute("width", "60");
+            hitRect.setAttribute("height", "30");
+            hitRect.setAttribute("fill", "#000");
+            hitRect.setAttribute("fill-opacity", "0");
+            hitRect.style.zIndex = r;
+            hitRect.style.cursor = "pointer"; // Ensure pointer cursor on hover
+            group.appendChild(hitRect);
+            group.appendChild(txt);
+            svg.appendChild(group);
+          } else {
+            svg.appendChild(txt);
+          }
+        }
+      }
+
+      updateDegreeGridOpacity(parseFloat(document.getElementById("degreeGridSlider").value));
+      if (isDummyGrid) return;
+
+      let topDeg = voicedChords[0].voiceDegrees[0];
+      if (topDeg < 1) topDeg = 1;
+      const fixedRowsArr = [getSopranoStartRow(topDeg), 12, 10];
+      if (fixedRowsArr[0] === 17) { fixedRowsArr[1] = 15; fixedRowsArr[2] = 12; }
+      else if (fixedRowsArr[0] === 19) { fixedRowsArr[1] = 17; fixedRowsArr[2] = 15; }
+
+      globalInitialSteps[0] = getAbsoluteDiatonicStep(voicedChords[0].notes[0], currentKey, isMinor);
+      globalInitialSteps[1] = getAbsoluteDiatonicStep(voicedChords[0].notes[1], currentKey, isMinor);
+      globalInitialSteps[2] = getAbsoluteDiatonicStep(voicedChords[0].notes[2], currentKey, isMinor);
+
+      const recognizedSoprano = voicedChords.filter(ch => ch.voiceDegrees[0] >= 1);
+      let shiftTopVoicesBy7 = false;
+      if (recognizedSoprano.length > 0) {
+        let highestChord = recognizedSoprano[0];
+        let maxMidi = highestChord.notes[0];
+        for (let i = 1; i < recognizedSoprano.length; i++) {
+          if (recognizedSoprano[i].notes[0] > maxMidi) {
+            highestChord = recognizedSoprano[i];
+            maxMidi = recognizedSoprano[i].notes[0];
+          }
+        }
+        if (highestChord.voiceDegrees[0] === 1) shiftTopVoicesBy7 = true;
+      }
+
+      let initialBassStep = getAbsoluteDiatonicStep(voicedChords[0].notes[3], currentKey, isMinor);
+      const bassBaseRow = 8;
+      const markers = [];
+      for (let i = 0; i < voicedChords.length; i++) {
+        const chord = voicedChords[i];
+        const chordSymbol = chord.chordSymbol;
+        const colX = xOffset + i * chordWidth + chordWidth / 2;
+        const chordMarkers = [];
+        for (let v = 0; v < numVoices; v++) {
+          let rowVal;
+          if (v < 3) {
+            const currentStep = getAbsoluteDiatonicStep(chord.notes[v], currentKey, isMinor);
+            const offset = currentStep - globalInitialSteps[v];
+            rowVal = fixedRowsArr[v] + offset;
+            if (isMinor && chordSymbol === "V" && chord.voiceDegrees[v] === 7) rowVal += 6;
+            if (shiftTopVoicesBy7) rowVal += 7;
+          } else {
+            const currentBassStep = getAbsoluteDiatonicStep(chord.notes[3], currentKey, isMinor);
+            const bassOffset = currentBassStep - initialBassStep;
+            rowVal = bassBaseRow + bassOffset;
+          }
+          rowVal = Math.max(1, Math.min(rowVal, 22));
+          const baseY = gridBottom - (rowVal - 1) * rowSpacing;
+          const finalY = baseY + MARKER_CIRCLE_OFFSET;
+          let bigLabel = chord.voiceDegrees[v].toString();
+          if (chord.voiceDegrees[v] === -1) bigLabel = "?";
+          const chordMode = relativeMode
+            ? (isMinor ? modeMappingMinor[chordSymbol] : modeMappingMajor[chordSymbol])
+            : null;
+          if (relativeMode && chordMode && chord.voiceDegrees[v] >= 1) {
+            const localIndex = chord.chordGlobalDegs.indexOf(chord.voiceDegrees[v]);
+            if (localIndex >= 0) {
+              const localDegMap = [0, 2, 4];
+              const modeIdx = localDegMap[localIndex] || 0;
+              bigLabel = chordMode[modeIdx];
+            } else {
+              const fallbackIdx = ((chord.voiceDegrees[v] - 1) + 7) % 7;
+              bigLabel = chordMode[fallbackIdx];
+            }
+          } else if (isMinor) {
+            if (chord.voiceDegrees[v] === 3) bigLabel = "♭3";
+            if (chord.voiceDegrees[v] === 6) bigLabel = "♭6";
+            if (chord.voiceDegrees[v] === 7) {
+              if (chordSymbol === "V") {
+                bigLabel = "7";
+              } else {
+                bigLabel = "♭7";
+              }
+            }
+          }
+          chordMarkers.push({ x: colX, y: finalY, voiceIdx: v, text: bigLabel });
+        }
+        markers.push(chordMarkers);
+      }
+
+      // 4) Draw connecting lines for each voice across chords
+      for (let v = 0; v < numVoices; v++) {
+        let dPath = "";
+        for (let i = 0; i < markers.length; i++) {
+          const pt = markers[i][v];
+          if (i === 0) {
+            dPath += `M ${pt.x} ${pt.y} `;
+          } else {
+            const prevPt = markers[i - 1][v];
+            const circleRadius = 12;
+            const bendWidth = Math.min(40, (pt.x - prevPt.x) * 0.8);
+            const bendStartX = pt.x - bendWidth;
+
+            // Draw a straight horizontal line to the start of the bend
+            dPath += `L ${bendStartX} ${prevPt.y} `;
+
+            if (Math.abs(pt.y - prevPt.y) < 1) {
+              // Same pitch, just draw a straight line
+              dPath += `L ${pt.x} ${pt.y} `;
+            } else {
+              // Pitch changes: enter from bottom if moving up, top if moving down
+              const isMovingUp = pt.y < prevPt.y;
+              const entryY = isMovingUp ? pt.y + circleRadius : pt.y - circleRadius;
+
+              // Curve to the entry point at the top/bottom of the circle
+              const cp1x = bendStartX + bendWidth * 0.5;
+              const cp1y = prevPt.y;
+              const cp2x = pt.x;
+              const cp2y = prevPt.y;
+
+              dPath += `C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${pt.x} ${entryY} `;
+              // Final vertical segment to the center
+              dPath += `L ${pt.x} ${pt.y} `;
+            }
+          }
+        }
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", dPath);
+        path.setAttribute("stroke", getVoiceColor(v));
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke-width", "2");
+        document.getElementById("chordSvg").appendChild(path);
+      }
+
+      // 5) Draw highlight boxes and chord name labels
+      for (let i = 0; i < voicedChords.length; i++) {
+        const chord = voicedChords[i];
+        const colX = xOffset + i * chordWidth + chordWidth / 2;
+        let chordNum = 1;
+        if (!isDummyGrid) {
+          chordNum = (function(chSym) {
+            const majorMap = { "I":1, "ii":2, "iii":3, "IV":4, "V":5, "vi":6 };
+            const minorMap = { "i":1, "ii°":2, "III":3, "iv":4, "V":5, "VI":6, "VII":7 };
+            return isMinor ? (minorMap[chSym] || 1) : (majorMap[chSym] || 1);
+          })(chord.chordSymbol);
+        }
+        const shift = chordNum - 1;
+        const rectWidth = 96, rectHeight = 30;
+        const rectX = xOffset + i * chordWidth + (chordWidth - rectWidth) / 2;
+        const rectY = chordNameY - rectHeight / 2 - 5;
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", rectX);
+        rect.setAttribute("y", rectY);
+        rect.setAttribute("rx", "5");
+        rect.setAttribute("ry", "5");
+        rect.setAttribute("width", rectWidth);
+        rect.setAttribute("height", rectHeight);
+        rect.setAttribute("fill", "none");
+        rect.setAttribute("id", "highlight-chord-" + i);
+        chordHighlightRects.push(rect);
+        document.getElementById("chordSvg").appendChild(rect);
+
+        if (!isDummyGrid) {
+          const nameText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          nameText.setAttribute("x", colX);
+          nameText.setAttribute("y", chordNameY);
+          nameText.setAttribute("class", "chord-name-text");
+          nameText.textContent = displayRoman ? getRomanNumeral(chord.chordSymbol, isMinor) : chord.chordName;
+          nameText.dataset.chordIndex = i;
+          nameText.style.cursor = "pointer";
+          nameText.addEventListener("mousedown", chordMouseDown);
+          nameText.addEventListener("mouseup", chordMouseUp);
+          // Removed the "mouseleave" event listener to prevent hover from stopping the audio.
+          document.getElementById("chordSvg").appendChild(nameText);
+        }
+      }
+
+      // 6) Draw circles and big text markers for each voice
+      for (let i = 0; i < markers.length; i++) {
+        for (let marker of markers[i]) {
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", marker.x);
+          circle.setAttribute("cy", marker.y);
+          circle.setAttribute("r", "12");
+          circle.setAttribute("class", "voice-marker");
+          circle.setAttribute("id", "marker-circle-" + i + "-" + marker.voiceIdx);
+          circle.setAttribute("stroke", getVoiceColor(marker.voiceIdx));
+          circle.setAttribute("fill", "#1f1f1f");
+          circle.setAttribute("stroke-width", "2");
+          document.getElementById("chordSvg").appendChild(circle);
+          const bigText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          bigText.setAttribute("x", marker.x);
+          bigText.setAttribute("y", marker.y);
+          bigText.setAttribute("text-anchor", "middle");
+          bigText.setAttribute("dominant-baseline", "middle");
+          bigText.setAttribute("font-size", "16px");
+          bigText.setAttribute("fill", "#fff");
+          bigText.textContent = marker.text;
+          bigText.classList.add("auto-voice-text");
+          document.getElementById("chordSvg").appendChild(bigText);
+        }
+      }
+      
+      // If Transcribe Mode is enabled, remove the auto markers so that only transcribe markers are visible,
+      // then call updateTranscribeMarkers() to draw the transcribe circles with the same id format.
+      if (transcribeModeEnabled) {
+        // First, store references to elements we want to remove
+        const elementsToRemove = [
+          ...document.querySelectorAll("text.chord-name-text"),
+          ...document.querySelectorAll("text.auto-voice-text"),
+        ];
+        elementsToRemove.forEach(el => el.remove());
+        // Finally, update the transcribe markers
+        updateTranscribeMarkers();
+        updateActiveVoiceHitboxes();
+      }
+
+      // Redraw pitch traces to ensure they persist when grid is redrawn
+      if (typeof redrawAllPitchTraces === "function") {
+        redrawAllPitchTraces();
+      }
+    }
+
+    // CHORD EVENT HANDLERS
+    function chordMouseDown(e) {
+      const chordIndex = parseInt(e.target.dataset.chordIndex, 10);
+      if (isNaN(chordIndex) || !currentVoicedChords) return;
+      if (isPlaying && !isPaused) {
+         // Jump to the clicked chord during active playback
+         Tone.Transport.position = chordIndex + "m";
+         chordHighlightRects.forEach(rect => rect.setAttribute("fill", "none"));
+         if (chordHighlightRects[chordIndex]) {
+           chordHighlightRects[chordIndex].setAttribute("fill", "#c864c8");
+         }
+         return;
+      }
+      const chord = currentVoicedChords[chordIndex];
+      for (let v = 0; v < numVoices; v++) {
+        const midi = chord.notes[v];
+        const freq = Tone.Frequency(midi, "midi").toFrequency();
+        synths[v].triggerAttack(freq);
+      }
+    }
+    function chordMouseUp(e) {
+      if (isPlaying && !isPaused) return;
+      for (let v = 0; v < numVoices; v++) {
+        synths[v].triggerRelease();
+      }
+    }
+
+    function getSopranoStartRow(deg) {
+      if (deg < 1) deg = 1;
+      if (deg === 1) return 15;
+      if (deg === 3) return 17;
+      if (deg === 5) return 19;
+      return 15;
+    }
+    function getRomanNumeral(chordSymbol, isMinor) {
+      if (!isMinor) return chordSymbol;
+      const mapping = {
+        "i": "i",
+        "ii°": "ii°",
+        "III": "bIII",
+        "iv": "iv",
+        "V": "V",
+        "VI": "bVI",
+        "VII": "bVII"
+      };
+      return mapping[chordSymbol] || chordSymbol;
+    }
+
+    function applyInversion(chords) {
+      for (const chord of chords) {
+        const oldNotes = chord.notes.slice();
+        const oldDegs  = chord.voiceDegrees.slice();
+        const newSopranoNote = oldNotes[0] - 12;
+        chord.notes[0] = oldNotes[1];
+        chord.notes[1] = oldNotes[2];
+        chord.notes[2] = newSopranoNote;
+        chord.notes[3] = oldNotes[3];
+        chord.voiceDegrees[0] = oldDegs[1];
+        chord.voiceDegrees[1] = oldDegs[2];
+        chord.voiceDegrees[2] = oldDegs[0];
+        chord.voiceDegrees[3] = oldDegs[3];
+      }
+    }
+
+    function getViewBoxWidth(numChords) {
+      const chordWidth = 120;
+      const totalWidth = chordWidth * numChords;
+      return totalWidth < FIXED_WIDTH ? FIXED_WIDTH : totalWidth;
+    }
+
+    /***** CHORD PROGRESSION GENERATION *****/
+    function generateChordProgression(isMinor) {
+      const chordCount = selectedChordCount;
+      if (isMinor) {
+        const chordNames = chordNamesMinor;
+        const progression = [ chordNames[0] ];
+        let usedDim = false;
+        for (let i = 1; i < chordCount; i++) {
+          let candidate;
+          if (progression[i - 1] === "V") {
+            const forcedSet = ["i", "iv", "VI"];
+            do {
+              candidate = forcedSet[Math.floor(Math.random() * forcedSet.length)];
+            } while (candidate === progression[i - 1]);
+            progression.push(candidate);
+          } else {
+            do {
+              candidate = chordNames[Math.floor(Math.random() * chordNames.length)];
+            } while (candidate === progression[i - 1] || (candidate === "ii°" && usedDim));
+            progression.push(candidate);
+            if (candidate === "ii°") usedDim = true;
+          }
+        }
+        if (!progression.includes("V") && progression.length > 1) {
+          const randomIndex = Math.floor(Math.random() * (progression.length - 1)) + 1;
+          progression[randomIndex] = "V";
+        }
+        return progression;
+      } else {
+        const chordNames = chordNamesMajor;
+        const progression = [ chordNames[0] ];
+        for (let i = 1; i < chordCount; i++) {
+          let candidate;
+          do {
+            candidate = chordNames[Math.floor(Math.random() * chordNames.length)];
+          } while (candidate === progression[i - 1]);
+          progression.push(candidate);
+        }
+        return progression;
+      }
+    }
+    function attemptVoiceLeading(key, progression, isMinor) {
+      const voicedProgression = [];
+      let prevSoprano, prevAlto, prevTenor, prevBass;
+      let initialBassMidi = null;
+      let initialBassStep = 0;
+      const bassBaseRow = 8;
+      function getBassRowVal(midi) {
+        if (!initialBassMidi) return bassBaseRow;
+        const currentStep = getAbsoluteDiatonicStep(midi, key, isMinor);
+        return bassBaseRow + (currentStep - initialBassStep);
+      }
+      for (let i = 0; i < progression.length; i++) {
+        const chSym = progression[i];
+        let degArray;
+        let isChordV = false;
+        if (isMinor) {
+          degArray = chordScaleDegreesMinor[chSym];
+          if (chSym === "V") isChordV = true;
+        } else {
+          degArray = chordScaleDegreesMajor[chSym];
+        }
+        const chordOffsets = getChordSemitones(key, degArray, isMinor, isChordV);
+        let chordVoicing = [null, null, null, null];
+
+        // BASS:
+        const bassTones = getMultiOctaveChordTones(chordOffsets, 36, 53);
+        let rootCandidates = bassTones.filter(n => n % 12 === chordOffsets[0]);
+        if (!rootCandidates.length) rootCandidates = bassTones;
+        let chosenBass;
+        if (i === 0) {
+          chosenBass = rootCandidates[Math.floor(rootCandidates.length / 2)] || rootCandidates[0];
+          initialBassMidi = chosenBass;
+          initialBassStep = getAbsoluteDiatonicStep(chosenBass, key, isMinor);
+        } else {
+          chosenBass = findNearestChordTone(prevBass, rootCandidates);
+          let rowVal = getBassRowVal(chosenBass);
+          if (rowVal < 1) chosenBass += 12;
+          else if (rowVal > 22) chosenBass -= 12;
+          chosenBass = Math.max(36, Math.min(chosenBass, 53));
+        }
+        chordVoicing[3] = chosenBass;
+
+        // SOPRANO:
+        const midChordTones = getMultiOctaveChordTones(chordOffsets, 50, 75);
+        if (i === 0) {
+          chordVoicing[0] = midChordTones[Math.floor(midChordTones.length * 0.7)] || midChordTones[0];
+        } else {
+          chordVoicing[0] = findNearestChordTone(prevSoprano, midChordTones);
+        }
+
+        // ALTO:
+        if (i === 0) {
+          let used = [chordVoicing[0] % 12];
+          let remain = midChordTones.filter(n => !used.includes(n % 12));
+          chordVoicing[1] = remain[Math.floor(remain.length / 2)] || remain[0];
+        } else {
+          let used = [chordVoicing[0] % 12];
+          let remain = midChordTones.filter(n => !used.includes(n % 12));
+          chordVoicing[1] = findNearestChordTone(prevAlto, remain);
+        }
+
+        // TENOR:
+        if (i === 0) {
+          let used = [chordVoicing[0] % 12, chordVoicing[1] % 12];
+          let remain = midChordTones.filter(n => !used.includes(n % 12));
+          chordVoicing[2] = remain[Math.floor(remain.length / 2)] || remain[0];
+        } else {
+          let used = [chordVoicing[0] % 12, chordVoicing[1] % 12];
+          let remain = midChordTones.filter(n => !used.includes(n % 12));
+          chordVoicing[2] = findNearestChordTone(prevTenor, remain);
+        }
+
+        prevSoprano = chordVoicing[0];
+        prevAlto = chordVoicing[1];
+        prevTenor = chordVoicing[2];
+        prevBass = chordVoicing[3];
+
+        const voiceDegrees = chordVoicing.map(m => getScaleDegree(m, key, isMinor));
+        voicedProgression.push({
+          chordSymbol: chSym,
+          chordName: getChordName(key, chSym),
+          notes: chordVoicing.slice(),
+          voiceDegrees,
+          chordGlobalDegs: degArray
+        });
+      }
+      return voicedProgression;
+    }
+    function exceedsTopRow(voicedChords) {
+      for (let chord of voicedChords) {
+        for (let v = 0; v < 4; v++) {
+          const deg = (chord.voiceDegrees[v] === -1 ? 1 : chord.voiceDegrees[v]);
+          const baseOffset = (v === 3 ? 7 : 14);
+          const row = deg + baseOffset;
+          if (row > 22) return true;
+        }
+      }
+      return false;
+    }
+    function voiceLeadChords(key, progression, isMinor) {
+      for (let tries = 0; tries < 20; tries++) {
+        const candidate = attemptVoiceLeading(key, progression, isMinor);
+        if (!exceedsTopRow(candidate)) return candidate;
+      }
+      return attemptVoiceLeading(key, progression, isMinor);
+    }
+    function getSopranoStartRow(deg) {
+      if (deg < 1) deg = 1;
+      if (deg === 1) return 15;
+      if (deg === 3) return 17;
+      if (deg === 5) return 19;
+      return 15;
+    }
+    function getRomanNumeral(chordSymbol, isMinor) {
+      if (!isMinor) return chordSymbol;
+      const mapping = {
+        "i": "i",
+        "ii°": "ii°",
+        "III": "bIII",
+        "iv": "iv",
+        "V": "V",
+        "VI": "bVI",
+        "VII": "bVII"
+      };
+      return mapping[chordSymbol] || chordSymbol;
+    }
+
+    function updateSvgSize() {
+      const container = document.querySelector('.progression-container');
+      const svg = document.getElementById("chordSvg");
+      const maxWidth = 1200;
+      const maxHeight = 850;
+      const newWidth = Math.min(container.clientWidth, maxWidth);
+      const newHeight = Math.min(container.clientHeight, maxHeight);
+      svg.setAttribute("width", newWidth);
+      svg.setAttribute("height", newHeight);
+
+      let chordCount = currentVoicedChords ? currentVoicedChords.length : selectedChordCount;
+      let vbWidth = getViewBoxWidth(chordCount);
+      svg.setAttribute("viewBox", `0 0 ${vbWidth} 850`);
+
+      if (currentVoicedChords) {
+        drawProgression(currentVoicedChords);
+      } else {
+        drawProgression(generateDummyProgression());
+      }
+    }
+    window.addEventListener("resize", updateSvgSize);
+
+    document.getElementById("chordSvg").addEventListener("click", onCreateGridClick);
+
+    // ===== CHOIR MODE UI + STATE =====
+    // Global state variables for Choir Mode functionality
+    let choirModeEnabled = false;           // Whether Choir Mode is active
+    let clickTrackEnabled = false;          // Whether click/metronome is on
+    let isRecording = false;                // Whether we are currently recording
+    let recordingVoiceIndex = null;         // Which voice (0-3) is being recorded
+    let playSynthEnabled = true;            // Whether to play synth during playback
+    let playVocalsEnabled = true;           // Whether to play recorded vocals during playback
+
+    // Storage for recorded audio (one blob URL per voice part)
+    // Index 0 = Soprano, 1 = Alto, 2 = Tenor, 3 = Bass
+    const voiceRecordings = [null, null, null, null];
+
+    // Storage for pitch trace data per voice
+    // Each element is an array of {tSec, midi, confidence} objects
+    const pitchTraceData = [[], [], [], []];
+
+    // Tone.js Players for vocal playback (one per voice)
+    const vocalPlayers = [null, null, null, null];
+
+    // Added fader gains for vocal loops to prevent clicks
+    const vocalFaderGains = [null, null, null, null];
+
+    // Reference to the vocal gain nodes for mixing
+    const vocalGains = [];
+    const vocalPanners = []; // To store panners for vocal tracks
+
+    // ===== CLICK + COUNT-IN =====
+    // Click track synth - uses a short percussive sound
+    let clickSynth = null;        // Will be initialized on first use
+    let clickEventId = null;      // ID for the scheduled repeat event (replaces Tone.Loop)
+    let countInScheduleId = null; // ID for scheduled count-in events
+    let vocalLatencyCompensation = 0.100; // Default 100ms latency compensation
+
+    /**
+     * Initialize the click synth (creates the synth only, no scheduling).
+     */
+    function initClickSynth() {
+      if (clickSynth) return;
+      
+      clickSynth = new Tone.MembraneSynth({
+        pitchDecay: 0.008,
+        octaves: 2,
+        oscillator: { type: "sine" },
+        envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
+      }).toDestination();
+      clickSynth.volume.value = -6;
+    }
+
+    /**
+     * Start the click track using Transport.scheduleRepeat for reliable timing.
+     * This cancels any previous click schedule and creates a new one.
+     */
+    function startClickTrack() {
+      initClickSynth();
+      
+      // Cancel any existing click schedule to prevent duplicates
+      if (clickEventId !== null) {
+        Tone.Transport.clear(clickEventId);
+        clickEventId = null;
+      }
+      
+      // Only schedule if click track is enabled
+      if (!clickTrackEnabled) return;
+      
+      // Use scheduleRepeat instead of Tone.Loop for more reliable first-beat firing
+      // Schedule starting at position 0, repeating every quarter note
+      clickEventId = Tone.Transport.scheduleRepeat((time) => {
+        // Calculate which beat we're on using transport position
+        const positionParts = Tone.Transport.position.split(":");
+        const measures = parseInt(positionParts[0]) || 0;
+        const beats = parseInt(positionParts[1]) || 0;
+        const totalBeats = measures * 4 + beats;
+        const isDownbeat = totalBeats % 4 === 0;
+        
+        const pitch = isDownbeat ? "C4" : "C5";
+        const velocity = isDownbeat ? 0.8 : 0.5;
+        clickSynth.triggerAttackRelease(pitch, "32n", time, velocity);
+      }, "4n", 0);
+    }
+
+    /**
+     * Stop the click track by clearing the scheduled repeat event.
+     */
+    function stopClickTrack() {
+      if (clickEventId !== null) {
+        Tone.Transport.clear(clickEventId);
+        clickEventId = null;
+      }
+    }
+
+    /**
+     * Perform a 1-bar count-in before recording starts.
+     * Shows visual beat numbers and plays click sounds using precise Tone.js timing.
+     * @param {Function} onComplete - Callback when count-in finishes, receives the exact start time
+     */
+    function doCountIn(onComplete) {
+      initClickSynth();
+      
+      const countInDisplay = document.getElementById("countInDisplay");
+      countInDisplay.style.display = "block";
+      
+      const beatDuration = 60 / currentTempo;
+      // Start count-in slightly in the future to ensure everything is scheduled
+      const startTime = Tone.now() + 0.2; 
+      
+      // Schedule the 4 beats of the count-in bar
+      for (let i = 0; i < 4; i++) {
+        const beatTime = startTime + (i * beatDuration);
+        const beatNumber = i + 1;
+        const isDownbeat = (i === 0);
+        
+        // Schedule audio click
+        clickSynth.triggerAttackRelease(isDownbeat ? "C4" : "C5", "32n", beatTime, isDownbeat ? 0.8 : 0.5);
+        
+        // Schedule visual update precisely with the audio
+        Tone.Draw.schedule(() => {
+          countInDisplay.textContent = beatNumber.toString();
+          // Add a little pulse effect to the text
+          countInDisplay.style.transform = "translate(-50%, -50%) scale(1.2)";
+          setTimeout(() => {
+            countInDisplay.style.transform = "translate(-50%, -50%) scale(1.0)";
+          }, 100);
+        }, beatTime);
+      }
+      
+      // The moment recording should start (Beat 1 of the first measure)
+      const recordingStartTime = startTime + (4 * beatDuration);
+      
+      // We use a regular setTimeout to trigger the UI transition and startRecordingAfterCountIn,
+      // but we pass the precise recordingStartTime to ensure audio alignment.
+      const waitTimeMs = (recordingStartTime - Tone.now()) * 1000;
+      setTimeout(() => {
+        countInDisplay.style.display = "none";
+        onComplete(recordingStartTime);
+      }, Math.max(0, waitTimeMs));
+    }
+
+    // ===== MIC SETUP + ANALYSIS =====
+    // Variables for microphone and audio analysis
+    let micStream = null;           // MediaStream from getUserMedia
+    let micSourceNode = null;       // MediaStreamAudioSourceNode
+    let analyserNode = null;        // AnalyserNode for pitch detection
+    let monoMixer = null;           // GainNode for summing stereo to mono
+    let monoDest = null;            // MediaStreamAudioDestinationNode for mono recording
+    let audioContext = null;        // AudioContext for Web Audio API
+    let mediaRecorder = null;       // MediaRecorder for capturing audio
+    let recordedChunks = [];        // Array to store recorded audio chunks
+
+    /**
+     * Request microphone permissions and set up the audio analysis chain.
+     * This should be called once when Choir Mode is first enabled.
+     * @returns {Promise<boolean>} True if mic setup succeeded
+     */
+    async function setupMicrophone() {
+      // If already set up, return true
+      if (micStream && analyserNode) return true;
+      
+      try {
+        // Request microphone access
+        // We request raw audio without processing
+        micStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 2, // Request stereo if available so we can sum it ourselves
+            sampleRate: 44100
+          } 
+        });
+        
+        // Create or reuse AudioContext
+        audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Create source node from the mic stream
+        micSourceNode = audioContext.createMediaStreamSource(micStream);
+
+        // FORCED MONO SUMMING:
+        // Create a gain node that forces a downmix to mono for both analysis and recording
+        monoMixer = audioContext.createGain();
+        
+        // Initialize gain from slider (with +20dB baseline offset)
+        const inputSlider = document.getElementById("inputGainSlider");
+        const sliderValDb = inputSlider ? parseFloat(inputSlider.value) : 0;
+        const totalGainDb = sliderValDb + 20; 
+        monoMixer.gain.value = Math.pow(10, totalGainDb / 20);
+
+        monoMixer.channelCount = 1;
+        monoMixer.channelCountMode = 'explicit';
+        monoMixer.channelInterpretation = 'speakers';
+        
+        // Create a destination node to get a mono stream for MediaRecorder
+        monoDest = audioContext.createMediaStreamDestination();
+        
+        // Create analyser for pitch detection
+        analyserNode = audioContext.createAnalyser();
+        analyserNode.fftSize = 4096;
+        
+        // Connect: mic -> monoMixer -> analyser & monoDest
+        micSourceNode.connect(monoMixer);
+        monoMixer.connect(analyserNode);
+        monoMixer.connect(monoDest);
+
+        // Start Input Meter Loop
+        updateInputLevelMeter();
+        
+        console.log("Microphone setup complete (Summed Mono for Analysis & Recording)");
+        return true;
+      } catch (err) {
+        console.error("Microphone access denied or error:", err);
+        alert("Microphone access is required for Choir Mode recording. Please allow access and try again.");
+        return false;
+      }
+    }
+
+    // Input Gain Slider Logic
+    const inputGainSlider = document.getElementById("inputGainSlider");
+    if (inputGainSlider) {
+      inputGainSlider.addEventListener("input", (e) => {
+        const val = parseFloat(e.target.value);
+        document.getElementById("inputGainValue").textContent = val;
+        if (monoMixer) {
+          // Convert dB to linear (with +20dB baseline offset)
+          const totalGainDb = val + 20;
+          const linear = Math.pow(10, totalGainDb / 20);
+          monoMixer.gain.setTargetAtTime(linear, audioContext.currentTime, 0.1);
+        }
+      });
+    }
+
+    // Input Level Meter Loop
+    function updateInputLevelMeter() {
+      if (!analyserNode || !audioContext) return;
+      
+      const bufferLen = analyserNode.fftSize;
+      const data = new Float32Array(bufferLen);
+      analyserNode.getFloatTimeDomainData(data);
+      
+      let maxVal = 0;
+      for (let i = 0; i < bufferLen; i++) {
+        const abs = Math.abs(data[i]);
+        if (abs > maxVal) maxVal = abs;
+      }
+      
+      const bar = document.getElementById("inputMeterBar");
+      if (bar) {
+        // Linear scale 0-1 for clipping visualization
+        const pct = Math.min(100, maxVal * 100); 
+        bar.style.width = pct + "%";
+        
+        // Color coding
+        if (maxVal >= 0.95) { // Clipping/Peak
+          bar.style.backgroundColor = "#ff0000"; 
+        } else if (maxVal > 0.7) { // Warning
+          bar.style.backgroundColor = "#ffcc00";
+        } else { // Good
+          bar.style.backgroundColor = "#00ff00";
+        }
+      }
+      
+      // Keep running if the audio context is active
+      if (audioContext.state === 'running') {
+          requestAnimationFrame(updateInputLevelMeter);
+      }
+    }
+
+    // ===== PITCH DETECTION + TRACE DATA =====
+    // Variables for pitch detection loop
+    let pitchDetectionRunning = false;  // Whether the pitch detection loop is active
+    let pitchDetectionAnimFrame = null; // requestAnimationFrame ID
+    let recordingStartTime = 0;         // Transport time when recording started
+
+    /**
+     * Autocorrelation-based pitch detection algorithm.
+     * Analyzes the audio buffer and returns detected pitch info.
+     * @param {AnalyserNode} analyser - The analyser node to read from
+     * @returns {{midi: number, confidence: number}} Detected MIDI note and confidence
+     */
+    function detectPitch(analyser) {
+      const bufferLength = analyser.fftSize;
+      const buffer = new Float32Array(bufferLength);
+      analyser.getFloatTimeDomainData(buffer);
+      
+      // Calculate RMS (root mean square) to check if there's significant audio
+      let rms = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        rms += buffer[i] * buffer[i];
+      }
+      rms = Math.sqrt(rms / bufferLength);
+      
+      // If practically silent, return no pitch
+      // LOWERED THRESHOLD per user request to avoid cutting off sustained notes
+      if (rms < 0.005) {
+        return { midi: -1, confidence: 0 };
+      }
+      
+      // Autocorrelation pitch detection
+      const sampleRate = audioContext.sampleRate;
+      const minFreq = 65;   // Extended bass range (C2)
+      const maxFreq = 1200; // Extended soprano range
+      const minPeriod = Math.floor(sampleRate / maxFreq);
+      const maxPeriod = Math.floor(sampleRate / minFreq);
+      
+      // Compute autocorrelation profile
+      // We will look for the "first significant peak" to avoid octave errors
+      // (Standard autocorrelation often picks the sub-harmonic at 2x period)
+      
+      let bestCorrelation = -1;
+      let correlations = new Float32Array(maxPeriod + 1);
+      
+      for (let period = minPeriod; period <= maxPeriod; period++) {
+        let correlation = 0;
+        // Optimization: limit sample count for performance
+        // Using a smaller window (e.g. 512 samples) is usually enough for pitch
+        const searchLen = Math.min(bufferLength - period, 1024);
+        
+        for (let i = 0; i < searchLen; i++) {
+          correlation += buffer[i] * buffer[i + period];
+        }
+        
+        // Normalize
+        correlation /= searchLen;
+        correlations[period] = correlation;
+        
+        if (correlation > bestCorrelation) {
+          bestCorrelation = correlation;
+        }
+      }
+      
+      // Calculate confidence (normalized against signal power)
+      const meanPower = rms * rms;
+      const confidence = bestCorrelation / meanPower;
+      
+      // HEURISTIC: Find the FIRST peak that is "strong enough" (e.g. > 90% of best)
+      // This favors higher frequencies (shorter periods) which helps avoid 
+      // jumping to the octave below (sub-harmonic error).
+      
+      let foundPeriod = 0;
+      const threshold = bestCorrelation * 0.9;
+      
+      // We need to find a local maximum that exceeds threshold
+      for (let period = minPeriod + 1; period < maxPeriod; period++) {
+        if (correlations[period] > threshold &&
+            correlations[period] > correlations[period - 1] &&
+            correlations[period] > correlations[period + 1]) {
+          foundPeriod = period;
+          break; // Found the first strong peak, stop searching!
+        }
+      }
+      
+      // Fallback to best period if no earlier peak found (shouldn't happen if best is a peak)
+      if (foundPeriod === 0) {
+          // Find the index of bestCorrelation
+          for (let p = minPeriod; p <= maxPeriod; p++) {
+              if (correlations[p] === bestCorrelation) {
+                  foundPeriod = p;
+                  break;
+              }
+          }
+      }
+
+      // Refine period using parabolic interpolation for better precision
+      // (Reduces "stepping" artifacts between integer periods)
+      let refinedPeriod = foundPeriod;
+      if (foundPeriod > minPeriod && foundPeriod < maxPeriod) {
+          const a = correlations[foundPeriod - 1];
+          const b = correlations[foundPeriod];
+          const c = correlations[foundPeriod + 1];
+          const offset = (a - c) / (2 * (a - 2 * b + c));
+          refinedPeriod = foundPeriod + offset;
+      }
+
+      // Convert period to frequency, then to MIDI note
+      // Lowered confidence threshold slightly to catch breathy notes
+      if (refinedPeriod > 0 && confidence > 0.3) { 
+        const frequency = sampleRate / refinedPeriod;
+        const midiNote = 12 * Math.log2(frequency / 440) + 69;
+        return { midi: midiNote, confidence: confidence };
+      }
+      
+      return { midi: -1, confidence: 0 };
+    }
+
+    /**
+     * Start the pitch detection loop.
+     * Runs at ~30fps and stores pitch data for the active recording voice.
+     */
+    function startPitchDetection() {
+      if (pitchDetectionRunning || !analyserNode) return;
+      
+      pitchDetectionRunning = true;
+      recordingStartTime = Tone.Transport.seconds;
+      
+      // Clear previous trace data for this voice
+      if (recordingVoiceIndex !== null) {
+        pitchTraceData[recordingVoiceIndex] = [];
+      }
+      
+      // Buffers for smoothing
+      const medianBuffer = [];
+      const medianSize = 7; // Number of frames to consider for median (removes outliers)
+      let smoothedMidi = null;
+      const smoothingFactor = 0.3; // 0 = no smoothing, 1 = frozen. 0.3 is responsive but smooth.
+      
+      function detectLoop() {
+        if (!pitchDetectionRunning) return;
+        
+        // Get current pitch
+        const { midi, confidence } = detectPitch(analyserNode);
+        
+        // Process pitch if we have ANY signal, even if low confidence (to maintain continuity if possible)
+        // But strictly filter noise
+        if (midi > 0 && confidence > 0.4) {
+           medianBuffer.push(midi);
+           if (medianBuffer.length > medianSize) {
+             medianBuffer.shift();
+           }
+           
+           // Only start recording points once we have a full buffer to stabilize
+           if (medianBuffer.length >= 3) {
+             // Calculate median
+             const sorted = [...medianBuffer].sort((a, b) => a - b);
+             const median = sorted[Math.floor(sorted.length / 2)];
+             
+             // Apply exponential smoothing
+             if (smoothedMidi === null) {
+               smoothedMidi = median;
+             } else {
+               // If the jump is huge (octave error or new phrase), reset smoothing
+               if (Math.abs(smoothedMidi - median) > 5) {
+                 smoothedMidi = median;
+               } else {
+                 smoothedMidi = smoothedMidi * (1 - smoothingFactor) + median * smoothingFactor;
+               }
+             }
+             
+             if (recordingVoiceIndex !== null) {
+                const currentTime = Tone.Transport.seconds - recordingStartTime;
+                pitchTraceData[recordingVoiceIndex].push({
+                  tSec: currentTime,
+                  midi: smoothedMidi,
+                  confidence: confidence
+                });
+                
+                // Update the live trace visualization
+                updatePitchTrace(recordingVoiceIndex);
+             }
+           }
+        } else {
+          // If signal is lost, we can optionally clear the buffer or keep it for bridging gaps.
+          // For now, let's slowly drain the buffer to handle short dropouts? 
+          // Or just let it be. If we stop adding points, the line breaks (which is good for silence).
+          // To support phrase gaps, we'll reset smoothing if silence persists.
+          if (medianBuffer.length > 0) medianBuffer.shift();
+          if (medianBuffer.length === 0) smoothedMidi = null;
+        }
+        
+        // Continue the loop (aim for ~30fps)
+        pitchDetectionAnimFrame = requestAnimationFrame(detectLoop);
+      }
+      
+      detectLoop();
+    }
+
+    /**
+     * Stop the pitch detection loop.
+     */
+    function stopPitchDetection() {
+      pitchDetectionRunning = false;
+      if (pitchDetectionAnimFrame) {
+        cancelAnimationFrame(pitchDetectionAnimFrame);
+        pitchDetectionAnimFrame = null;
+      }
+    }
+
+    // ===== RECORDING (MediaRecorder) =====
+    /**
+     * Start recording audio from the microphone for the specified voice part.
+     * @param {number} voiceIndex - Voice index (0=S, 1=A, 2=T, 3=B)
+     */
+    async function startRecording(voiceIndex) {
+      // Make sure we have a generated progression
+      if (!currentVoicedChords || currentVoicedChords.length === 0) {
+        alert("Please generate a chord progression first (press G).");
+        return;
+      }
+      
+      // Set up microphone if not already done
+      const micReady = await setupMicrophone();
+      if (!micReady) return;
+      
+      // Stop any existing playback
+      if (isPlaying) {
+        stopPlayback();
+      }
+      
+      // Mark that we're recording
+      isRecording = true;
+      recordingVoiceIndex = voiceIndex;
+      recordedChunks = [];
+      
+      // Update volume immediately to mute the voice being recorded
+      updateMutes();
+      
+      // Update UI to show recording state
+      updateRecordingUI();
+      
+      // Do the count-in, then start actual recording
+      await Tone.start();  // Make sure audio context is running
+      
+      doCountIn((preciseStartTime) => {
+        // After count-in, start the actual recording and playback
+        startRecordingAfterCountIn(voiceIndex, preciseStartTime);
+      });
+    }
+
+    /**
+     * Called after the count-in completes to start actual recording.
+     * @param {number} voiceIndex - Voice index being recorded
+     * @param {number} preciseStartTime - The Tone.now() time when the recording should start
+     */
+    function startRecordingAfterCountIn(voiceIndex, preciseStartTime) {
+      // Use the mono summed stream from the audio context
+      const recordStream = monoDest ? monoDest.stream : micStream;
+      
+      // Start MediaRecorder to capture audio
+      try {
+        mediaRecorder = new MediaRecorder(recordStream, { mimeType: 'audio/webm' });
+      } catch (e) {
+        // Fallback if webm is not supported
+        mediaRecorder = new MediaRecorder(recordStream);
+      }
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = () => {
+        // Create blob from recorded chunks
+        const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+        const blobUrl = URL.createObjectURL(blob);
+        
+        // Revoke old blob URL if exists
+        if (voiceRecordings[voiceIndex]) {
+          URL.revokeObjectURL(voiceRecordings[voiceIndex]);
+        }
+        
+        // Store the new recording
+        voiceRecordings[voiceIndex] = blobUrl;
+        
+        // Update the recording indicator
+        updateRecordingIndicators();
+        
+        // Create a Tone.Player for this recording
+        createVocalPlayer(voiceIndex, blobUrl);
+        
+        console.log(`Recording saved for voice ${voiceIndex}`);
+      };
+      
+      mediaRecorder.start();
+      
+      // Start pitch detection
+      startPitchDetection();
+      
+      // Stop and cancel transport to ensure a clean start for recording
+      Tone.Transport.stop();
+      Tone.Transport.cancel();
+      Tone.Transport.seconds = 0; // Explicitly reset to zero
+
+      // Start the synth playback if enabled (schedules into the transport)
+      if (playSynthEnabled && currentVoicedChords) {
+        schedulePlayback(currentVoicedChords, currentTempo);
+      }
+      
+      // Start the click track if enabled (schedules into the transport)
+      if (clickTrackEnabled) {
+        startClickTrack();
+      }
+      
+      // Re-sync vocal players to the transport
+      syncAllVocalPlayers();
+      
+      // Start the transport precisely
+      Tone.Transport.start(preciseStartTime);
+      isPlaying = true;
+      document.getElementById("playPauseBtn").textContent = "Pause (space)";
+      
+      // Schedule automatic stop at the end of the loop
+      const loopDuration = currentVoicedChords.length * (60 / currentTempo) * 4; // 4 beats per chord
+      setTimeout(() => {
+        if (isRecording && recordingVoiceIndex === voiceIndex) {
+          stopRecording();
+        }
+      }, loopDuration * 1000);
+    }
+
+    /**
+     * Stop the current recording.
+     */
+    function stopRecording() {
+      if (!isRecording) return;
+      
+      // Stop the pitch detection
+      stopPitchDetection();
+      
+      // Stop the MediaRecorder
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      
+      // Stop the click track
+      stopClickTrack();
+      
+      // Stop playback
+      stopPlayback();
+      
+      // Clear recording state
+      isRecording = false;
+      recordingVoiceIndex = null;
+
+      // Update volume to unmute the voice
+      updateMutes();
+      
+      // Update UI
+      updateRecordingUI();
+    }
+
+    /**
+     * Update the UI to reflect current recording state.
+     */
+    function updateRecordingUI() {
+      // Update record buttons
+      document.querySelectorAll('.record-btn').forEach(btn => {
+        const voice = parseInt(btn.getAttribute('data-voice'));
+        if (isRecording && voice === recordingVoiceIndex) {
+          btn.classList.add('recording');
+        } else {
+          btn.classList.remove('recording');
+        }
+      });
+    }
+
+    /**
+     * Update the recording indicator dots next to each voice.
+     */
+    function updateRecordingIndicators() {
+      document.querySelectorAll('.voice-recorded').forEach(dot => {
+        const voice = parseInt(dot.getAttribute('data-voice'));
+        if (voiceRecordings[voice]) {
+          dot.classList.add('has-recording');
+        } else {
+          dot.classList.remove('has-recording');
+        }
+      });
+    }
+
+    // ===== VOCAL PLAYBACK (Tone.Player) =====
+    /**
+     * Re-sync all vocal players to the transport.
+     * Useful after Tone.Transport.cancel() which may clear player sync events.
+     */
+    function syncAllVocalPlayers() {
+      vocalPlayers.forEach((player, i) => {
+        if (player && player.loaded) {
+          player.unsync(); // Clear previous sync to avoid duplicates
+          // Apply latency compensation: shift the start time of the recording 
+          // earlier so it aligns with what the user heard while singing.
+          player.sync().start(0, vocalLatencyCompensation);
+        }
+      });
+    }
+
+    /**
+     * Create a Tone.Player for a recorded voice.
+     * @param {number} voiceIndex - Voice index
+     * @param {string} blobUrl - URL of the recorded audio blob
+     */
+    function createVocalPlayer(voiceIndex, blobUrl) {
+      // Dispose of existing player if any
+      if (vocalPlayers[voiceIndex]) {
+        vocalPlayers[voiceIndex].unsync(); // Unsync before disposing
+        vocalPlayers[voiceIndex].stop();   // Hard stop
+        vocalPlayers[voiceIndex].dispose();
+      }
+      
+      // Create new player and connect to its own gain node for mixing
+      const player = new Tone.Player({
+        url: blobUrl,
+        loop: true,
+        volume: 0,
+        fadeIn: 0.05,  // Super tiny fade in to prevent pops/clicks
+        fadeOut: 0.05, // Super tiny fade out to prevent pops/clicks
+        onload: () => {
+          // Normalize the audio once it's loaded to maximize volume
+          if (player.buffer) {
+            player.buffer = player.buffer.normalize();
+          }
+          // Ensure it's synced once loaded, but ONLY if it's the current player
+          if (vocalPlayers[voiceIndex] === player) {
+            player.unsync(); 
+            // Apply latency compensation here as well
+            player.sync().start(0, vocalLatencyCompensation);
+          }
+        }
+      });
+
+      // Initialize vocal panner if it doesn't exist (to match synth panning)
+      if (!vocalPanners[voiceIndex]) {
+        vocalPanners[voiceIndex] = new Tone.Panner(synthPanners[voiceIndex].pan.value);
+        // Connect panner to vocal reverb
+        vocalPanners[voiceIndex].connect(vocalReverb);
+      }
+
+      // Initialize vocal fader if it doesn't exist
+      if (!vocalFaderGains[voiceIndex]) {
+        vocalFaderGains[voiceIndex] = new Tone.Gain(1);
+        vocalFaderGains[voiceIndex].connect(vocalPanners[voiceIndex]);
+      }
+
+      // Initialize vocal gain if it doesn't exist
+      if (!vocalGains[voiceIndex]) {
+        vocalGains[voiceIndex] = new Tone.Gain(1);
+        vocalGains[voiceIndex].connect(vocalFaderGains[voiceIndex]);
+      }
+      
+      player.connect(vocalGains[voiceIndex]);
+      
+      vocalPlayers[voiceIndex] = player;
+      
+      // Update volume immediately to match current solo/mute state
+      updateMutes();
+    }
+
+    /**
+     * Start playing all recorded vocals in sync with the transport.
+     * (Empty because players are now synced to the transport automatically)
+     */
+    function startVocalPlayback() {
+      // Logic moved to player.sync() in createVocalPlayer
+    }
+
+    /**
+     * Stop all vocal playback.
+     */
+    function stopVocalPlayback() {
+      vocalPlayers.forEach(player => {
+        if (player) {
+          // If synced, stop() will also unsync, so we just use stop() if we want it to cease immediately
+          // but usually sync() handles this via Transport
+          player.stop();
+        }
+      });
+    }
+
+    /**
+     * Clear all recordings.
+     */
+    function clearAllRecordings() {
+      for (let i = 0; i < 4; i++) {
+        if (voiceRecordings[i]) {
+          URL.revokeObjectURL(voiceRecordings[i]);
+          voiceRecordings[i] = null;
+        }
+        if (vocalPlayers[i]) {
+          vocalPlayers[i].dispose();
+          vocalPlayers[i] = null;
+        }
+        pitchTraceData[i] = [];
+      }
+      updateRecordingIndicators();
+      clearAllPitchTraces();
+      
+      // Force a redraw of the grid to ensure traces are removed from the SVG
+      if (currentVoicedChords) {
+        drawProgression(currentVoicedChords);
+      }
+    }
+
+    // ===== TRACE RENDERING (SVG PATH) =====
+    /**
+     * Calculate continuous diatonic step for a given MIDI note.
+     * Interpolates between scale steps for smooth trace rendering.
+     */
+    function getContinuousDiatonicStep(midi, key, isMinor) {
+      const keyBase = noteToSemitone[key.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      const scale = isMinor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
+      
+      let diff = midi - keyBase;
+      let octave = Math.floor(diff / 12);
+      let semitone = diff % 12;
+      if (semitone < 0) { semitone += 12; octave -= 1; }
+      
+      // Interpolate within the scale
+      let stepInOctave = 0;
+      let found = false;
+      
+      // Handle wrapping for top of scale
+      const extScale = [...scale, 12];
+      
+      for (let i = 0; i < scale.length; i++) {
+        if (semitone >= extScale[i] && semitone < extScale[i+1]) {
+          const frac = (semitone - extScale[i]) / (extScale[i+1] - extScale[i]);
+          stepInOctave = i + frac;
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) {
+        // Should catch the upper bound case (approaching 12)
+         if (semitone >= scale[scale.length-1]) {
+             const frac = (semitone - scale[scale.length-1]) / (12 - scale[scale.length-1]);
+             stepInOctave = (scale.length - 1) + frac;
+         }
+      }
+      
+      // 1-based step index (root is 1)
+      return (octave * 7) + stepInOctave + 1;
+    }
+
+    /**
+     * Redraws all stored pitch traces on the SVG grid.
+     * Ensures they persist across grid redraws and apply correct styling (grey when muted).
+     */
+    function redrawAllPitchTraces() {
+      for (let i = 0; i < 4; i++) {
+        updatePitchTrace(i);
+      }
+    }
+
+    /**
+     * Update the pitch trace visualization for a voice.
+     * Draws an SVG path showing the detected pitches over time.
+     * @param {number} voiceIndex - Voice index to update trace for
+     */
+    function updatePitchTrace(voiceIndex) {
+      const svg = document.getElementById("chordSvg");
+      const traceId = `pitch-trace-${voiceIndex}`;
+      
+      // Remove existing trace path for this voice
+      const existingPath = document.getElementById(traceId);
+      if (existingPath) {
+        existingPath.remove();
+      }
+      
+      const traceData = pitchTraceData[voiceIndex];
+      if (!traceData || traceData.length < 2) return;
+      if (!currentVoicedChords || currentVoicedChords.length === 0) return;
+
+      // Determine styling: match voice color (desaturated for user trace), or grey if muted/hidden by solo
+      const isMuted = userMuteStates[voiceIndex] || (soloStates.some(s => s) && !soloStates[voiceIndex]);
+      let strokeColor = isMuted ? "#555" : getVoiceColor(voiceIndex);
+      
+      // Desaturate the voice color for the user pitch trace to distinguish it from the primary contour
+      if (!isMuted) {
+        strokeColor = desaturateColor(strokeColor, 0.4); // 40% desaturation
+      }
+      const opacity = isMuted ? 0.3 : 0.6; // Slightly lower opacity for a "background" feel
+
+      // --- REPLICATE GRID MAPPING LOGIC FROM drawProgression ---
+      // This ensures our trace aligns exactly with where the synth markers are drawn.
+      
+      // 1. Determine fixed starting rows
+      let topDeg = currentVoicedChords[0].voiceDegrees[0];
+      if (topDeg < 1) topDeg = 1;
+      // Access the global getSopranoStartRow function
+      const startRowSop = getSopranoStartRow(topDeg);
+      const fixedRowsArr = [startRowSop, 12, 10];
+      
+      // Adjust rows based on soprano start (same logic as drawProgression)
+      if (fixedRowsArr[0] === 17) { fixedRowsArr[1] = 15; fixedRowsArr[2] = 12; }
+      else if (fixedRowsArr[0] === 19) { fixedRowsArr[1] = 17; fixedRowsArr[2] = 15; }
+      
+      const bassBaseRow = 8;
+
+      // 2. Determine global initial steps (reference points)
+      // We need these to calculate relative offsets
+      const startChord = currentVoicedChords[0];
+      const initialRefSteps = [];
+      for(let v=0; v<3; v++) {
+        initialRefSteps[v] = getAbsoluteDiatonicStep(startChord.notes[v], currentKey, keyIsMinor);
+      }
+      const initialBassStep = getAbsoluteDiatonicStep(startChord.notes[3], currentKey, keyIsMinor);
+
+      // 3. Check for "ShiftTopVoicesBy7" condition
+      const recognizedSoprano = currentVoicedChords.filter(ch => ch.voiceDegrees[0] >= 1);
+      let shiftTopVoicesBy7 = false;
+      if (recognizedSoprano.length > 0) {
+        let highestChord = recognizedSoprano[0];
+        let maxMidi = highestChord.notes[0];
+        for (let i = 1; i < recognizedSoprano.length; i++) {
+          if (recognizedSoprano[i].notes[0] > maxMidi) {
+            highestChord = recognizedSoprano[i];
+            maxMidi = recognizedSoprano[i].notes[0];
+          }
+        }
+        if (highestChord.voiceDegrees[0] === 1) shiftTopVoicesBy7 = true;
+      }
+
+      // --- END GRID LOGIC ---
+
+      // Geometry calculation
+      const chordCount = currentVoicedChords.length;
+      const chordWidth = 120;
+      const totalWidth = chordWidth * chordCount;
+      const viewBoxWidth = getViewBoxWidth(chordCount);
+      const xOffset = viewBoxWidth > totalWidth ? (viewBoxWidth - totalWidth) / 2 : 0;
+      const topMargin = 50;
+      const gridBottom = topMargin + (numRows - 1) * rowSpacing;
+      
+      const beatsPerChord = 4;
+      const totalBeats = chordCount * beatsPerChord;
+      const loopDuration = totalBeats * (60 / currentTempo);
+      
+      let pathD = "";
+      traceData.forEach((point, idx) => {
+        // Map time to X
+        const xFraction = point.tSec / loopDuration;
+        const x = xOffset + xFraction * totalWidth;
+        
+        // Map MIDI to Y using continuous diatonic steps
+        const currentContinuousStep = getContinuousDiatonicStep(point.midi, currentKey, keyIsMinor);
+        
+        let rowVal;
+        if (voiceIndex < 3) { // S, A, T
+           const offset = currentContinuousStep - initialRefSteps[voiceIndex];
+           rowVal = fixedRowsArr[voiceIndex] + offset;
+           if (shiftTopVoicesBy7) rowVal += 7;
+        } else { // Bass
+           const offset = currentContinuousStep - initialBassStep;
+           rowVal = bassBaseRow + offset;
+        }
+        
+        // Convert row to Y pixels
+        // Grid convention: Row 1 is bottom, Row N is top. 
+        // y = gridBottom - (row - 1) * spacing
+        const y = gridBottom - (rowVal - 1) * rowSpacing + MARKER_CIRCLE_OFFSET;
+        
+        if (idx === 0) {
+          pathD += `M ${x} ${y} `;
+        } else {
+          pathD += `L ${x} ${y} `;
+        }
+      });
+      
+      // Create the path element
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("id", traceId);
+      path.setAttribute("d", pathD);
+      path.setAttribute("class", "pitch-trace-path");
+      path.setAttribute("stroke", strokeColor);
+      path.setAttribute("stroke-opacity", opacity);
+      
+      // Insert at the beginning of the SVG so it stays behind markers and contour lines
+      if (svg.firstChild) {
+        svg.insertBefore(path, svg.firstChild);
+      } else {
+        svg.appendChild(path);
+      }
+    }
+
+    /**
+     * Clear all pitch trace visualizations.
+     */
+    function clearAllPitchTraces() {
+      for (let i = 0; i < 4; i++) {
+        const trace = document.getElementById(`pitch-trace-${i}`);
+        if (trace) trace.remove();
+      }
+    }
+
+    // ===== CHOIR MODE EVENT LISTENERS =====
+    // Choir Mode toggle button
+    document.getElementById("choirModeToggleBtn").addEventListener("click", async () => {
+      choirModeEnabled = !choirModeEnabled;
+      document.getElementById("choirModeToggleBtn").textContent = "Choir Mode: " + (choirModeEnabled ? "ON" : "OFF");
+      
+      // Show/hide the choir mode controls section
+      const choirSection = document.getElementById("choirModeSection");
+      if (choirModeEnabled) {
+        choirSection.classList.add("active");
+        // Pre-initialize the microphone when entering Choir Mode
+        await setupMicrophone();
+      } else {
+        choirSection.classList.remove("active");
+        // Stop any ongoing recording
+        if (isRecording) {
+          stopRecording();
+        }
+      }
+    });
+
+    // Click track toggle button
+    document.getElementById("clickTrackToggleBtn").addEventListener("click", () => {
+      clickTrackEnabled = !clickTrackEnabled;
+      const btn = document.getElementById("clickTrackToggleBtn");
+      btn.textContent = "Click: " + (clickTrackEnabled ? "ON" : "OFF");
+      btn.classList.toggle("active", clickTrackEnabled);
+      
+      // If currently playing, start/stop the click track
+      if (isPlaying && !isRecording) {
+        if (clickTrackEnabled) {
+          startClickTrack();
+        } else {
+          stopClickTrack();
+        }
+      }
+    });
+
+    // Record buttons for each voice
+    document.querySelectorAll('.record-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!choirModeEnabled) {
+          alert("Please enable Choir Mode first.");
+          return;
+        }
+        
+        const voiceIndex = parseInt(btn.getAttribute('data-voice'));
+        
+        // If already recording this voice, stop
+        if (isRecording && recordingVoiceIndex === voiceIndex) {
+          stopRecording();
+        } 
+        // If recording a different voice, stop and start new
+        else if (isRecording) {
+          stopRecording();
+          setTimeout(() => startRecording(voiceIndex), 100);
+        }
+        // Start new recording
+        else {
+          await startRecording(voiceIndex);
+        }
+      });
+    });
+
+    // Stop recording button
+    document.getElementById("stopRecordingBtn").addEventListener("click", () => {
+      if (isRecording) {
+        stopRecording();
+      }
+    });
+
+    // Synth playback toggle
+    document.getElementById("playSynthToggleBtn").addEventListener("click", () => {
+      playSynthEnabled = !playSynthEnabled;
+      const btn = document.getElementById("playSynthToggleBtn");
+      btn.classList.toggle("active", playSynthEnabled);
+      
+      // Update all mutes to respect the new toggle state
+      updateMutes();
+    });
+
+    // Vocals playback toggle
+    document.getElementById("playVocalsToggleBtn").addEventListener("click", () => {
+      playVocalsEnabled = !playVocalsEnabled;
+      const btn = document.getElementById("playVocalsToggleBtn");
+      btn.classList.toggle("active", playVocalsEnabled);
+      
+      // Update all mutes to respect the new toggle state
+      updateMutes();
+    });
+
+    // Vocal Reverb Controls
+    const vocalReverbPanel = document.getElementById("vocalReverbControlPanel");
+    const openVocalReverbBtn = document.getElementById("openVocalReverbBtn");
+    const closeVocalReverbBtn = document.getElementById("closeVocalReverbPanel");
+    
+    // Latency Slider Logic
+    const latencySlider = document.getElementById("latencySlider");
+    const latencyValue = document.getElementById("latencyValue");
+    if (latencySlider) {
+      latencySlider.addEventListener("input", (e) => {
+        const ms = parseInt(e.target.value, 10);
+        latencyValue.textContent = ms;
+        vocalLatencyCompensation = ms / 1000;
+        // Re-sync all players with the new latency offset
+        syncAllVocalPlayers();
+      });
+    }
+
+    openVocalReverbBtn.addEventListener("click", () => {
+      vocalReverbPanel.style.display = "block";
+    });
+    
+    closeVocalReverbBtn.addEventListener("click", () => {
+      vocalReverbPanel.style.display = "none";
+    });
+    
+    document.getElementById("vocalReverbDecay").addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      document.getElementById("vocalReverbDecayVal").textContent = val;
+      vocalReverb.decay = val;
+      vocalReverb.generate();
+    });
+    
+    document.getElementById("vocalReverbWet").addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      document.getElementById("vocalReverbWetVal").textContent = val;
+      vocalReverb.wet.value = val;
+    });
+
+    // Clear all recordings button
+    document.getElementById("clearAllRecordingsBtn").addEventListener("click", () => {
+      if (confirm("Clear all voice recordings?")) {
+        clearAllRecordings();
+      }
+    });
+
+    // Modify the existing playPauseBtn handler to include vocal playback
+    // We need to hook into the play/pause logic to start/stop vocals
+    const originalPlayPauseHandler = playPauseBtn.onclick;
+    
+    // Override play behavior to include vocals
+    // (Note: The existing event listener in the original code will still work,
+    // but we add a hook to manage vocal playback when Choir Mode is active)
+    const originalSchedulePlayback = schedulePlayback;
+    
+    // Clean up old listeners before adding new ones
+    Tone.Transport.off("start");
+    Tone.Transport.off("stop");
+    Tone.Transport.off("pause");
+
+    // Add a Transport event to start vocals when playback begins
+    Tone.Transport.on("start", () => {
+      // Vocal starting logic moved to player.sync() in createVocalPlayer
+    });
+    
+    Tone.Transport.on("stop", () => {
+      // stopVocalPlayback removed as players are synced to Transport
+      // stopClickTrack removed as the loop handles its own state
+    });
+    
+    Tone.Transport.on("pause", () => {
+      // stopVocalPlayback removed as players are synced to Transport
+      // stopClickTrack removed as the loop handles its own state
+    });
+
+  </script>
+</body>
+</html>
