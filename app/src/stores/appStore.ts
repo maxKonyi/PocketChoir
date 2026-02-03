@@ -91,6 +91,7 @@ interface AppState {
   
   // App mode
   mode: 'play' | 'create';
+  selectedVoiceId: string | null;  // Voice selected for editing in create mode
   
   // UI state
   isLibraryOpen: boolean;
@@ -99,6 +100,7 @@ interface AppState {
   isRangeSetupOpen: boolean;
   isDisplaySettingsOpen: boolean;
   isSaveLoadOpen: boolean;
+  isCreateModalOpen: boolean;
 }
 
 /**
@@ -108,6 +110,12 @@ interface AppActions {
   // Arrangement
   setArrangement: (arrangement: Arrangement | null) => void;
   setTransposition: (semitones: number) => void;
+  
+  // Create mode - node editing
+  addNode: (voiceId: string, t16: number, deg: number, octave?: number) => void;
+  removeNode: (voiceId: string, t16: number) => void;
+  updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number) => void;
+  setSelectedVoiceId: (voiceId: string | null) => void;
   
   // Voice controls
   setVoiceSynthVolume: (voiceId: string, volume: number) => void;
@@ -162,6 +170,7 @@ interface AppActions {
   setRangeSetupOpen: (open: boolean) => void;
   setDisplaySettingsOpen: (open: boolean) => void;
   setSaveLoadOpen: (open: boolean) => void;
+  setCreateModalOpen: (open: boolean) => void;
   
   // Utility
   initializeVoiceStates: (voices: Voice[]) => void;
@@ -229,12 +238,14 @@ const initialState: AppState = {
   display: initialDisplaySettings,
   theme: 'default',
   mode: 'play',
+  selectedVoiceId: null,
   isLibraryOpen: false,
   isMixerOpen: false,
   isMicSetupOpen: false,
   isRangeSetupOpen: false,
   isDisplaySettingsOpen: false,
   isSaveLoadOpen: false,
+  isCreateModalOpen: false,
 };
 
 /* ------------------------------------------------------------
@@ -271,6 +282,64 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   },
   
   setTransposition: (semitones) => set({ transposition: semitones }),
+
+  // -- Create Mode - Node Editing --
+  addNode: (voiceId, t16, deg, octave = 0) => set((state) => {
+    if (!state.arrangement) return state;
+    
+    // Find and update the voice
+    const updatedVoices = state.arrangement.voices.map((voice) => {
+      if (voice.id !== voiceId) return voice;
+      
+      // Remove any existing node at this t16, then add new one
+      const filteredNodes = voice.nodes.filter((n) => n.t16 !== t16);
+      const newNode = { t16, deg, octave };
+      const newNodes = [...filteredNodes, newNode].sort((a, b) => a.t16 - b.t16);
+      
+      return { ...voice, nodes: newNodes };
+    });
+    
+    return {
+      arrangement: { ...state.arrangement, voices: updatedVoices },
+    };
+  }),
+  
+  removeNode: (voiceId, t16) => set((state) => {
+    if (!state.arrangement) return state;
+    
+    const updatedVoices = state.arrangement.voices.map((voice) => {
+      if (voice.id !== voiceId) return voice;
+      return {
+        ...voice,
+        nodes: voice.nodes.filter((n) => n.t16 !== t16),
+      };
+    });
+    
+    return {
+      arrangement: { ...state.arrangement, voices: updatedVoices },
+    };
+  }),
+  
+  updateNode: (voiceId, oldT16, newT16, deg, octave = 0) => set((state) => {
+    if (!state.arrangement) return state;
+    
+    const updatedVoices = state.arrangement.voices.map((voice) => {
+      if (voice.id !== voiceId) return voice;
+      
+      // Remove old node, add updated one
+      const filteredNodes = voice.nodes.filter((n) => n.t16 !== oldT16 && n.t16 !== newT16);
+      const updatedNode = { t16: newT16, deg, octave };
+      const newNodes = [...filteredNodes, updatedNode].sort((a, b) => a.t16 - b.t16);
+      
+      return { ...voice, nodes: newNodes };
+    });
+    
+    return {
+      arrangement: { ...state.arrangement, voices: updatedVoices },
+    };
+  }),
+  
+  setSelectedVoiceId: (voiceId) => set({ selectedVoiceId: voiceId }),
 
   // -- Voice Controls --
   setVoiceSynthVolume: (voiceId, volume) => set((state) => ({
@@ -424,6 +493,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   setRangeSetupOpen: (open) => set({ isRangeSetupOpen: open }),
   setDisplaySettingsOpen: (open) => set({ isDisplaySettingsOpen: open }),
   setSaveLoadOpen: (open) => set({ isSaveLoadOpen: open }),
+  setCreateModalOpen: (open) => set({ isCreateModalOpen: open }),
 
   // -- Utility --
   initializeVoiceStates: (voices) => {

@@ -10,7 +10,7 @@ import { TopBar } from './components/topbar';
 import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
 import { Grid } from './components/grid';
-import { LibraryModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal } from './components/modals';
+import { LibraryModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
 import { useAppStore } from './stores/appStore';
 import { AudioService } from './services/AudioService';
 import { playbackEngine } from './services/PlaybackEngine';
@@ -132,6 +132,7 @@ function App() {
       <MicSetupModal />
       <RangeSetupModal />
       <DisplaySettingsModal />
+      <CreateArrangementModal />
 
       {/* Welcome message when no arrangement is loaded */}
       {!arrangement && (

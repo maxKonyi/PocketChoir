@@ -13,15 +13,15 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 
 ---
 
-## Phase 1: Project Setup & Foundation
+## Phase 1: Project Setup & Foundation ✅ COMPLETE
 
 ### 1.1 Initialize Project
-- [ ] Create Vite project with React + TypeScript template
-- [ ] Install dependencies:
+- [x] Create Vite project with React + TypeScript template
+- [x] Install dependencies:
   - TailwindCSS for styling
   - Lucide React for icons
   - idb for IndexedDB wrapper
-- [ ] Set up folder structure:
+- [x] Set up folder structure:
   ```
   src/
   ├── components/        # Reusable UI components
@@ -40,80 +40,80 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
   ```
 
 ### 1.2 Define Core TypeScript Types
-- [ ] `Arrangement` type (id, title, tempo, bars, tonic, scale, voices)
-- [ ] `Voice` type (id, name, color, nodes)
-- [ ] `Node` type (t16, deg, term?)
-- [ ] `Performance` type (arrangement reference, recordings, mixer settings)
-- [ ] `Recording` type (voiceId, audioBlob, pitchTrace)
+- [x] `Arrangement` type (id, title, tempo, bars, tonic, scale, voices)
+- [x] `Voice` type (id, name, color, nodes)
+- [x] `Node` type (t16, deg, term?)
+- [x] `Performance` type (arrangement reference, recordings, mixer settings)
+- [x] `Recording` type (voiceId, audioBlob, pitchTrace)
 
 ### 1.3 Set Up Global Styling
-- [ ] Configure TailwindCSS with custom theme colors:
+- [x] Configure TailwindCSS with custom theme colors:
   - Deep purple/pink gradient backgrounds (cosmic vibe from AI mockup)
   - Neon accent colors for voice lines (pink, blue, green, yellow, orange, purple)
   - Semi-transparent panel backgrounds
   - Glow effects for active elements
-- [ ] Create base component styles (buttons, panels, sliders)
+- [x] Create base component styles (buttons, panels, sliders)
 
 ---
 
-## Phase 2: Core Audio Infrastructure
+## Phase 2: Core Audio Infrastructure ✅ COMPLETE
 
 ### 2.1 Audio Context & Routing
-- [ ] Create `AudioService` class to manage Web Audio API
-- [ ] Set up master audio graph:
+- [x] Create `AudioService` class to manage Web Audio API
+- [x] Set up master audio graph:
   ```
   [Synth Voices] ──┬──> [Master Gain] ──> [Destination]
   [User Vocals] ───┘
   ```
-- [ ] Implement per-voice gain nodes for volume control
-- [ ] Add simple reverb using ConvolverNode (or basic delay-based reverb)
+- [x] Implement per-voice gain nodes for volume control
+- [ ] Add simple reverb using ConvolverNode (or basic delay-based reverb) — *Deferred*
 
 ### 2.2 Synthesizer
-- [ ] Create `SynthVoice` class for playing reference tones
-- [ ] Use basic waveforms (sine/triangle) with ADSR envelope for smooth, rounded tones
-- [ ] Support for:
+- [x] Create `SynthVoice` class for playing reference tones
+- [x] Use basic waveforms (sine/triangle) with ADSR envelope for smooth, rounded tones
+- [x] Support for:
   - Playing a note at a specific frequency
   - Gliding between notes (portamento)
   - Note-off with release envelope
 
 ### 2.3 Microphone Input & Recording
-- [ ] Request microphone permission
-- [ ] Create `MicrophoneService` for:
+- [x] Request microphone permission
+- [x] Create `MicrophoneService` for:
   - Device enumeration (list available mics)
   - Input gain control
   - Starting/stopping recording
   - Capturing audio as Blob for storage
 
 ### 2.4 Pitch Detection
-- [ ] Implement pitch detection using autocorrelation (YIN-style algorithm)
-- [ ] Apply smoothing to reduce jitter:
+- [x] Implement pitch detection using autocorrelation (YIN-style algorithm)
+- [x] Apply smoothing to reduce jitter:
   - Moving average filter
   - Confidence gating (ignore low-confidence detections)
   - Hysteresis to prevent rapid jumps
-- [ ] Output: continuous stream of (time, frequency, confidence) data
+- [x] Output: continuous stream of (time, frequency, confidence) data
 
 ---
 
-## Phase 3: Data Layer & State Management
+## Phase 3: Data Layer & State Management ✅ MOSTLY COMPLETE
 
 ### 3.1 Arrangement Data
-- [ ] Create 10-15 sample arrangements in JSON format
-- [ ] Start simple: 2-voice arrangements, then progress to 4-6 voices
-- [ ] Include variety:
+- [x] Create 10-15 sample arrangements in JSON format — *4 created, need more*
+- [x] Start simple: 2-voice arrangements, then progress to 4-6 voices
+- [x] Include variety:
   - Simple parallel motion
   - Contrary motion
   - Chord-based harmony
   - Different tempos and keys
 
 ### 3.2 State Management
-- [ ] Create React context or Zustand store for:
+- [x] Create React context or Zustand store for:
   - Current arrangement
   - Playback state (playing, position, tempo multiplier, loop points)
   - Recording state (armed voice, recording in progress)
   - Mixer state (per-voice volume, mute, solo)
   - Display settings (labels, zoom level)
 
-### 3.3 IndexedDB Storage
+### 3.3 IndexedDB Storage — *Deferred to post-MVP*
 - [ ] Set up database schema:
   - `performances` store (saved user performances)
   - `settings` store (user preferences)
@@ -125,70 +125,70 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 
 ---
 
-## Phase 4: Grid Visualization (Core Feature)
+## Phase 4: Grid Visualization (Core Feature) ✅ COMPLETE
 
 ### 4.1 Grid Canvas Component
-- [ ] Create main `<Grid>` component using HTML Canvas or SVG
-- [ ] Render:
+- [x] Create main `<Grid>` component using HTML Canvas or SVG
+- [x] Render:
   - Background with vertical beat/subdivision lines
-  - Horizontal pitch reference lines (subtle)
-  - Optional chord labels above grid
+  - Horizontal pitch reference lines (subtle, degree 1 highlighted)
+  - Optional chord labels above grid (blocks touch end-to-end)
 
 ### 4.2 Contour Line Rendering
-- [ ] Draw target contour lines for each voice:
+- [x] Draw target contour lines for each voice:
   - Straight horizontal segments between nodes
-  - Subtle curve/transition approaching next node
   - Colored based on voice assignment
   - Glowing effect (drop shadow or multiple strokes)
-- [ ] Render nodes as circles at each pitch point
-  - Optional: show scale degree number inside node
+- [x] Render nodes as circles at each pitch point
+  - Show scale degree number inside node
 
 ### 4.3 User Pitch Trace
-- [ ] Overlay real-time pitch trace during recording
-- [ ] Draw as continuous, slightly wavy line (reflecting actual pitch)
-- [ ] Use semi-transparent color matching the target voice
-- [ ] After recording: keep trace visible for comparison
+- [x] Overlay real-time pitch trace during recording
+- [x] Draw as continuous line (reflecting actual pitch)
+- [x] Use semi-transparent color matching the target voice
+- [x] After recording: keep trace visible for comparison
 
 ### 4.4 Playhead
-- [ ] Draw vertical playhead line at current position
-- [ ] Smooth animation during playback
-- [ ] Option: fixed playhead with scrolling grid, or moving playhead on static grid
+- [x] Draw vertical playhead line at current position
+- [x] Smooth animation during playback (reads directly from PlaybackEngine)
+- [x] Moving playhead on static grid
 
 ### 4.5 Zoom & Scroll
-- [ ] Implement zoom controls (zoom in/out)
-- [ ] When zoomed in: grid scrolls with playback
-- [ ] When zoomed out: see entire arrangement
+- [x] Implement zoom controls (zoom in/out)
+- [x] Vertical zoom auto-adjusts to show all notes with 3 degrees padding
+- [ ] When zoomed in: grid scrolls with playback — *Deferred*
 
 ---
 
-## Phase 5: UI Components
+## Phase 5: UI Components ✅ MOSTLY COMPLETE
 
 ### 5.1 Top Bar
-- [ ] **Level/Preset selector:** Button that opens arrangement library
-- [ ] **Range button:** Opens vocal range settings (for transposition)
-- [ ] **Mic Setup button:** Opens mic selection and gain controls
-- [ ] **Display button:** Toggle labels, chord track, etc.
-- [ ] **Play | Create toggle:** Mode selector (Create mode disabled for MVP, just a placeholder)
+- [x] **Level/Preset selector:** Button that opens arrangement library
+- [x] **Mic Setup button:** Opens mic selection and gain controls
+- [x] **Display button:** Toggle labels, chord track, etc.
+- [x] **Play | Create toggle:** Mode selector (Create mode placeholder)
+- [x] **Theme selector:** Switch between visual themes
 
 ### 5.2 Left Sidebar (Voice Controls)
-- [ ] **Tempo display:** Show current tempo (read-only for MVP)
-- [ ] **Key display:** Show current key
-- [ ] **Per-voice controls (V1-V6):**
+- [x] **Arrangement info:** Shows key, tempo in TopBar
+- [x] **Per-voice controls (V1-V6):**
   - Record arm button (red dot when armed)
   - Mute button (M)
   - Solo button (S)
   - Delete/clear recording button (trash icon)
   - Visual indicator: recorded vs. empty
-- [ ] **CLEAR button:** Clear all recordings
+- [x] **CLEAR button:** Clear all recordings
 
 ### 5.3 Transport Bar
-- [ ] **Play/Pause button:** Main playback toggle
-- [ ] **Loop toggle:** Enable/disable looping
-- [ ] **Speed selector:** 0.5x / 0.75x / 1.0x tempo multiplier
-- [ ] **Zoom controls:** Zoom in/out buttons
-- [ ] **Record button:** Start recording (only when a voice is armed)
+- [x] **Play/Pause button:** Main playback toggle
+- [x] **Loop toggle:** Enable/disable looping
+- [x] **Speed selector:** 0.5x / 0.75x / 1.0x tempo multiplier
+- [x] **Zoom controls:** Zoom in/out buttons
+- [x] **Record button:** Start recording (only when a voice is armed)
+- [x] **Position display:** Shows current Bar:Beat
+- [x] **Go to start button:** Reset position
 
-### 5.4 Mixer Panel
+### 5.4 Mixer Panel — *Deferred*
 - [ ] **Mixer button** in top bar or sidebar opens mixer panel
 - [ ] Per-voice controls:
   - Volume slider
@@ -199,36 +199,36 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 - [ ] Master output level
 
 ### 5.5 Arrangement Library Modal
-- [ ] Grid/list of available arrangements
-- [ ] Show: title, number of voices, difficulty indicator
-- [ ] Click to load arrangement
+- [x] Grid/list of available arrangements
+- [x] Show: title, number of voices, difficulty indicator
+- [x] Click to load arrangement
 - [ ] Later: search/filter
 
-### 5.6 Save/Load Performance Modal
+### 5.6 Save/Load Performance Modal — *Deferred*
 - [ ] **Save:** Enter name, save current performance
 - [ ] **Load:** List saved performances, click to load
 - [ ] **Delete:** Remove saved performance
 
 ---
 
-## Phase 6: Playback Engine
+## Phase 6: Playback Engine ✅ COMPLETE
 
 ### 6.1 Timeline & Scheduling
-- [ ] Create `PlaybackEngine` class
-- [ ] Convert arrangement nodes to scheduled synth events
-- [ ] Handle:
+- [x] Create `PlaybackEngine` class
+- [x] Convert arrangement nodes to scheduled synth events
+- [x] Handle:
   - Play/pause
   - Loop (seamless restart at loop point)
   - Tempo multiplier (0.5x, 0.75x, 1.0x)
-  - Position seeking (click on grid to jump)
+  - Position seeking (click on grid to jump) — *Basic support*
 
 ### 6.2 Synth Voice Playback
-- [ ] Schedule note-on/note-off events for each synth voice
-- [ ] Convert scale degree + tonic → actual frequency
-- [ ] Handle phrase termination nodes (silence until next phrase)
-- [ ] Respect mute/solo states
+- [x] Schedule note-on/note-off events for each synth voice
+- [x] Convert scale degree + tonic → actual frequency
+- [x] Handle phrase termination nodes (silence until next phrase)
+- [x] Respect mute/solo states
 
-### 6.3 Recorded Vocal Playback
+### 6.3 Recorded Vocal Playback — *Partial*
 - [ ] Load recorded audio blobs into AudioBufferSourceNodes
 - [ ] Sync playback with timeline
 - [ ] Apply per-voice effects (volume, reverb)
@@ -236,30 +236,30 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 
 ---
 
-## Phase 7: Recording Flow
+## Phase 7: Recording Flow ✅ MOSTLY COMPLETE
 
 ### 7.1 Record Preparation
-- [ ] User arms a voice (clicks record button on V1-V6)
-- [ ] Show visual feedback (voice highlighted, record indicator)
-- [ ] Check microphone is available
+- [x] User arms a voice (clicks record button on V1-V6)
+- [x] Show visual feedback (voice highlighted, record indicator)
+- [x] Check microphone is available
 
 ### 7.2 Count-In
-- [ ] When user presses main Record button:
-  - Play 1-bar count-in (4 clicks at tempo)
-  - Show visual count-in on grid
-  - Optional: show countdown overlay (4, 3, 2, 1)
+- [x] When user presses main Record button:
+  - Play 1-bar count-in (4 clicks at tempo) — *Implemented in PlaybackEngine*
+  - [ ] Show visual count-in on grid
+  - [ ] Optional: show countdown overlay (4, 3, 2, 1)
 
 ### 7.3 Recording Loop
-- [ ] Start recording audio from microphone
-- [ ] Start pitch detection, draw live trace on grid
-- [ ] Play synth voices (so user can sing along)
+- [x] Start recording audio from microphone
+- [x] Start pitch detection, draw live trace on grid
+- [x] Play synth voices (so user can sing along)
 - [ ] At end of loop: stop recording automatically
 
 ### 7.4 Post-Recording
-- [ ] Store recorded audio blob
-- [ ] Store pitch trace data
-- [ ] Update UI to show recording exists for that voice
-- [ ] User can immediately play back or re-record
+- [x] Store pitch trace data (in-session only)
+- [x] Update UI to show recording exists for that voice
+- [x] User can immediately play back or re-record
+- [x] Recordings cleared on arrangement change
 
 ---
 
@@ -283,37 +283,41 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 
 ---
 
-## Phase 9: Internal Authoring Tools (For Content Creation)
+## Phase 9: Internal Authoring Tools (Create Mode) ✅ MOSTLY COMPLETE
 
-This is for you (the developer/content creator) to make arrangements, not exposed to end users in MVP.
+This enables creating new arrangements within the app.
 
 ### 9.1 Basic Authoring Mode
-- [ ] Toggle into "Create" mode
-- [ ] Set arrangement parameters: tempo, key, bars, time signature
-- [ ] Add/remove voices
+- [x] Toggle into "Create" mode via button in TopBar
+- [x] Modal UI for setting arrangement parameters: title, tempo, key, scale, bars, time signature
+- [x] Add/remove voices in modal (up to 6)
+- [x] Voice selector in sidebar shows "EDIT" mode with edit icon
 
 ### 9.2 Node Editing
-- [ ] Click on grid to place a node at that time/pitch position
-- [ ] Double-click a node to mark it as termination point
-- [ ] Click existing node to select it, delete key to remove
-- [ ] Drag node to move it (optional)
-- [ ] Placing node on occupied time position replaces existing node
+- [x] Click on grid to place a node at that time/pitch position
+- [x] Shift+click on existing node to remove it
+- [x] Placing node on occupied time position replaces existing node
+- [x] Nodes display scale degree number inside circle
+- [x] Voice lines connect nodes with glow effect
+- [ ] Double-click a node to mark it as termination point — *Not yet implemented*
+- [ ] Drag node to move it — *Not yet implemented*
 
 ### 9.3 Export Arrangement
 - [ ] Export arrangement as JSON file
-- [ ] Copy to clipboard for easy pasting into app's data folder
+- [ ] Save to library
 
 ---
 
-## Phase 10: Polish & Visual Design
+## Phase 10: Polish & Visual Design ✅ MOSTLY COMPLETE
 
 ### 10.1 Visual Theme (Cosmic/Dreamy Aesthetic)
-- [ ] Deep purple-to-pink gradient background
+- [x] Deep purple-to-pink gradient background
 - [ ] Subtle particle/star animation in background
-- [ ] Glowing neon lines for contours
-- [ ] Semi-transparent frosted glass panels
-- [ ] Smooth animations and transitions
-- [ ] Hover and active states with glow effects
+- [x] Glowing neon lines for contours
+- [x] Semi-transparent frosted glass panels
+- [x] Smooth animations and transitions
+- [x] Hover and active states with glow effects
+- [x] Multiple theme options (Cosmic, Default, Minimal, Sunset, Ocean)
 
 ### 10.2 Responsive Layout
 - [ ] Target: Desktop screens (1280px+ width)

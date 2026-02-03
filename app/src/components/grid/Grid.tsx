@@ -14,6 +14,7 @@ import type { Arrangement, Voice, PitchPoint } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import { scaleDegreeToFrequency } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
+import { playbackEngine } from '../../services/PlaybackEngine';
 
 /* ------------------------------------------------------------
    Types
@@ -98,18 +99,26 @@ function t16ToX(
    Grid Component
    ------------------------------------------------------------ */
 
-export function Grid({ arrangement, className = '' }: GridProps) {
+export function Grid({ arrangement: arrangementProp, className = '' }: GridProps) {
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Get state from store
-  const playback = useAppStore((state) => state.playback);
+  // Get arrangement from store to ensure we always have latest (for create mode updates)
+  const arrangementFromStore = useAppStore((state) => state.arrangement);
+  const arrangement = arrangementFromStore || arrangementProp;
+  
+  // Get state from store (playhead position read directly from playbackEngine)
   const voiceStates = useAppStore((state) => state.voiceStates);
   const livePitchTrace = useAppStore((state) => state.livePitchTrace);
   const display = useAppStore((state) => state.display);
   const recordings = useAppStore((state) => state.recordings);
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
+  const mode = useAppStore((state) => state.mode);
+  const selectedVoiceId = useAppStore((state) => state.selectedVoiceId);
+  const addNode = useAppStore((state) => state.addNode);
+  const removeNode = useAppStore((state) => state.removeNode);
+  const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
 
   /**
    * Calculate the pitch range for the arrangement.
@@ -128,8 +137,14 @@ export function Grid({ arrangement, className = '' }: GridProps) {
       }
     }
     
-    // Add generous padding for breathing room (at least 2 degrees on each side)
-    minDeg = Math.max(-2, minDeg - 3);
+    // If no nodes found, use default range (degrees 1-8)
+    if (minDeg === Infinity || maxDeg === -Infinity) {
+      minDeg = 1;
+      maxDeg = 8;
+    }
+    
+    // Add 3 degrees of padding above and below for breathing room
+    minDeg = minDeg - 3;
     maxDeg = maxDeg + 3;
     
     // Calculate frequency range
@@ -195,8 +210,8 @@ export function Grid({ arrangement, className = '' }: GridProps) {
     // Get pitch range
     const { minDegree, maxDegree, minFreq, maxFreq } = getPitchRange();
     
-    // Time range (in 16th notes)
-    const totalT16 = arrangement.bars * 16; // Assuming 4/4
+    // Time range (in 16th notes) - calculate based on time signature
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
     const startT16 = 0;
     const endT16 = totalT16;
     
@@ -398,8 +413,8 @@ export function Grid({ arrangement, className = '' }: GridProps) {
       ctx.globalAlpha = 1;
     }
     
-    // Draw playhead
-    const playheadT16 = playback.position;
+    // Draw playhead - read directly from engine for smooth animation
+    const playheadT16 = playbackEngine.getCurrentPositionT16();
     const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
     
     ctx.strokeStyle = playheadColor;
@@ -418,7 +433,7 @@ export function Grid({ arrangement, className = '' }: GridProps) {
     ctx.stroke();
     ctx.shadowBlur = 0;
     
-  }, [arrangement, playback.position, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange]);
+  }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange]);
 
   /**
    * Draw a voice's contour line.
@@ -545,6 +560,89 @@ export function Grid({ arrangement, className = '' }: GridProps) {
     return () => window.removeEventListener('resize', handleResize);
   }, [draw]);
 
+  /**
+   * Handle canvas click for placing/removing nodes in create mode.
+   */
+  const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Only handle clicks in create mode
+    if (mode !== 'create' || !arrangement) return;
+    
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    
+    // Get click position relative to canvas
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Calculate grid dimensions (same as in draw function)
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
+    
+    const gridLeft = padding.left;
+    const gridTop = padding.top;
+    const gridWidth = width - padding.left - padding.right;
+    const gridHeight = height - padding.top - padding.bottom;
+    
+    // Check if click is within grid area
+    if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) {
+      return;
+    }
+    
+    // Calculate time range
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const startT16 = 0;
+    const endT16 = totalT16;
+    
+    // Get pitch range
+    const { minDegree, maxDegree } = getPitchRange();
+    
+    // Convert click to t16 (snap to nearest 16th note)
+    const relativeX = (x - gridLeft) / gridWidth;
+    const rawT16 = startT16 + relativeX * (endT16 - startT16);
+    const t16 = Math.round(rawT16); // Snap to nearest 16th
+    
+    // Convert click to degree (round to nearest integer)
+    const relativeY = (y - gridTop) / gridHeight;
+    const rawDeg = maxDegree - relativeY * (maxDegree - minDegree);
+    const deg = Math.round(rawDeg);
+    
+    // Determine voice to edit - use selected voice or first voice
+    const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
+    if (!voiceId) return;
+    
+    // Auto-select voice if none selected
+    if (!selectedVoiceId) {
+      setSelectedVoiceId(voiceId);
+    }
+    
+    // Check if there's already a node near this position
+    const voice = arrangement.voices.find((v) => v.id === voiceId);
+    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - t16) < 2);
+    
+    if (existingNode && e.shiftKey) {
+      // Shift+click removes node
+      removeNode(voiceId, existingNode.t16);
+    } else {
+      // Regular click adds/updates node
+      // Calculate octave offset if degree is outside 1-7 range
+      let finalDeg = deg;
+      let octave = 0;
+      while (finalDeg > 7) {
+        finalDeg -= 7;
+        octave += 1;
+      }
+      while (finalDeg < 1) {
+        finalDeg += 7;
+        octave -= 1;
+      }
+      
+      addNode(voiceId, t16, finalDeg, octave);
+    }
+  }, [mode, arrangement, selectedVoiceId, addNode, removeNode, setSelectedVoiceId, getPitchRange]);
+
   return (
     <div 
       ref={containerRef}
@@ -552,7 +650,8 @@ export function Grid({ arrangement, className = '' }: GridProps) {
     >
       <canvas 
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
+        className={`absolute inset-0 w-full h-full ${mode === 'create' ? 'cursor-crosshair' : ''}`}
+        onClick={handleCanvasClick}
       />
     </div>
   );

@@ -38,6 +38,7 @@ export function TopBar() {
   const setDisplaySettingsOpen = useAppStore((state) => state.setDisplaySettingsOpen);
   const setMode = useAppStore((state) => state.setMode);
   const setTheme = useAppStore((state) => state.setTheme);
+  const setCreateModalOpen = useAppStore((state) => state.setCreateModalOpen);
 
   /**
    * Handle theme change from dropdown.
@@ -162,16 +163,18 @@ export function TopBar() {
             Play
           </button>
           <button
-            onClick={() => setMode('create')}
-            disabled
+            onClick={() => {
+              setMode('create');
+              setCreateModalOpen(true);
+            }}
             className={`
               px-3 py-1 rounded-md text-xs font-semibold uppercase tracking-wide transition-all
               ${mode === 'create' 
                 ? 'bg-[var(--accent-primary)] text-white shadow-sm' 
-                : 'text-[var(--text-muted)] cursor-not-allowed opacity-50'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }
             `}
-            title="Coming soon"
+            title="Create new arrangement"
           >
             Create
           </button>
