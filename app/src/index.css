@@ -23,78 +23,172 @@
   -moz-osx-font-smoothing: grayscale;
 
   /* -- Background colors -- */
-  --bg-primary: #1a1625;           /* Main app background */
-  --bg-secondary: #252033;         /* Panels, sidebars */
-  --bg-tertiary: #2d2640;          /* Cards, elevated surfaces */
-  --bg-grid: #1e1a2e;              /* Grid background */
-  
+  --bg-primary: #1a1625;
+  /* Main app background */
+  --bg-secondary: #252033;
+  /* Panels, sidebars */
+  --bg-tertiary: #2d2640;
+  /* Cards, elevated surfaces */
+  --bg-grid: #1e1a2e;
+  /* Grid background */
+
   /* -- Text colors -- */
-  --text-primary: #ffffff;         /* Main text */
-  --text-secondary: #a8a3b8;       /* Muted/secondary text */
-  --text-muted: #6b6580;           /* Very muted text */
-  
+  --text-primary: #ffffff;
+  /* Main text */
+  --text-secondary: #a8a3b8;
+  /* Muted/secondary text */
+  --text-muted: #6b6580;
+  /* Very muted text */
+
   /* -- Accent colors -- */
-  --accent-primary: #8b5cf6;       /* Primary accent (purple) */
+  --accent-primary: #8b5cf6;
+  /* Primary accent (purple) */
   --accent-primary-glow: rgba(139, 92, 246, 0.4);
-  --accent-secondary: #ec4899;     /* Secondary accent (pink) */
+  --accent-secondary: #ec4899;
+  /* Secondary accent (pink) */
   --accent-secondary-glow: rgba(236, 72, 153, 0.4);
-  
+
   /* -- Voice colors (for contour lines) -- */
-  --voice-1: #ff6b9d;              /* Pink/magenta */
+  --voice-1: #ff6b9d;
+  /* Pink/magenta */
   --voice-1-glow: rgba(255, 107, 157, 0.5);
-  --voice-2: #4ecdc4;              /* Teal/cyan */
+  --voice-2: #4ecdc4;
+  /* Teal/cyan */
   --voice-2-glow: rgba(78, 205, 196, 0.5);
-  --voice-3: #ffe66d;              /* Yellow/gold */
+  --voice-3: #ffe66d;
+  /* Yellow/gold */
   --voice-3-glow: rgba(255, 230, 109, 0.5);
-  --voice-4: #ff8c42;              /* Orange */
+  --voice-4: #ff8c42;
+  /* Orange */
   --voice-4-glow: rgba(255, 140, 66, 0.5);
-  --voice-5: #a78bfa;              /* Light purple */
+  --voice-5: #a78bfa;
+  /* Light purple */
   --voice-5-glow: rgba(167, 139, 250, 0.5);
-  --voice-6: #34d399;              /* Green */
+  --voice-6: #34d399;
+  /* Green */
   --voice-6-glow: rgba(52, 211, 153, 0.5);
-  
+
   /* -- UI element colors -- */
   --border-color: rgba(255, 255, 255, 0.1);
   --border-color-strong: rgba(255, 255, 255, 0.2);
   --button-bg: rgba(255, 255, 255, 0.08);
   --button-bg-hover: rgba(255, 255, 255, 0.15);
   --button-bg-active: rgba(255, 255, 255, 0.2);
-  
+
   /* -- Grid colors -- */
-  --grid-line-bar: rgba(255, 255, 255, 0.15);       /* Bar lines */
-  --grid-line-beat: rgba(255, 255, 255, 0.08);      /* Beat lines */
-  --grid-line-subdivision: rgba(255, 255, 255, 0.04); /* 16th note lines */
-  --grid-pitch-line: rgba(255, 255, 255, 0.05);    /* Horizontal pitch lines */
+  --grid-line-bar: rgba(255, 255, 255, 0.15);
+  /* Bar lines */
+  --grid-line-beat: rgba(255, 255, 255, 0.08);
+  /* Beat lines */
+  --grid-line-subdivision: rgba(255, 255, 255, 0.04);
+  /* 16th note lines */
+  --grid-pitch-line: rgba(255, 255, 255, 0.05);
+  /* Horizontal pitch lines */
   --playhead-color: #ffffff;
   --playhead-glow: rgba(255, 255, 255, 0.3);
-  
+
   /* -- Status colors -- */
-  --color-record: #ef4444;         /* Recording indicator */
+  --color-record: #ef4444;
+  /* Recording indicator */
   --color-record-glow: rgba(239, 68, 68, 0.5);
-  --color-success: #22c55e;        /* Success/armed */
-  --color-warning: #f59e0b;        /* Warning */
-  --color-muted: #6b7280;          /* Muted state */
-  
+  --color-success: #22c55e;
+  /* Success/armed */
+  --color-warning: #f59e0b;
+  /* Warning */
+  --color-muted: #6b7280;
+  /* Muted state */
+
   /* -- Panel effects -- */
-  --panel-blur: 12px;              /* Backdrop blur amount */
-  --panel-opacity: 0.85;           /* Panel background opacity */
-  --glow-intensity: 1;             /* Multiplier for glow effects (0-2) */
-  
+  --panel-blur-low: 4px;
+  --panel-blur-med: 12px;
+  --panel-blur-high: 40px;
+  --panel-opacity: 0.4;
+  --glow-intensity: 1;
+
   /* -- Animation speeds -- */
   --transition-fast: 150ms;
   --transition-normal: 250ms;
   --transition-slow: 400ms;
-  
+
   /* -- Border radius -- */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 32px;
   --radius-full: 9999px;
-  
-  /* -- Background gradient (cosmic default) -- */
-  --bg-gradient: linear-gradient(135deg, #1a1625 0%, #2d1f47 30%, #3d2a5c 60%, #251a38 100%);
+
+  /* -- Background gradient (futuristic shifting default) -- */
+  --bg-gradient: linear-gradient(-45deg, #051612, #0a1f2f, #1a0f25, #0a251a);
 }
+
+
+@keyframes gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.glass-pane {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-low {
+  backdrop-filter: blur(var(--panel-blur-low));
+  -webkit-backdrop-filter: blur(var(--panel-blur-low));
+}
+
+.glass-med {
+  backdrop-filter: blur(var(--panel-blur-med));
+  -webkit-backdrop-filter: blur(var(--panel-blur-med));
+}
+
+.glass-high {
+  backdrop-filter: blur(var(--panel-blur-high));
+  -webkit-backdrop-filter: blur(var(--panel-blur-high));
+}
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(45deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.03) 30%,
+      rgba(255, 255, 255, 0.07) 50%,
+      rgba(255, 255, 255, 0.03) 70%,
+      transparent 100%);
+  transform: rotate(45deg);
+  animation: shimmer 6s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%) rotate(45deg);
+  }
+
+  100% {
+    transform: translateX(100%) rotate(45deg);
+  }
+}
+
 
 /* ============================================================
    COSMIC THEME (Default)
@@ -203,7 +297,9 @@
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   margin: 0;
   padding: 0;
   width: 100%;
@@ -212,9 +308,12 @@ html, body, #root {
 }
 
 body {
-  background-color: var(--bg-primary);
+  background: var(--bg-gradient);
+  background-size: 400% 400%;
+  animation: gradientShift 20s ease infinite;
   color: var(--text-primary);
 }
+
 
 /* -- Scrollbar styling -- */
 ::-webkit-scrollbar {

@@ -23,14 +23,14 @@ interface VoiceControlProps {
 
 function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
   // Get state from store
-  const voiceState = useAppStore((state) => 
+  const voiceState = useAppStore((state) =>
     state.voiceStates.find((v) => v.voiceId === voiceId)
   );
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
   const hasRecording = useAppStore((state) => state.recordings.has(voiceId));
   const mode = useAppStore((state) => state.mode);
   const selectedVoiceId = useAppStore((state) => state.selectedVoiceId);
-  
+
   // Get actions from store
   const armVoice = useAppStore((state) => state.armVoice);
   const setVoiceSynthMuted = useAppStore((state) => state.setVoiceSynthMuted);
@@ -61,15 +61,15 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
           rounded-full
           transition-all duration-200
           ${isArmed || isSelectedForEdit
-            ? 'ring-2 ring-white/50 shadow-lg' 
+            ? 'ring-2 ring-white/50 shadow-lg'
             : 'hover:brightness-110'
           }
         `}
-        style={{ 
+        style={{
           backgroundColor: voiceColor,
           boxShadow: (isArmed || isSelectedForEdit) ? `0 0 20px ${voiceColor}80` : `0 2px 8px ${voiceColor}40`,
         }}
-        title={mode === 'create' 
+        title={mode === 'create'
           ? (isSelectedForEdit ? 'Selected for editing' : 'Click to select for editing')
           : (isArmed ? 'Click to disarm' : 'Click to arm for recording')
         }
@@ -80,9 +80,9 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
         ) : (
           <Mic size={14} className="text-white/90" />
         )}
-        
+
         {/* Status indicator dot */}
-        <span 
+        <span
           className={`
             w-2.5 h-2.5 rounded-full 
             ${isArmed ? 'bg-red-500 animate-pulse' : ''}
@@ -90,7 +90,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
             ${!isArmed && !isSelectedForEdit ? 'bg-white/30' : ''}
           `}
         />
-        
+
         {/* Voice label */}
         <span className="text-white font-medium text-sm">
           {mode === 'create' ? 'EDIT' : 'REC'} {voiceName.charAt(0).toUpperCase()}
@@ -135,7 +135,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
 
         {/* Recording exists indicator */}
         {hasRecording && (
-          <div 
+          <div
             className="w-2 h-2 rounded-full bg-green-400"
             title="Has recording"
           />
@@ -159,17 +159,15 @@ export function VoiceSidebar() {
   }
 
   return (
-    <div 
+    <div
       className="
-        absolute left-4 top-1/2 -translate-y-1/2 z-20
-        flex flex-col gap-3 p-3
-        bg-[var(--bg-secondary)]/80
-        backdrop-blur-xl
-        rounded-2xl
-        border border-white/10
-        shadow-xl
+        absolute left-6 top-1/2 -translate-y-1/2 z-20
+        flex flex-col gap-4 p-4
+        glass-pane glass-med rounded-[2rem]
+        shadow-2xl
       "
     >
+
       {/* Header label */}
       <div className="text-xs text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-2 justify-center">
         <Mic size={12} />

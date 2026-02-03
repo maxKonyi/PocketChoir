@@ -17,10 +17,10 @@ function formatPosition(t16: number, timeSig: { numerator: number; denominator: 
   const beatsPerBar = timeSig.numerator;
   const sixteenthsPerBeat = 4;
   const sixteenthsPerBar = beatsPerBar * sixteenthsPerBeat;
-  
+
   const bar = Math.floor(t16 / sixteenthsPerBar) + 1;
   const beatInBar = Math.floor((t16 % sixteenthsPerBar) / sixteenthsPerBeat) + 1;
-  
+
   return `${bar}:${beatInBar}`;
 }
 
@@ -34,7 +34,7 @@ export function TransportBar() {
   const arrangement = useAppStore((state) => state.arrangement);
   const display = useAppStore((state) => state.display);
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
-  
+
   // Get actions from store
   const setPlaying = useAppStore((state) => state.setPlaying);
   const setLoopEnabled = useAppStore((state) => state.setLoopEnabled);
@@ -64,11 +64,14 @@ export function TransportBar() {
 
   return (
     <div className="
+      absolute bottom-6 left-6 right-6
       flex items-center justify-between
-      h-14 px-6
-      bg-[var(--panel-bg)]/90 backdrop-blur-md
-      border-t border-[var(--border-color)]
+      h-16 px-8
+      glass-pane glass-high rounded-2xl
+      shadow-2xl z-20
     ">
+
+
       {/* Left: Position display */}
       <div className="flex items-center gap-4 min-w-[180px]">
         {/* Current position */}
@@ -80,10 +83,10 @@ export function TransportBar() {
             Bar:Beat
           </div>
         </div>
-        
+
         {/* Divider */}
         <div className="w-px h-8 bg-[var(--border-color)]" />
-        
+
         {/* Speed selector */}
         <div className="flex flex-col items-start gap-1">
           <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Speed</span>
@@ -94,8 +97,8 @@ export function TransportBar() {
                 onClick={() => setTempoMultiplier(speed)}
                 className={`
                   px-2 py-0.5 text-xs font-medium rounded transition-all
-                  ${playback.tempoMultiplier === speed 
-                    ? 'bg-[var(--accent-primary)] text-white' 
+                  ${playback.tempoMultiplier === speed
+                    ? 'bg-[var(--accent-primary)] text-white'
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                   }
                 `}
@@ -134,10 +137,10 @@ export function TransportBar() {
             w-10 h-10 rounded-lg
             flex items-center justify-center
             transition-all
-            ${isRecording 
-              ? 'bg-red-500 text-white animate-pulse' 
-              : armedVoiceId 
-                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30' 
+            ${isRecording
+              ? 'bg-red-500 text-white animate-pulse'
+              : armedVoiceId
+                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30'
                 : 'bg-[var(--button-bg)] text-[var(--text-muted)] cursor-not-allowed'
             }
           `}
@@ -154,9 +157,9 @@ export function TransportBar() {
             w-14 h-14 rounded-xl
             flex items-center justify-center
             transition-all
-            ${arrangement 
+            ${arrangement
               ? playback.isPlaying
-                ? 'bg-[var(--accent-primary)] text-white shadow-lg shadow-[var(--accent-primary)]/30' 
+                ? 'bg-[var(--accent-primary)] text-white shadow-lg shadow-[var(--accent-primary)]/30'
                 : 'bg-[var(--accent-primary)] text-white hover:brightness-110'
               : 'bg-[var(--button-bg)] text-[var(--text-muted)] cursor-not-allowed'
             }
@@ -178,8 +181,8 @@ export function TransportBar() {
             w-10 h-10 rounded-lg
             flex items-center justify-center
             transition-all
-            ${playback.loopEnabled 
-              ? 'bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary)] border border-[var(--accent-secondary)]/30' 
+            ${playback.loopEnabled
+              ? 'bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary)] border border-[var(--accent-secondary)]/30'
               : 'bg-[var(--button-bg)] text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]'
             }
             disabled:opacity-40 disabled:cursor-not-allowed
@@ -196,7 +199,7 @@ export function TransportBar() {
         <span className="text-xs text-[var(--text-muted)]">
           {Math.round(display.zoomLevel * 100)}%
         </span>
-        
+
         {/* Zoom buttons */}
         <div className="flex items-center gap-1">
           <button
@@ -212,7 +215,7 @@ export function TransportBar() {
           >
             <ZoomOut size={14} />
           </button>
-          
+
           <button
             onClick={() => setZoomLevel(1)}
             className="
@@ -226,7 +229,7 @@ export function TransportBar() {
           >
             <Maximize2 size={14} />
           </button>
-          
+
           <button
             onClick={() => setZoomLevel(Math.min(4, display.zoomLevel + 0.25))}
             className="

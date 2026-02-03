@@ -31,7 +31,7 @@ export function TopBar() {
   const arrangement = useAppStore((state) => state.arrangement);
   const mode = useAppStore((state) => state.mode);
   const theme = useAppStore((state) => state.theme);
-  
+
   // Get actions from store
   const setLibraryOpen = useAppStore((state) => state.setLibraryOpen);
   const setMicSetupOpen = useAppStore((state) => state.setMicSetupOpen);
@@ -45,7 +45,7 @@ export function TopBar() {
    */
   const handleExportArrangement = () => {
     if (!arrangement) return;
-    
+
     // Create a clean copy of the arrangement for export
     const exportData = {
       id: arrangement.id,
@@ -64,14 +64,14 @@ export function TopBar() {
       })),
       chords: arrangement.chords || [],
     };
-    
+
     // Convert to JSON string with formatting
     const jsonString = JSON.stringify(exportData, null, 2);
-    
+
     // Create a blob and download link
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    
+
     // Create temporary link and trigger download
     const link = document.createElement('a');
     link.href = url;
@@ -79,7 +79,7 @@ export function TopBar() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     // Clean up the URL
     URL.revokeObjectURL(url);
   };
@@ -94,21 +94,23 @@ export function TopBar() {
 
   return (
     <header className="
-      h-12 px-4
-      bg-[var(--panel-bg)]/90 backdrop-blur-md
-      border-b border-[var(--border-color)]
+      absolute top-4 left-4 right-4
+      h-14 px-6
+      glass-pane glass-med rounded-2xl
       flex items-center justify-between
-      relative z-20
+      z-30 shadow-2xl
     ">
+
+
       {/* Left section - App title and arrangement selector */}
       <div className="flex items-center gap-4">
         {/* App logo/title */}
         <span className="text-lg font-bold text-[var(--accent-primary)]">
           ♫ Harmony
         </span>
-        
+
         {/* Library / Arrangement selector */}
-        <button 
+        <button
           onClick={() => setLibraryOpen(true)}
           className="
             flex items-center gap-2 px-3 py-1.5
@@ -142,7 +144,7 @@ export function TopBar() {
       {/* Right section - Settings buttons and mode toggle */}
       <div className="flex items-center gap-2">
         {/* Mic Setup */}
-        <button 
+        <button
           onClick={() => setMicSetupOpen(true)}
           className="
             p-2 rounded-lg
@@ -156,7 +158,7 @@ export function TopBar() {
         </button>
 
         {/* Display Settings */}
-        <button 
+        <button
           onClick={() => setDisplaySettingsOpen(true)}
           className="
             p-2 rounded-lg
@@ -191,7 +193,7 @@ export function TopBar() {
 
         {/* Export button (only in Create mode with arrangement) */}
         {mode === 'create' && arrangement && (
-          <button 
+          <button
             onClick={handleExportArrangement}
             className="
               p-2 rounded-lg
@@ -214,8 +216,8 @@ export function TopBar() {
             onClick={() => setMode('play')}
             className={`
               px-3 py-1 rounded-md text-xs font-semibold uppercase tracking-wide transition-all
-              ${mode === 'play' 
-                ? 'bg-[var(--accent-primary)] text-white shadow-sm' 
+              ${mode === 'play'
+                ? 'bg-[var(--accent-primary)] text-white shadow-sm'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }
             `}
@@ -229,8 +231,8 @@ export function TopBar() {
             }}
             className={`
               px-3 py-1 rounded-md text-xs font-semibold uppercase tracking-wide transition-all
-              ${mode === 'create' 
-                ? 'bg-[var(--accent-primary)] text-white shadow-sm' 
+              ${mode === 'create'
+                ? 'bg-[var(--accent-primary)] text-white shadow-sm'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }
             `}

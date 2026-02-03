@@ -74,7 +74,7 @@ function App() {
     const handlePlayback = async () => {
       // Make sure audio is initialized
       await initializeAudio();
-      
+
       // Re-initialize playback engine if needed
       if (!playbackEngine.getIsPlaying() && !AudioService.isReady()) {
         await AudioService.initialize();
@@ -117,28 +117,18 @@ function App() {
   }, [playback.loopEnabled]);
 
   return (
-    <div 
-      className="h-screen w-screen flex flex-col overflow-hidden relative"
-      style={{
-        background: 'var(--bg-gradient, linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%))',
-      }}
+    <div
+      className="h-screen w-screen overflow-hidden relative"
       onClick={initializeAudio}
     >
-      {/* Top bar with global controls */}
-      <TopBar />
-
-      {/* Main content area with grid - relative for floating sidebar */}
-      <div className="flex-1 relative overflow-hidden">
-        {/* Main grid visualization - full width, sidebar floats over it */}
-        <div className="absolute inset-0 p-4 pl-36">
-          <Grid arrangement={arrangement} className="h-full" />
-        </div>
-
-        {/* Floating left sidebar with voice controls */}
-        <VoiceSidebar />
+      {/* Main grid visualization - background layer */}
+      <div className="absolute inset-0 pt-24 pb-28 pl-44 pr-8">
+        <Grid arrangement={arrangement} className="h-full w-full" />
       </div>
 
-      {/* Bottom transport bar */}
+      {/* UI Overlays - Floating panes */}
+      <TopBar />
+      <VoiceSidebar />
       <TransportBar />
 
       {/* Modals */}
