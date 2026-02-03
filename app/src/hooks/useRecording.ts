@@ -12,6 +12,8 @@ import { useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { MicrophoneService } from '../services/MicrophoneService';
 import { PitchDetector, type PitchDetectionResult } from '../services/PitchDetector';
+import { playbackEngine } from '../services/PlaybackEngine';
+import { sixteenthDurationMs } from '../utils/timing';
 import type { PitchPoint, Recording } from '../types';
 
 /**
@@ -30,7 +32,8 @@ export function useRecording() {
   
   // Refs for services
   const pitchDetectorRef = useRef<PitchDetector | null>(null);
-  const recordingStartTimeRef = useRef<number>(0);
+  const recordingStartTimeRef = useRef<number>(0);      // performance.now() when recording started
+  const recordingStartT16Ref = useRef<number>(0);       // Playhead position (t16) when recording started
   const pitchTraceRef = useRef<PitchPoint[]>([]);
   const isRecordingRef = useRef<boolean>(false);
 
@@ -79,16 +82,25 @@ export function useRecording() {
     pitchTraceRef.current = [];
     setLivePitchTrace([]);
     
-    // Record the start time
+    // Record the start time and position
     recordingStartTimeRef.current = performance.now();
+    recordingStartT16Ref.current = playbackEngine.getCurrentPositionT16();
     isRecordingRef.current = true;
+
+    // Get tempo info for time conversion
+    const tempo = arrangement.tempo;
+    const timeSig = arrangement.timeSig;
+    const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
 
     // Set up pitch detection callback
     pitchDetectorRef.current?.setCallback((result: PitchDetectionResult) => {
       if (!isRecordingRef.current) return;
       
-      // Calculate time since recording started
-      const time = performance.now() - recordingStartTimeRef.current;
+      // Calculate time in ms relative to the START of the arrangement (not recording start)
+      // This syncs the pitch trace with the playhead position
+      const elapsedMs = performance.now() - recordingStartTimeRef.current;
+      const startOffsetMs = recordingStartT16Ref.current * sixteenthMs;
+      const time = startOffsetMs + elapsedMs;
       
       // Create pitch point
       const point: PitchPoint = {

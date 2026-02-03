@@ -9,10 +9,10 @@
    - Playhead
    ============================================================ */
 
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import type { Arrangement, Voice, PitchPoint } from '../../types';
 import { useAppStore } from '../../stores/appStore';
-import { scaleDegreeToFrequency } from '../../utils/music';
+import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 import { playbackEngine } from '../../services/PlaybackEngine';
 
@@ -37,26 +37,45 @@ function getCssVar(name: string): string {
 }
 
 /**
- * Convert a scale degree to a Y position on the grid.
+ * Convert a semitone offset to a Y position on the grid.
  * Higher pitches = lower Y values (top of canvas)
+ * @param semitone - Semitones above base tonic (can be negative)
+ * @param minSemitone - Minimum semitone shown on grid
+ * @param maxSemitone - Maximum semitone shown on grid
+ */
+function semitoneToY(
+  semitone: number,
+  minSemitone: number,
+  maxSemitone: number,
+  gridTop: number,
+  gridHeight: number
+): number {
+  const range = maxSemitone - minSemitone;
+  if (range === 0) return gridTop + gridHeight / 2;
+  
+  // Normalize to 0-1 (inverted so higher pitch = lower Y)
+  const normalized = (semitone - minSemitone) / range;
+  
+  // Map to grid area
+  return gridTop + gridHeight * (1 - normalized);
+}
+
+/**
+ * Convert a scale degree + octave to Y position using semitones.
+ * This bridges the old node format to the new semitone grid.
  */
 function degreeToY(
   degree: number,
   octaveOffset: number,
-  minDegree: number,
-  maxDegree: number,
+  minSemitone: number,
+  maxSemitone: number,
   gridTop: number,
-  gridHeight: number
+  gridHeight: number,
+  scaleType: string
 ): number {
-  // Calculate the effective degree (considering octave)
-  const effectiveDegree = degree + (octaveOffset * 7);
-  const range = maxDegree - minDegree;
-  
-  // Normalize to 0-1 (inverted so higher pitch = lower Y)
-  const normalized = (effectiveDegree - minDegree) / range;
-  
-  // Map to grid area
-  return gridTop + gridHeight * (1 - normalized);
+  // Convert degree to semitone offset from tonic
+  const semitone = degreeToSemitoneOffset(degree, octaveOffset, scaleType);
+  return semitoneToY(semitone, minSemitone, maxSemitone, gridTop, gridHeight);
 }
 
 /**
@@ -99,10 +118,20 @@ function t16ToX(
    Grid Component
    ------------------------------------------------------------ */
 
+// Type for tracking dragged node
+interface DragState {
+  voiceId: string;
+  originalT16: number;
+  isDragging: boolean;
+}
+
 export function Grid({ arrangement: arrangementProp, className = '' }: GridProps) {
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Drag state for node editing
+  const [dragState, setDragState] = useState<DragState | null>(null);
   
   // Get arrangement from store to ensure we always have latest (for create mode updates)
   const arrangementFromStore = useAppStore((state) => state.arrangement);
@@ -119,40 +148,59 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
   const addNode = useAppStore((state) => state.addNode);
   const removeNode = useAppStore((state) => state.removeNode);
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
+  const updateNode = useAppStore((state) => state.updateNode);
 
   /**
-   * Calculate the pitch range for the arrangement.
+   * Calculate the pitch range for the arrangement in semitones.
+   * Returns min/max semitones relative to the tonic, plus frequency range.
+   * Uses zoomLevel to adjust the visible range (higher zoom = fewer semitones visible).
    */
   const getPitchRange = useCallback(() => {
-    if (!arrangement) return { minDegree: 1, maxDegree: 8, minFreq: 130, maxFreq: 520 };
+    if (!arrangement) return { minSemitone: -5, maxSemitone: 19, minFreq: 130, maxFreq: 520 };
     
-    let minDeg = Infinity;
-    let maxDeg = -Infinity;
+    let minSemi = Infinity;
+    let maxSemi = -Infinity;
     
     for (const voice of arrangement.voices) {
       for (const node of voice.nodes) {
-        const effectiveDeg = node.deg + ((node.octave || 0) * 7);
-        minDeg = Math.min(minDeg, effectiveDeg);
-        maxDeg = Math.max(maxDeg, effectiveDeg);
+        // Convert each node's degree+octave to semitones
+        const semitone = degreeToSemitoneOffset(node.deg, node.octave || 0, arrangement.scale);
+        minSemi = Math.min(minSemi, semitone);
+        maxSemi = Math.max(maxSemi, semitone);
       }
     }
     
-    // If no nodes found, use default range (degrees 1-8)
-    if (minDeg === Infinity || maxDeg === -Infinity) {
-      minDeg = 1;
-      maxDeg = 8;
+    // If no nodes found, use default range (about 2 octaves centered on tonic)
+    if (minSemi === Infinity || maxSemi === -Infinity) {
+      minSemi = -5;  // 5 semitones below tonic
+      maxSemi = 19;  // Octave + 7 semitones above tonic
     }
     
-    // Add 3 degrees of padding above and below for breathing room
-    minDeg = minDeg - 3;
-    maxDeg = maxDeg + 3;
+    // Calculate center and base range
+    const center = (minSemi + maxSemi) / 2;
+    const baseRange = maxSemi - minSemi;
     
-    // Calculate frequency range
-    const minFreq = scaleDegreeToFrequency(minDeg, arrangement.tonic, arrangement.scale, 4, -1);
-    const maxFreq = scaleDegreeToFrequency(maxDeg, arrangement.tonic, arrangement.scale, 4, 1);
+    // Add base padding (5 semitones)
+    const basePadding = 5;
+    const paddedRange = baseRange + basePadding * 2;
     
-    return { minDegree: minDeg, maxDegree: maxDeg, minFreq, maxFreq };
-  }, [arrangement]);
+    // Apply zoom: zoomLevel 1 = fit all, higher = zoomed in (fewer semitones)
+    // zoomLevel 2 = half the range, zoomLevel 0.5 = double the range
+    const zoomFactor = Math.max(0.25, display.zoomLevel); // Prevent extreme zoom out
+    const zoomedRange = paddedRange / zoomFactor;
+    
+    // Calculate final min/max centered on the arrangement
+    const finalMin = Math.floor(center - zoomedRange / 2);
+    const finalMax = Math.ceil(center + zoomedRange / 2);
+    
+    // Calculate frequency range (using MIDI-based calculation)
+    // Tonic at octave 4 = MIDI 60 for C
+    const tonicMidi = 60; // Simplified - assuming C4 as reference
+    const minFreq = midiToFrequency(tonicMidi + finalMin);
+    const maxFreq = midiToFrequency(tonicMidi + finalMax);
+    
+    return { minSemitone: finalMin, maxSemitone: finalMax, minFreq, maxFreq };
+  }, [arrangement, display.zoomLevel]);
 
   /**
    * Main drawing function.
@@ -207,22 +255,28 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
       return;
     }
     
-    // Get pitch range
-    const { minDegree, maxDegree, minFreq, maxFreq } = getPitchRange();
+    // Get pitch range (now in semitones)
+    const { minSemitone, maxSemitone, minFreq, maxFreq } = getPitchRange();
     
     // Time range (in 16th notes) - calculate based on time signature
     const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
     const startT16 = 0;
     const endT16 = totalT16;
     
-    // Draw horizontal pitch lines (degree 1 is brighter for orientation)
-    for (let deg = Math.ceil(minDegree); deg <= Math.floor(maxDegree); deg++) {
-      const y = degreeToY(deg, 0, minDegree, maxDegree, gridTop, gridHeight);
+    // Draw horizontal pitch lines (semitone-based chromatic grid)
+    // Each line is one semitone. Tonic (0) and octave (12) are brighter.
+    for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
+      const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
+      const label = semitoneToLabel(semi);
       
-      // Make degree 1 (tonic) brighter and thicker for orientation
-      if (deg === 1 || deg === 8) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      // Make tonic (1) and octave brighter for orientation
+      if (semi % 12 === 0) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
         ctx.lineWidth = 2;
+      } else if (label === '3' || label === '5' || label === '4') {
+        // Highlight important scale degrees (major third, fourth, fifth)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.lineWidth = 1;
       } else {
         ctx.strokeStyle = pitchLineColor;
         ctx.lineWidth = 1;
@@ -232,6 +286,15 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
       ctx.moveTo(gridLeft, y);
       ctx.lineTo(gridLeft + gridWidth, y);
       ctx.stroke();
+      
+      // Draw semitone label on the left
+      if (semi >= minSemitone + 1 && semi <= maxSemitone - 1) {
+        ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.3)';
+        ctx.font = '10px system-ui';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, gridLeft - 8, y);
+      }
     }
     
     // Draw vertical grid lines
@@ -333,14 +396,14 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
         ctx.shadowBlur = 10 * display.glowIntensity;
         ctx.strokeStyle = voiceColor;
         ctx.lineWidth = 3;
-        drawVoiceContour(ctx, voice, minDegree, maxDegree, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight);
+        drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
       }
       
       // Main line
       ctx.shadowBlur = 0;
       ctx.strokeStyle = voiceColor;
       ctx.lineWidth = 2;
-      drawVoiceContour(ctx, voice, minDegree, maxDegree, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight);
+      drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
       
       // Draw nodes - larger circles with scale degree numbers (like mockup)
       const nodeRadius = 12; // Larger nodes to fit numbers
@@ -349,7 +412,7 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
         if (node.term) continue; // Skip termination nodes
         
         const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
-        const y = degreeToY(node.deg, node.octave || 0, minDegree, maxDegree, gridTop, gridHeight);
+        const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
         
         // Draw node glow
         if (display.glowIntensity > 0) {
@@ -436,19 +499,20 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
   }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange]);
 
   /**
-   * Draw a voice's contour line.
+   * Draw a voice's contour line (now using semitones).
    */
   function drawVoiceContour(
     ctx: CanvasRenderingContext2D,
     voice: Voice,
-    minDegree: number,
-    maxDegree: number,
+    minSemitone: number,
+    maxSemitone: number,
     startT16: number,
     endT16: number,
     gridLeft: number,
     gridTop: number,
     gridWidth: number,
-    gridHeight: number
+    gridHeight: number,
+    scaleType: string
   ) {
     if (voice.nodes.length === 0) return;
     
@@ -458,7 +522,7 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
     for (let i = 0; i < voice.nodes.length; i++) {
       const node = voice.nodes[i];
       const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
-      const y = degreeToY(node.deg, node.octave || 0, minDegree, maxDegree, gridTop, gridHeight);
+      const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
       
       if (!inPhrase) {
         ctx.moveTo(x, y);
@@ -596,18 +660,35 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
     const startT16 = 0;
     const endT16 = totalT16;
     
-    // Get pitch range
-    const { minDegree, maxDegree } = getPitchRange();
+    // Get pitch range (in semitones)
+    const { minSemitone, maxSemitone } = getPitchRange();
     
     // Convert click to t16 (snap to nearest 16th note)
     const relativeX = (x - gridLeft) / gridWidth;
     const rawT16 = startT16 + relativeX * (endT16 - startT16);
     const t16 = Math.round(rawT16); // Snap to nearest 16th
     
-    // Convert click to degree (round to nearest integer)
+    // Convert click to semitone (relative to tonic)
     const relativeY = (y - gridTop) / gridHeight;
-    const rawDeg = maxDegree - relativeY * (maxDegree - minDegree);
-    const deg = Math.round(rawDeg);
+    const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
+    const semitone = Math.round(rawSemitone);
+    
+    // Convert semitone back to scale degree + octave for storage
+    // Using major scale mapping: semitones [0,2,4,5,7,9,11] = degrees [1,2,3,4,5,6,7]
+    const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
+    const octaveOffset = Math.floor(semitone / 12);
+    const semitoneInOctave = ((semitone % 12) + 12) % 12;
+    
+    // Find the closest scale degree
+    let closestDeg = 1;
+    let minDiff = 12;
+    for (let i = 0; i < MAJOR_SCALE.length; i++) {
+      const diff = Math.abs(MAJOR_SCALE[i] - semitoneInOctave);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestDeg = i + 1;
+      }
+    }
     
     // Determine voice to edit - use selected voice or first voice
     const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
@@ -627,21 +708,174 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
       removeNode(voiceId, existingNode.t16);
     } else {
       // Regular click adds/updates node
-      // Calculate octave offset if degree is outside 1-7 range
-      let finalDeg = deg;
-      let octave = 0;
-      while (finalDeg > 7) {
-        finalDeg -= 7;
-        octave += 1;
-      }
-      while (finalDeg < 1) {
-        finalDeg += 7;
-        octave -= 1;
-      }
+      const finalDeg = closestDeg;
+      const octave = octaveOffset;
       
       addNode(voiceId, t16, finalDeg, octave);
     }
   }, [mode, arrangement, selectedVoiceId, addNode, removeNode, setSelectedVoiceId, getPitchRange]);
+
+  /**
+   * Handle double-click to toggle termination status of a node.
+   */
+  const handleCanvasDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Only handle double-clicks in create mode
+    if (mode !== 'create' || !arrangement) return;
+    
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    
+    // Get click position relative to canvas
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Calculate grid dimensions
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
+    
+    const gridLeft = padding.left;
+    const gridTop = padding.top;
+    const gridWidth = width - padding.left - padding.right;
+    const gridHeight = height - padding.top - padding.bottom;
+    
+    // Check if click is within grid area
+    if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) {
+      return;
+    }
+    
+    // Calculate time from click
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const startT16 = 0;
+    const endT16 = totalT16;
+    const relativeX = (x - gridLeft) / gridWidth;
+    const rawT16 = startT16 + relativeX * (endT16 - startT16);
+    const t16 = Math.round(rawT16);
+    
+    // Find voice to edit
+    const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
+    if (!voiceId) return;
+    
+    // Find existing node near this position
+    const voice = arrangement.voices.find((v) => v.id === voiceId);
+    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - t16) < 4);
+    
+    if (existingNode) {
+      // Toggle termination status using updateNode
+      updateNode(voiceId, existingNode.t16, existingNode.t16, existingNode.deg, existingNode.octave || 0, !existingNode.term);
+    }
+  }, [mode, arrangement, selectedVoiceId, updateNode]);
+
+  /**
+   * Handle mouse down for starting node drag in create mode.
+   */
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (mode !== 'create' || !arrangement) return;
+    
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
+    const gridLeft = padding.left;
+    const gridTop = padding.top;
+    const gridWidth = width - padding.left - padding.right;
+    const gridHeight = height - padding.top - padding.bottom;
+    
+    if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) return;
+    
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const relativeX = (x - gridLeft) / gridWidth;
+    const t16 = Math.round(relativeX * totalT16);
+    
+    const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
+    if (!voiceId) return;
+    
+    // Check if clicking on an existing node
+    const voice = arrangement.voices.find((v) => v.id === voiceId);
+    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - t16) < 3);
+    
+    if (existingNode) {
+      // Start dragging this node
+      setDragState({ voiceId, originalT16: existingNode.t16, isDragging: true });
+    }
+  }, [mode, arrangement, selectedVoiceId]);
+
+  /**
+   * Handle mouse move for dragging nodes.
+   */
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!dragState?.isDragging || mode !== 'create' || !arrangement) return;
+    
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
+    const gridLeft = padding.left;
+    const gridTop = padding.top;
+    const gridWidth = width - padding.left - padding.right;
+    const gridHeight = height - padding.top - padding.bottom;
+    
+    // Calculate new position
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const { minSemitone, maxSemitone } = getPitchRange();
+    
+    const relativeX = Math.max(0, Math.min(1, (x - gridLeft) / gridWidth));
+    const relativeY = Math.max(0, Math.min(1, (y - gridTop) / gridHeight));
+    
+    const newT16 = Math.round(relativeX * totalT16);
+    const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
+    const semitone = Math.round(rawSemitone);
+    
+    // Convert semitone to scale degree
+    const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
+    const octaveOffset = Math.floor(semitone / 12);
+    const semitoneInOctave = ((semitone % 12) + 12) % 12;
+    
+    let closestDeg = 1;
+    let minDiff = 12;
+    for (let i = 0; i < MAJOR_SCALE.length; i++) {
+      const diff = Math.abs(MAJOR_SCALE[i] - semitoneInOctave);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestDeg = i + 1;
+      }
+    }
+    
+    // Get the original node to preserve term status
+    const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
+    const originalNode = voice?.nodes.find((n) => n.t16 === dragState.originalT16);
+    
+    // Update the node position
+    updateNode(dragState.voiceId, dragState.originalT16, newT16, closestDeg, octaveOffset, originalNode?.term);
+    
+    // Update drag state with new position
+    setDragState({ ...dragState, originalT16: newT16 });
+  }, [dragState, mode, arrangement, getPitchRange, updateNode]);
+
+  /**
+   * Handle mouse up to end drag.
+   */
+  const handleMouseUp = useCallback(() => {
+    if (dragState?.isDragging) {
+      setDragState(null);
+    }
+  }, [dragState]);
 
   return (
     <div 
@@ -650,8 +884,13 @@ export function Grid({ arrangement: arrangementProp, className = '' }: GridProps
     >
       <canvas 
         ref={canvasRef}
-        className={`absolute inset-0 w-full h-full ${mode === 'create' ? 'cursor-crosshair' : ''}`}
+        className={`absolute inset-0 w-full h-full ${mode === 'create' ? (dragState?.isDragging ? 'cursor-grabbing' : 'cursor-crosshair') : ''}`}
         onClick={handleCanvasClick}
+        onDoubleClick={handleCanvasDoubleClick}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
       />
     </div>
   );

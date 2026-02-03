@@ -5,7 +5,7 @@
    Controls: Library, Mic Setup, Display Settings, Theme, Mode Toggle
    ============================================================ */
 
-import { Library, Mic, Eye, Palette } from 'lucide-react';
+import { Library, Mic, Eye, Palette, Download } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { applyTheme, type ThemeName } from '../../utils/colors';
 
@@ -39,6 +39,50 @@ export function TopBar() {
   const setMode = useAppStore((state) => state.setMode);
   const setTheme = useAppStore((state) => state.setTheme);
   const setCreateModalOpen = useAppStore((state) => state.setCreateModalOpen);
+
+  /**
+   * Export the current arrangement as JSON file.
+   */
+  const handleExportArrangement = () => {
+    if (!arrangement) return;
+    
+    // Create a clean copy of the arrangement for export
+    const exportData = {
+      id: arrangement.id,
+      title: arrangement.title,
+      description: arrangement.description || '',
+      tonic: arrangement.tonic,
+      scale: arrangement.scale,
+      tempo: arrangement.tempo,
+      bars: arrangement.bars,
+      timeSig: arrangement.timeSig,
+      voices: arrangement.voices.map(v => ({
+        id: v.id,
+        name: v.name,
+        color: v.color,
+        nodes: v.nodes,
+      })),
+      chords: arrangement.chords || [],
+    };
+    
+    // Convert to JSON string with formatting
+    const jsonString = JSON.stringify(exportData, null, 2);
+    
+    // Create a blob and download link
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    // Create temporary link and trigger download
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${arrangement.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Clean up the URL
+    URL.revokeObjectURL(url);
+  };
 
   /**
    * Handle theme change from dropdown.
@@ -144,6 +188,22 @@ export function TopBar() {
             ))}
           </select>
         </div>
+
+        {/* Export button (only in Create mode with arrangement) */}
+        {mode === 'create' && arrangement && (
+          <button 
+            onClick={handleExportArrangement}
+            className="
+              p-2 rounded-lg
+              bg-[var(--accent-secondary)] text-white
+              hover:brightness-110
+              transition-all
+            "
+            title="Export Arrangement as JSON"
+          >
+            <Download size={16} />
+          </button>
+        )}
 
         {/* Divider */}
         <div className="w-px h-6 bg-[var(--border-color)] mx-1" />

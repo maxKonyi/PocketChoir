@@ -28,6 +28,34 @@ const NOTE_TO_SEMITONE: Record<string, number> = {
 const SEMITONE_TO_NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 /**
+ * Chromatic scale degree labels (relative to tonic).
+ * Index 0 = tonic (1), index 1 = minor 2nd (b2), etc.
+ */
+export const CHROMATIC_LABELS = ['1', 'b2', '2', 'b3', '3', '4', '#4', '5', 'b6', '6', 'b7', '7'];
+
+/**
+ * Get the chromatic label for a semitone offset from tonic.
+ * @param semitoneOffset - Semitones above tonic (0-11, wraps for higher/lower octaves)
+ * @returns Label like "1", "b3", "#4", etc.
+ */
+export function semitoneToLabel(semitoneOffset: number): string {
+  // Normalize to 0-11 range
+  const normalized = ((semitoneOffset % 12) + 12) % 12;
+  return CHROMATIC_LABELS[normalized];
+}
+
+/**
+ * Convert a scale degree + octave to semitones above the base tonic.
+ * @param deg - Scale degree (1-7)
+ * @param octave - Octave offset
+ * @param scaleType - Scale type for degree-to-semitone mapping
+ * @returns Semitones above base tonic (can be negative for lower octaves)
+ */
+export function degreeToSemitoneOffset(deg: number, octave: number, scaleType: string): number {
+  return scaleDegreeToSemitones(deg, scaleType, octave);
+}
+
+/**
  * Scale patterns as arrays of semitone offsets from the tonic.
  * Each number represents how many semitones above the tonic that scale degree is.
  */

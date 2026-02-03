@@ -5,7 +5,7 @@
    Layout: TopBar + (Sidebar + Grid) + TransportBar
    ============================================================ */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { TopBar } from './components/topbar';
 import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
@@ -20,8 +20,12 @@ function App() {
   // Get state and actions from store
   const arrangement = useAppStore((state) => state.arrangement);
   const playback = useAppStore((state) => state.playback);
+  const countIn = useAppStore((state) => state.countIn);
   const theme = useAppStore((state) => state.theme);
   const setPosition = useAppStore((state) => state.setPosition);
+
+  // Count-in visual state
+  const [countInDisplay, setCountInDisplay] = useState<number | null>(null);
 
   /**
    * Initialize audio on first user interaction.
@@ -78,18 +82,28 @@ function App() {
           onPositionUpdate: (t16) => {
             setPosition(t16);
           },
+          onCountIn: (beat, total) => {
+            // Show count-in visual feedback
+            setCountInDisplay(total - beat + 1);
+          },
         });
       }
 
       if (playback.isPlaying) {
-        playbackEngine.play();
+        // Use count-in only when recording starts
+        const countInBars = (playback.isRecording && countIn.enabled) ? countIn.bars : 0;
+        playbackEngine.play(countInBars).then(() => {
+          // Clear count-in display when done
+          setCountInDisplay(null);
+        });
       } else {
         playbackEngine.pause();
+        setCountInDisplay(null);
       }
     };
 
     handlePlayback();
-  }, [playback.isPlaying, arrangement, setPosition]);
+  }, [playback.isPlaying, playback.isRecording, countIn.enabled, countIn.bars, arrangement, setPosition]);
 
   /**
    * Update playback engine settings when they change.
@@ -133,6 +147,15 @@ function App() {
       <RangeSetupModal />
       <DisplaySettingsModal />
       <CreateArrangementModal />
+
+      {/* Count-in overlay */}
+      {countInDisplay !== null && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+          <div className="text-9xl font-bold text-white animate-pulse drop-shadow-[0_0_30px_rgba(255,255,255,0.8)]">
+            {countInDisplay}
+          </div>
+        </div>
+      )}
 
       {/* Welcome message when no arrangement is loaded */}
       {!arrangement && (

@@ -246,8 +246,7 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 ### 7.2 Count-In
 - [x] When user presses main Record button:
   - Play 1-bar count-in (4 clicks at tempo) — *Implemented in PlaybackEngine*
-  - [ ] Show visual count-in on grid
-  - [ ] Optional: show countdown overlay (4, 3, 2, 1)
+  - [x] Show visual count-in overlay (large countdown number)
 
 ### 7.3 Recording Loop
 - [x] Start recording audio from microphone
@@ -283,7 +282,7 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 
 ---
 
-## Phase 9: Internal Authoring Tools (Create Mode) ✅ MOSTLY COMPLETE
+## Phase 9: Internal Authoring Tools (Create Mode) ✅ COMPLETE
 
 This enables creating new arrangements within the app.
 
@@ -299,12 +298,17 @@ This enables creating new arrangements within the app.
 - [x] Placing node on occupied time position replaces existing node
 - [x] Nodes display scale degree number inside circle
 - [x] Voice lines connect nodes with glow effect
-- [ ] Double-click a node to mark it as termination point — *Not yet implemented*
-- [ ] Drag node to move it — *Not yet implemented*
+- [x] Double-click a node to toggle termination point
+- [x] Drag nodes to move them (time and pitch)
 
 ### 9.3 Export Arrangement
-- [ ] Export arrangement as JSON file
+- [x] Export arrangement as JSON file (download button in Create mode)
 - [ ] Save to library
+
+### 9.4 Grid Enhancements
+- [x] Chromatic (semitone-based) grid display with labels (1, b2, 2, b3, 3, 4, #4, 5, b6, 6, b7, 7)
+- [x] Vertical zoom functionality (zoom in/out affects pitch range)
+- [x] Tonic and octave lines highlighted for orientation
 
 ---
 

@@ -114,7 +114,7 @@ interface AppActions {
   // Create mode - node editing
   addNode: (voiceId: string, t16: number, deg: number, octave?: number) => void;
   removeNode: (voiceId: string, t16: number) => void;
-  updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number) => void;
+  updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number, term?: boolean) => void;
   setSelectedVoiceId: (voiceId: string | null) => void;
   
   // Voice controls
@@ -320,7 +320,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     };
   }),
   
-  updateNode: (voiceId, oldT16, newT16, deg, octave = 0) => set((state) => {
+  updateNode: (voiceId, oldT16, newT16, deg, octave = 0, term = false) => set((state) => {
     if (!state.arrangement) return state;
     
     const updatedVoices = state.arrangement.voices.map((voice) => {
@@ -328,7 +328,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       
       // Remove old node, add updated one
       const filteredNodes = voice.nodes.filter((n) => n.t16 !== oldT16 && n.t16 !== newT16);
-      const updatedNode = { t16: newT16, deg, octave };
+      const updatedNode = { t16: newT16, deg, octave, ...(term ? { term: true } : {}) };
       const newNodes = [...filteredNodes, updatedNode].sort((a, b) => a.t16 - b.t16);
       
       return { ...voice, nodes: newNodes };
