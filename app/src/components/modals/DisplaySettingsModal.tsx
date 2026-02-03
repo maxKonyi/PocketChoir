@@ -8,7 +8,8 @@
    - Label format
    ============================================================ */
 
-import { X, Settings } from 'lucide-react';
+import { X, Settings, ChevronDown } from 'lucide-react';
+
 import { Button } from '../ui/Button';
 import { Slider } from '../ui/Slider';
 import { Panel } from '../ui/Panel';
@@ -26,8 +27,27 @@ export function DisplaySettingsModal() {
   const setDisplaySettings = useAppStore((state) => state.setDisplaySettings);
 
   /**
+   * Dynamically discover background videos from the data folder.
+   */
+  const backgrounds = Object.keys(import.meta.glob('../../data/backgrounds/*.mp4', { eager: true }))
+    .map(path => {
+      const fileName = path.split('/').pop() || '';
+      const label = fileName
+        .replace(/\.[^/.]+$/, "") // Remove extension
+        .replace(/(\d+)$/, " $1") // Add space before numbers
+        .replace(/([A-Z])/g, ' $1') // Add space before capital letters
+        .trim();
+
+      return {
+        id: path.replace('../../', '/src/'), // Convert to absolute public path for <video> src
+        label
+      };
+    });
+
+  /**
    * Handle toggle change.
    */
+
   const handleToggle = (key: string, value: boolean) => {
     setDisplaySettings({ [key]: value });
   };
@@ -49,11 +69,11 @@ export function DisplaySettingsModal() {
   if (!isOpen) return null;
 
   return (
-    <div 
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={handleClose}
     >
-      <Panel 
+      <Panel
         variant="solid"
         className="w-full max-w-md m-4"
         onClick={(e) => e.stopPropagation()}
@@ -82,13 +102,13 @@ export function DisplaySettingsModal() {
               onClick={() => handleToggle('showChordTrack', !display.showChordTrack)}
               className={`
                 w-12 h-6 rounded-full transition-colors
-                ${display.showChordTrack 
-                  ? 'bg-[var(--accent-primary)]' 
+                ${display.showChordTrack
+                  ? 'bg-[var(--accent-primary)]'
                   : 'bg-[var(--button-bg)]'
                 }
               `}
             >
-              <div 
+              <div
                 className={`
                   w-5 h-5 rounded-full bg-white shadow transition-transform
                   ${display.showChordTrack ? 'translate-x-6' : 'translate-x-0.5'}
@@ -106,13 +126,13 @@ export function DisplaySettingsModal() {
               onClick={() => handleToggle('showScaleDegrees', !display.showScaleDegrees)}
               className={`
                 w-12 h-6 rounded-full transition-colors
-                ${display.showScaleDegrees 
-                  ? 'bg-[var(--accent-primary)]' 
+                ${display.showScaleDegrees
+                  ? 'bg-[var(--accent-primary)]'
                   : 'bg-[var(--button-bg)]'
                 }
               `}
             >
-              <div 
+              <div
                 className={`
                   w-5 h-5 rounded-full bg-white shadow transition-transform
                   ${display.showScaleDegrees ? 'translate-x-6' : 'translate-x-0.5'}
@@ -130,13 +150,13 @@ export function DisplaySettingsModal() {
               onClick={() => handleToggle('showPitchLabels', !display.showPitchLabels)}
               className={`
                 w-12 h-6 rounded-full transition-colors
-                ${display.showPitchLabels 
-                  ? 'bg-[var(--accent-primary)]' 
+                ${display.showPitchLabels
+                  ? 'bg-[var(--accent-primary)]'
                   : 'bg-[var(--button-bg)]'
                 }
               `}
             >
-              <div 
+              <div
                 className={`
                   w-5 h-5 rounded-full bg-white shadow transition-transform
                   ${display.showPitchLabels ? 'translate-x-6' : 'translate-x-0.5'}
@@ -175,8 +195,8 @@ export function DisplaySettingsModal() {
                   onClick={() => setDisplaySettings({ labelFormat: format })}
                   className={`
                     flex-1 px-3 py-2 rounded-lg text-sm transition-colors
-                    ${display.labelFormat === format 
-                      ? 'bg-[var(--accent-primary)] text-white' 
+                    ${display.labelFormat === format
+                      ? 'bg-[var(--accent-primary)] text-white'
                       : 'bg-[var(--button-bg)] text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
                     }
                   `}
@@ -186,6 +206,72 @@ export function DisplaySettingsModal() {
               ))}
             </div>
           </div>
+
+          <div className="w-full h-px bg-[var(--border-color)]" />
+
+          {/* Background Selection */}
+          <div className="space-y-3">
+            <span className="text-sm font-medium text-[var(--text-primary)]">
+              Environment
+            </span>
+
+            <div className="space-y-2">
+              <span className="text-xs text-[var(--text-muted)]">Background</span>
+              <div className="relative group">
+                <select
+                  value={display.backgroundVideo}
+                  onChange={(e) => setDisplaySettings({ backgroundVideo: e.target.value })}
+                  className="
+                    w-full appearance-none px-4 py-2.5 rounded-xl text-sm
+                    bg-[var(--button-bg)] border border-white/5 text-[var(--text-primary)]
+                    hover:bg-[var(--button-bg-hover)] transition-all cursor-pointer
+                    focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/50
+                  "
+                >
+                  <option value="none" className="bg-[#1a1f2e]">Solid (Cosmic Gradient)</option>
+                  {backgrounds.map((bg) => (
+                    <option key={bg.id} value={bg.id} className="bg-[#1a1f2e]">
+                      {bg.label}
+                    </option>
+                  ))}
+                </select>
+
+                <ChevronDown
+                  size={16}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] group-hover:text-white transition-colors"
+                />
+              </div>
+            </div>
+
+
+            <div className="space-y-2 pt-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[var(--text-muted)]">Background Brightness</span>
+                <span className="text-xs text-[var(--text-muted)]">{Math.round(display.backgroundBrightness * 100)}%</span>
+              </div>
+              <Slider
+                value={display.backgroundBrightness * 100}
+                min={0}
+                max={100}
+                onChange={(e) => handleSliderChange('backgroundBrightness', Number(e.target.value) / 100)}
+              />
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[var(--text-muted)]">Background Blur</span>
+                <span className="text-xs text-[var(--text-muted)]">{display.backgroundBlur}px</span>
+              </div>
+              <Slider
+                value={display.backgroundBlur * 5}
+                min={0}
+                max={100}
+                onChange={(e) => handleSliderChange('backgroundBlur', Math.round(Number(e.target.value) / 5))}
+              />
+            </div>
+
+          </div>
+
         </div>
 
         {/* Footer */}

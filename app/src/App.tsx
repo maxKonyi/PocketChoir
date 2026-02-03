@@ -9,8 +9,9 @@ import { useEffect, useState } from 'react';
 import { TopBar } from './components/topbar';
 import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
-import { Grid } from './components/grid';
+import { Grid } from './components/grid/Grid';
 import { LibraryModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
+import { BackgroundVideo } from './components/ui/BackgroundVideo';
 import { useAppStore } from './stores/appStore';
 import { AudioService } from './services/AudioService';
 import { playbackEngine } from './services/PlaybackEngine';
@@ -121,6 +122,8 @@ function App() {
       className="h-screen w-screen overflow-hidden relative"
       onClick={initializeAudio}
     >
+      <BackgroundVideo />
+
       {/* Main grid visualization - background layer (masked lines/voices) */}
       <div className="absolute inset-0 pt-24 pb-28 pl-44 pr-8 mask-vertical-fade">
         <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />

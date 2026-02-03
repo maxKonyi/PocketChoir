@@ -375,7 +375,8 @@ export function Grid({
           ctx.rect(bStartX, blockY, bWidth, blockHeight);
         }
 
-        ctx.fillStyle = chordColor + '15'; // Very transparent fill
+        ctx.fillStyle = chordColor + '40'; // 25% opacity for better visibility
+
         ctx.fill();
         ctx.strokeStyle = chordColor + '80'; // Bright border
         ctx.lineWidth = 1.5;
