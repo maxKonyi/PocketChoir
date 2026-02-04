@@ -26,10 +26,11 @@ class MicrophoneServiceClass {
   // Currently selected device ID
   private selectedDeviceId: string | null = null;
 
-  // MediaRecorder for capturing audio
+  // MediaRecorder and processing nodes
   private mediaRecorder: MediaRecorder | null = null;
-
-  // Recorded audio chunks
+  private micSourceNode: MediaStreamAudioSourceNode | null = null;
+  private baselineGainNode: GainNode | null = null;
+  private recordingDest: MediaStreamAudioDestinationNode | null = null;
   private recordedChunks: Blob[] = [];
 
   // Recording state
@@ -133,6 +134,7 @@ class MicrophoneServiceClass {
 
   /**
    * Set up audio routing for the microphone input.
+   * Implements forced mono summing and baseline gain for better recording quality.
    */
   private setupAudioRouting(): void {
     if (!this.stream) return;
@@ -140,32 +142,57 @@ class MicrophoneServiceClass {
     const ctx = AudioService.getContext();
 
     // Clean up old nodes
-    if (this.inputGainNode) {
-      this.inputGainNode.disconnect();
-    }
-    if (this.monitorNode) {
-      this.monitorNode.disconnect();
-    }
+    this.inputGainNode?.disconnect();
+    this.monitorNode?.disconnect();
+    this.micSourceNode?.disconnect();
+    this.baselineGainNode?.disconnect();
+    this.recordingDest?.disconnect();
 
-    // Create input gain node for sensitivity control
+    // Create source from the raw stream
+    this.micSourceNode = ctx.createMediaStreamSource(this.stream);
+
+    // Create a baseline gain node (set to 1.0 to keep recording raw as requested)
+    this.baselineGainNode = ctx.createGain();
+    this.baselineGainNode.gain.value = 1.0;
+
+    // Create input gain node for user-adjustable sensitivity
     this.inputGainNode = ctx.createGain();
     this.inputGainNode.gain.value = 1.0;
 
-    // Create monitor node (for listening to self)
+    // FORCE MONO SUMMING (from reference)
+    // This ensures that even on stereo mics, we get a solid mono signal
+    this.inputGainNode.channelCount = 1;
+    this.inputGainNode.channelCountMode = 'explicit';
+
+    // Create destination for MediaRecorder to capture the processed stream
+    this.recordingDest = ctx.createMediaStreamDestination();
+
+    // Route: source -> baseline -> inputGain -> recordingDest
+    this.micSourceNode.connect(this.baselineGainNode);
+    this.baselineGainNode.connect(this.inputGainNode);
+    this.inputGainNode.connect(this.recordingDest);
+
+    // Monitoring (playback of mic input)
     this.monitorNode = ctx.createGain();
     this.monitorNode.gain.value = 0; // Off by default
+    this.inputGainNode.connect(this.monitorNode);
     this.monitorNode.connect(AudioService.getMasterGain());
-
-    // Note: We don't connect the stream here - that's done by PitchDetector
-    // and MediaRecorder separately to avoid conflicts
   }
 
   /**
-   * Get the current media stream.
+   * Get the current raw media stream.
    * @returns The active MediaStream or null
    */
   getStream(): MediaStream | null {
     return this.stream;
+  }
+
+  /**
+   * Get the processed media stream (with gain and mono summing).
+   * @returns The processed MediaStream or null
+   */
+  getProcessedStream(): MediaStream | null {
+    return this.recordingDest ? this.recordingDest.stream : this.stream;
   }
 
   /**
@@ -219,9 +246,11 @@ class MicrophoneServiceClass {
     this.recordedChunks = [];
     this.recordingStartTime = performance.now();
 
-    // Create MediaRecorder with optimal settings
+    // Create MediaRecorder using the PROCESSED stream (mono + gain)
     const mimeType = this.getSupportedMimeType();
-    this.mediaRecorder = new MediaRecorder(this.stream, {
+    const processedStream = this.recordingDest ? this.recordingDest.stream : this.stream;
+
+    this.mediaRecorder = new MediaRecorder(processedStream, {
       mimeType,
       audioBitsPerSecond: 128000,
     });

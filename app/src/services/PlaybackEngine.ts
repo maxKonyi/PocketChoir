@@ -5,11 +5,13 @@
    Coordinates between the arrangement data and audio output.
    ============================================================ */
 
+import * as Tone from 'tone';
 import { AudioService } from './AudioService';
 import { SynthVoice, createSynthVoice } from './SynthVoice';
 import type { Arrangement, Voice, Node, TimeSignature } from '../types';
 import { scaleDegreeToFrequency } from '../utils/music';
 import { t16ToMs, sixteenthDurationMs, arrangementTotalSixteenths } from '../utils/timing';
+import { MicrophoneService } from './MicrophoneService';
 
 /**
  * Callback for position updates during playback.
@@ -34,6 +36,7 @@ interface PlaybackConfig {
   onLoop?: LoopCallback;
   onCountIn?: CountInCallback;
   onPlaybackEnd?: () => void;
+  onStart?: () => void;
 }
 
 /**
@@ -49,12 +52,18 @@ export class PlaybackEngine {
   // Recorded audio
   private audioBuffers: Map<string, AudioBuffer> = new Map();
   private activeAudioSources: Map<string, AudioBufferSourceNode> = new Map();
+  private vocalGainNodes: Map<string, GainNode> = new Map();
 
   // Playback state
   private isPlaying: boolean = false;
   private startTime: number = 0;        // AudioContext time when playback started
   private startPosition: number = 0;    // Position in ms when playback started
   private currentPositionMs: number = 0;
+
+  // Mute/solo state per voice
+  private voiceVolumes: Map<string, number> = new Map();
+  private mutedVoices: Set<string> = new Set();
+  private soloedVoices: Set<string> = new Set();
 
   // Loop settings
   private loopEnabled: boolean = true;
@@ -69,10 +78,6 @@ export class PlaybackEngine {
   // Transposition
   private transposition: number = 0;
 
-  // Mute/solo state per voice
-  private mutedVoices: Set<string> = new Set();
-  private soloedVoices: Set<string> = new Set();
-
   // Animation frame for position updates
   private animationFrameId: number | null = null;
 
@@ -81,6 +86,10 @@ export class PlaybackEngine {
 
   // Count-in
   private isCountingIn: boolean = false;
+
+  // Recording trigger
+  private recordingVoiceId: string | null = null;
+  private onRecordingComplete: ((voiceId: string, blob: Blob) => void) | null = null;
 
   /**
    * Initialize the engine with an arrangement.
@@ -96,15 +105,25 @@ export class PlaybackEngine {
     // Set loop end to arrangement length
     this.loopEndT16 = arrangementTotalSixteenths(arrangement.bars, this.timeSig);
 
-    // Create synth voices for each voice in the arrangement
+    // Create synth voices and voice gain nodes for each voice in the arrangement
     this.disposeSynthVoices();
+    this.vocalGainNodes.clear();
+
+    const ctx = AudioService.getContext();
     arrangement.voices.forEach((voice, index) => {
       const synth = createSynthVoice(voice.id, index);
       if (AudioService.isReady()) {
         synth.initialize();
       }
-      synth.setVolume(0.5);
       this.synthVoices.set(voice.id, synth);
+
+      const gain = ctx.createGain();
+      // Connect to global chorus using Tone.connect (supports both native and Tone nodes)
+      Tone.connect(gain, AudioService.getChorus());
+      this.vocalGainNodes.set(voice.id, gain);
+
+      // Set initial volumes
+      this.setVoiceVolume(voice.id, 0.5);
     });
 
     console.log(`PlaybackEngine initialized with ${arrangement.voices.length} voices`);
@@ -147,6 +166,7 @@ export class PlaybackEngine {
    */
   async setAudioRecording(voiceId: string, blob: Blob): Promise<void> {
     if (blob.size === 0) {
+      this.stopAudioSource(voiceId);
       this.audioBuffers.delete(voiceId);
       return;
     }
@@ -191,6 +211,7 @@ export class PlaybackEngine {
     } else {
       this.mutedVoices.delete(voiceId);
     }
+    this.updateAllVoiceVolumes();
   }
 
   /**
@@ -202,16 +223,58 @@ export class PlaybackEngine {
     } else {
       this.soloedVoices.delete(voiceId);
     }
+    this.updateAllVoiceVolumes();
   }
 
   /**
-   * Set volume for a voice's synth.
+   * Set volume for a voice's synth and recording.
    */
   setVoiceVolume(voiceId: string, volume: number): void {
+    this.voiceVolumes.set(voiceId, volume);
+    this.updateVoiceVolume(voiceId);
+  }
+
+  /**
+   * Internal helper to sync gain nodes with current mute/solo/volume state.
+   */
+  private updateVoiceVolume(voiceId: string): void {
+    const baseVolume = this.voiceVolumes.get(voiceId) ?? 0.5;
+    const isAudible = this.isVoiceAudible(voiceId);
+    const targetVolume = isAudible ? baseVolume : 0;
+
     const synth = this.synthVoices.get(voiceId);
     if (synth) {
-      synth.setVolume(volume);
+      synth.setVolume(targetVolume);
     }
+
+    const vocalGain = this.vocalGainNodes.get(voiceId);
+    if (vocalGain) {
+      const ctx = AudioService.getContext();
+      vocalGain.gain.setTargetAtTime(targetVolume, ctx.currentTime, 0.05);
+    }
+  }
+
+  private updateAllVoiceVolumes(): void {
+    if (!this.arrangement) return;
+    this.arrangement.voices.forEach(voice => {
+      this.updateVoiceVolume(voice.id);
+    });
+  }
+
+  /**
+   * Cancel any active count-in.
+   */
+  cancelCountIn(): void {
+    this.isCountingIn = false;
+    this.recordingVoiceId = null;
+  }
+
+  /**
+   * Start recording a vocal part synchronized with playback.
+   */
+  startRecordingVocal(voiceId: string, onComplete: (voiceId: string, blob: Blob) => void): void {
+    this.recordingVoiceId = voiceId;
+    this.onRecordingComplete = onComplete;
   }
 
   /**
@@ -240,7 +303,12 @@ export class PlaybackEngine {
     await AudioService.resume();
 
     if (countInBars > 0) {
-      await this.performCountIn(countInBars);
+      const completed = await this.performCountIn(countInBars);
+      if (!completed) {
+        this.isPlaying = false;
+        this.isCountingIn = false;
+        return;
+      }
     }
 
     this.isPlaying = true;
@@ -255,12 +323,28 @@ export class PlaybackEngine {
 
     // Schedule initial synth notes
     this.scheduleNotesFromPosition(this.getCurrentPositionT16());
+
+    // Trigger start callback
+    if (this.config.onStart) {
+      this.config.onStart();
+    }
+
+    // Start recording if armed
+    if (this.recordingVoiceId && this.onRecordingComplete) {
+      const vid = this.recordingVoiceId;
+      const callback = this.onRecordingComplete;
+      MicrophoneService.startRecording((blob: Blob) => {
+        callback(vid, blob);
+      });
+      // Clear trigger so it doesn't double-start on loop (loop is handled by hook)
+      this.recordingVoiceId = null;
+    }
   }
 
   /**
    * Perform a count-in before playback.
    */
-  private async performCountIn(bars: number): Promise<void> {
+  private async performCountIn(bars: number): Promise<boolean> {
     this.isCountingIn = true;
     const ctx = AudioService.getContext();
     const effectiveTempo = this.baseTempo * this.tempoMultiplier;
@@ -268,7 +352,7 @@ export class PlaybackEngine {
     const totalBeats = bars * this.timeSig.numerator;
 
     for (let beat = 0; beat < totalBeats; beat++) {
-      if (!this.isCountingIn) break; // Allow cancellation
+      if (!this.isCountingIn) return false; // Cancelled
 
       // Play click sound
       this.playClickSound(ctx.currentTime);
@@ -282,7 +366,16 @@ export class PlaybackEngine {
       await new Promise(resolve => setTimeout(resolve, beatDurationMs));
     }
 
+    const wasCancelled = !this.isCountingIn;
     this.isCountingIn = false;
+    return !wasCancelled;
+  }
+
+  /**
+   * Check if currently in count-in phase.
+   */
+  getIsCountingIn(): boolean {
+    return this.isCountingIn;
   }
 
   /**
@@ -388,9 +481,14 @@ export class PlaybackEngine {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
 
-      // Connect to the same output chain as synths (via Chorus)
-      // We use (node as any) to bypass strict Tone.js vs Native Audio node types
-      source.connect(AudioService.getChorus() as any);
+      // Connect to the per-voice gain node
+      const gainNode = this.vocalGainNodes.get(voiceId);
+      if (gainNode) {
+        source.connect(gainNode);
+      } else {
+        // Fallback to master if gain node missing
+        source.connect(AudioService.getMasterGain());
+      }
 
       source.start(currentTime, offset);
       this.activeAudioSources.set(voiceId, source);

@@ -147,7 +147,7 @@ export function Grid({
   const arrangementFromStore = useAppStore((state) => state.arrangement);
   const arrangement = arrangementFromStore || arrangementProp;
 
-  // Get state from store (playhead position read directly from playbackEngine)
+  const playback = useAppStore((state) => state.playback);
   const voiceStates = useAppStore((state) => state.voiceStates);
   const livePitchTrace = useAppStore((state) => state.livePitchTrace);
   const display = useAppStore((state) => state.display);
@@ -399,16 +399,27 @@ export function Grid({
     if (!onlyChords) {
       // 1. Draw recorded pitch traces (behind contours)
       ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
       for (const [voiceId, recording] of recordings.entries()) {
         const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
         if (voiceIndex === -1) continue;
 
         const voice = arrangement.voices[voiceIndex];
-        const voiceColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+        const voiceState = voiceStates.find(v => v.voiceId === voiceId);
+
+        // Determine if this voice is muted or soloed out
+        const hasSolo = voiceStates.some(v => v.synthSolo);
+        const isMuted = voiceState?.synthMuted || (hasSolo && !voiceState?.synthSolo);
+
+        const voiceColor = isMuted
+          ? 'rgba(150, 150, 150, 0.4)'
+          : (voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d');
 
         ctx.strokeStyle = voiceColor;
         ctx.lineWidth = 10;
-        ctx.globalAlpha = 0.45;
+        ctx.globalAlpha = isMuted ? 0.3 : 0.45;
 
         drawPitchTrace(ctx, recording.pitchTrace, minFreq, maxFreq, startT16, endT16,
           arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
@@ -416,8 +427,11 @@ export function Grid({
       ctx.restore();
 
       // 2. Draw live pitch trace (during recording - also behind contours but slightly higher alpha)
-      if (livePitchTrace.length > 0 && armedVoiceId) {
+      if (livePitchTrace.length > 0 && armedVoiceId && playback.isRecording) {
         ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
         const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
         const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
         const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
@@ -432,24 +446,28 @@ export function Grid({
       }
 
       // 3. Draw contour lines for each voice
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
       for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
         const voice = arrangement.voices[voiceIndex];
         const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
-        // Skip if muted (but not if soloed)
+        // Determine if this voice is muted or soloed out
         const hasSolo = voiceStates.some(v => v.synthSolo);
-        if (hasSolo && !voiceState?.synthSolo) continue;
-        if (!hasSolo && voiceState?.synthMuted) continue;
+        const isMuted = voiceState?.synthMuted || (hasSolo && !voiceState?.synthSolo);
 
         // Get voice color
-        const voiceColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
-        const glowColor = voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
+        const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+        const voiceColor = isMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
+        const glowColor = voiceColor.includes('rgba') ? voiceColor : voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
 
         // Draw contour with glow effect
         ctx.save();
 
-        // Glow layer
-        if (display.glowIntensity > 0) {
+        // Glow layer - only if not muted
+        if (display.glowIntensity > 0 && !isMuted) {
           ctx.shadowColor = glowColor;
           ctx.shadowBlur = 10 * display.glowIntensity;
           ctx.strokeStyle = voiceColor;
@@ -472,8 +490,8 @@ export function Grid({
           const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
           const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
-          // Draw node glow
-          if (display.glowIntensity > 0) {
+          // Draw node glow - only if not muted
+          if (display.glowIntensity > 0 && !isMuted) {
             ctx.shadowColor = voiceColor;
             ctx.shadowBlur = 8 * display.glowIntensity;
           }
@@ -483,14 +501,14 @@ export function Grid({
           ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
           ctx.fillStyle = voiceColor; // Fully opaque fill
           ctx.fill();
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
+          ctx.strokeStyle = isMuted ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
           ctx.lineWidth = 1.5;
           ctx.stroke();
 
           ctx.shadowBlur = 0;
 
           // Always draw scale degree number inside node (white text for contrast)
-          ctx.fillStyle = '#ffffff';
+          ctx.fillStyle = isMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
           ctx.font = 'bold 12px system-ui';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -499,6 +517,7 @@ export function Grid({
 
         ctx.restore();
       }
+      ctx.restore();
 
       // 4. Draw playhead - read directly from engine for smooth animation
       const playheadT16 = playbackEngine.getCurrentPositionT16();

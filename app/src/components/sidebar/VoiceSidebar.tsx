@@ -9,6 +9,7 @@
 import { Mic, Volume2, VolumeX, Headphones, Trash2, Edit3 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { useAppStore } from '../../stores/appStore';
+import { useRecording } from '../../hooks/useRecording';
 
 /* ------------------------------------------------------------
    Voice Control Row Component - Pill-style button per voice
@@ -26,10 +27,14 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
   const voiceState = useAppStore((state) =>
     state.voiceStates.find((v) => v.voiceId === voiceId)
   );
+  const playback = useAppStore((state) => state.playback);
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
   const hasRecording = useAppStore((state) => state.recordings.has(voiceId));
   const mode = useAppStore((state) => state.mode);
   const selectedVoiceId = useAppStore((state) => state.selectedVoiceId);
+
+  // Recording hook
+  const { startRecording, stopRecording } = useRecording();
 
   // Get actions from store
   const armVoice = useAppStore((state) => state.armVoice);
@@ -39,61 +44,80 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
 
   const isArmed = armedVoiceId === voiceId;
+  const isRecording = isArmed && playback.isRecording;
   const isMuted = voiceState?.synthMuted ?? false;
   const isSolo = voiceState?.synthSolo ?? false;
   const isSelectedForEdit = mode === 'create' && selectedVoiceId === voiceId;
+
+  // Visual state for solo/mute
+  const hasSolo = useAppStore((state) => state.voiceStates.some(v => v.synthSolo));
+  const isSoloedOut = hasSolo && !isSolo;
+  const visuallyDisabled = isMuted || isSoloedOut;
 
   return (
     <div className="flex flex-col gap-1">
       {/* Main voice button - pill shaped, colored */}
       <button
-        onClick={() => {
-          // In create mode, clicking selects voice for editing
-          // In play mode, clicking arms voice for recording
+        onClick={async () => {
           if (mode === 'create') {
             setSelectedVoiceId(voiceId);
           } else {
-            armVoice(isArmed ? null : voiceId);
+            // Immediate record: toggle if already recording this one, otherwise start
+            if (isRecording) {
+              stopRecording();
+            } else {
+              armVoice(voiceId);
+              // startRecording now accepts a voiceId parameter to avoid race conditions
+              await startRecording(voiceId);
+            }
           }
         }}
         className={`
           flex items-center gap-2 px-3 py-2
           rounded-full
           transition-all duration-200
-          ${isArmed || isSelectedForEdit
-            ? 'ring-2 ring-white/50 shadow-lg'
-            : 'hover:brightness-110'
+          ${isRecording
+            ? 'ring-2 ring-red-500 shadow-[0_0_20px_rgba(239,68,68,0.5)] scale-105'
+            : (isArmed || isSelectedForEdit)
+              ? 'ring-2 ring-white/50 shadow-lg'
+              : 'hover:brightness-110 active:scale-95'
           }
         `}
         style={{
-          backgroundColor: voiceColor,
-          boxShadow: (isArmed || isSelectedForEdit) ? `0 0 20px ${voiceColor}80` : `0 2px 8px ${voiceColor}40`,
+          backgroundColor: visuallyDisabled ? '#2a2a2a' : voiceColor,
+          opacity: visuallyDisabled ? 0.6 : 1,
+          boxShadow: isRecording
+            ? `0 0 25px rgba(239, 68, 68, 0.4)`
+            : (isArmed || isSelectedForEdit)
+              ? `0 0 20px ${voiceColor}80`
+              : `0 2px 8px ${voiceColor}40`,
         }}
         title={mode === 'create'
           ? (isSelectedForEdit ? 'Selected for editing' : 'Click to select for editing')
-          : (isArmed ? 'Click to disarm' : 'Click to arm for recording')
+          : (isRecording ? 'Stop Recording' : 'Start Recording')
         }
       >
         {/* Icon - Edit in create mode, Mic in play mode */}
         {mode === 'create' ? (
           <Edit3 size={14} className="text-white/90" />
         ) : (
-          <Mic size={14} className="text-white/90" />
+          <Mic size={14} className={isRecording ? 'text-red-200 animate-pulse' : 'text-white/90'} />
         )}
 
         {/* Status indicator dot */}
         <span
           className={`
             w-2.5 h-2.5 rounded-full 
-            ${isArmed ? 'bg-red-500 animate-pulse' : ''}
+            ${isRecording ? 'bg-red-500 animate-pulse' : ''}
+            ${!isRecording && isArmed ? 'bg-white animate-pulse' : ''}
             ${isSelectedForEdit ? 'bg-green-400 animate-pulse' : ''}
             ${!isArmed && !isSelectedForEdit ? 'bg-white/30' : ''}
           `}
         />
 
         {/* Voice label */}
-        <span className="text-white font-medium text-sm">
-          {mode === 'create' ? 'EDIT' : 'REC'} {voiceName.charAt(0).toUpperCase()}
+        <span className="text-white font-medium text-xs">
+          {voiceName.toUpperCase()}
         </span>
       </button>
 
@@ -128,7 +152,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
           onClick={() => clearRecording(voiceId)}
           disabled={!hasRecording}
           title="Delete recording"
-          className="h-6 w-6 rounded-full"
+          className="h-6 w-6 rounded-full hover:text-red-400"
         >
           <Trash2 size={12} />
         </Button>
@@ -136,7 +160,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
         {/* Recording exists indicator */}
         {hasRecording && (
           <div
-            className="w-2 h-2 rounded-full bg-green-400"
+            className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]"
             title="Has recording"
           />
         )}
@@ -167,9 +191,6 @@ export function VoiceSidebar() {
         shadow-2xl border border-white/10
       "
     >
-
-
-
       {/* Header label */}
       <div className="text-xs text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-2 justify-center">
         <Mic size={12} />
@@ -193,16 +214,15 @@ export function VoiceSidebar() {
       <button
         onClick={clearAllRecordings}
         className="
-          px-4 py-2 
-          text-xs font-medium uppercase tracking-wider
-          text-[var(--text-secondary)]
-          bg-[var(--button-bg)]/50
-          hover:bg-[var(--button-bg)]
+          px-4 py-2 mt-2
+          text-[10px] font-bold uppercase tracking-widest
+          text-white/40 hover:text-white/80
+          bg-white/5 hover:bg-white/10
           rounded-full
-          transition-colors
+          transition-all
         "
       >
-        Clear
+        Clear All
       </button>
     </div>
   );

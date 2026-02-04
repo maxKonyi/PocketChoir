@@ -15,6 +15,7 @@ import { BackgroundVideo } from './components/ui/BackgroundVideo';
 import { useAppStore } from './stores/appStore';
 import { AudioService } from './services/AudioService';
 import { playbackEngine } from './services/PlaybackEngine';
+import { useRecording } from './hooks/useRecording';
 import { applyTheme } from './utils/colors';
 
 function App() {
@@ -119,15 +120,75 @@ function App() {
 
   /**
    * Sync recorded audio with the playback engine.
+   * Handles both adding/updating recordings and clearing deleted ones.
    */
   const recordings = useAppStore((state) => state.recordings);
   useEffect(() => {
-    recordings.forEach((recording, voiceId) => {
-      if (recording.audioBlob && recording.audioBlob.size > 0) {
-        playbackEngine.setAudioRecording(voiceId, recording.audioBlob);
+    if (!arrangement) return;
+
+    arrangement.voices.forEach((voice) => {
+      const recording = recordings.get(voice.id);
+      if (recording && recording.audioBlob && recording.audioBlob.size > 0) {
+        playbackEngine.setAudioRecording(voice.id, recording.audioBlob);
+      } else {
+        // Clear recording in engine if it doesn't exist in store
+        playbackEngine.setAudioRecording(voice.id, new Blob());
       }
     });
-  }, [recordings]);
+  }, [recordings, arrangement]);
+
+  /**
+   * Sync voice states (volume, mute, solo) with the playback engine.
+   */
+  const voiceStates = useAppStore((state) => state.voiceStates);
+  useEffect(() => {
+    voiceStates.forEach(vs => {
+      playbackEngine.setVoiceVolume(vs.voiceId, vs.synthVolume);
+      playbackEngine.setVoiceMuted(vs.voiceId, vs.synthMuted);
+      playbackEngine.setVoiceSolo(vs.voiceId, vs.synthSolo);
+    });
+  }, [voiceStates]);
+
+  /**
+   * Keyboard controls (Space for play/pause/stop recording).
+   */
+  const { stopRecording } = useRecording();
+  const setPlaying = useAppStore((state) => state.setPlaying);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+
+        // 1. If counting in, cancel it
+        if (playbackEngine.getIsCountingIn()) {
+          console.log('Cancelling count-in via Space');
+          playbackEngine.cancelCountIn();
+          setPlaying(false);
+          return;
+        }
+
+        // 2. If recording, stop it (and stop playback)
+        if (playback.isRecording) {
+          console.log('Stopping recording via Space');
+          stopRecording(false); // Manual stop stops both
+          return;
+        }
+
+        // 3. Otherwise, toggle play/pause
+        console.log('Toggling playback via Space');
+        setPlaying(!playback.isPlaying);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [playback.isPlaying, playback.isRecording, setPlaying, stopRecording]);
 
   return (
     <div

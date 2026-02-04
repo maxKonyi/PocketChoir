@@ -58,8 +58,8 @@ export function useRecording() {
       // Initialize microphone service (requests permission)
       await MicrophoneService.initialize();
 
-      // Get the media stream
-      const stream = MicrophoneService.getStream();
+      // Get the processed media stream (with gain and mono summing)
+      const stream = MicrophoneService.getProcessedStream();
       if (stream) {
         // Initialize pitch detector with the stream
         const detector = new PitchDetector();
@@ -78,10 +78,12 @@ export function useRecording() {
 
   /**
    * Stop recording and save the result.
+   * @param keepPlaying - If true, playback continues after recording stops (for seamless looping)
    */
-  const stopRecording = useCallback(() => {
+  const stopRecording = useCallback((keepPlaying: boolean = false) => {
     if (!isRecordingRef.current || !armedVoiceId) return;
 
+    console.log(`Stopping recording for voice ${armedVoiceId}, keepPlaying: ${keepPlaying}`);
     isRecordingRef.current = false;
     playbackActuallyStartedRef.current = false;
 
@@ -91,17 +93,24 @@ export function useRecording() {
     // Stop microphone audio recording
     MicrophoneService.stopRecording();
 
-    // Stop playback
-    setPlaying(false);
+    // Stop playback status for recording
     setRecording(false);
+
+    // Only stop playback entirely if not keepPlaying
+    if (!keepPlaying) {
+      setPlaying(false);
+    }
   }, [armedVoiceId, setPlaying, setRecording]);
 
   /**
    * Start recording on the armed voice.
+   * @param targetVoiceId - Optional ID of the voice to record. If not provided, uses armedVoiceId.
    */
-  const startRecording = useCallback(async () => {
-    if (!armedVoiceId || !arrangement) {
-      console.warn('No voice armed or no arrangement loaded');
+  const startRecording = useCallback(async (targetVoiceId?: string) => {
+    const voiceId = targetVoiceId || armedVoiceId;
+
+    if (!voiceId || !arrangement) {
+      console.warn('No voice specified or no arrangement loaded');
       return false;
     }
 
@@ -158,15 +167,15 @@ export function useRecording() {
     // Start pitch detection
     pitchDetectorRef.current?.start(true);
 
-    // Start audio recording via MicrophoneService
-    const currentVoiceId = armedVoiceId;
+    // Start recording via PlaybackEngine (synced with actual playback start)
+    const currentVoiceId = voiceId as string;
     const currentTrace = pitchTraceRef;
 
-    MicrophoneService.startRecording(async (blob) => {
+    playbackEngine.startRecordingVocal(currentVoiceId, async (vid, blob) => {
       // Create the final recording object when recording stops
       const finalTrace = [...currentTrace.current];
       const recording: Recording = {
-        voiceId: currentVoiceId,
+        voiceId: vid,
         pitchTrace: finalTrace,
         audioBlob: blob,
         duration: finalTrace.length > 0 ? finalTrace[finalTrace.length - 1].time : 0,
@@ -174,20 +183,22 @@ export function useRecording() {
       };
 
       // Save to store
-      addRecording(currentVoiceId, recording);
+      addRecording(vid, recording);
 
       // Update PlaybackEngine with the new audio buffer
-      await playbackEngine.setAudioRecording(currentVoiceId, blob);
+      await playbackEngine.setAudioRecording(vid, blob);
 
       console.log('Recording saved with audio. Points:', finalTrace.length);
-      setLivePitchTrace(finalTrace);
+
+      // Clear live trace now that it's persistent in recordings map
+      setLivePitchTrace([]);
     });
 
     // Start playback
     setRecording(true);
     setPlaying(true);
 
-    console.log('Recording started for voice:', armedVoiceId);
+    console.log('Recording started for voice:', currentVoiceId);
     return true;
   }, [armedVoiceId, arrangement, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying]);
 
@@ -201,6 +212,19 @@ export function useRecording() {
       await startRecording();
     }
   }, [playback.isRecording, startRecording, stopRecording]);
+
+  /**
+   * Auto-stop recording at the end of the loop.
+   */
+  useEffect(() => {
+    if (playback.isRecording && playback.isPlaying) {
+      // Stop slightly before the exact loop end to ensure we don't start recording the loop start
+      if (playback.position >= playback.loopEnd - 0.2) {
+        console.log('Auto-stopping recording at loop end');
+        stopRecording(true); // Keep playing for seamless looping!
+      }
+    }
+  }, [playback.position, playback.loopEnd, playback.isRecording, playback.isPlaying, stopRecording]);
 
   /**
    * Clean up when playback stops externally.

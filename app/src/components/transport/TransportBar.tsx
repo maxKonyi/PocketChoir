@@ -5,10 +5,9 @@
    Layout: Position | Speed | [Record Play Loop] | Zoom
    ============================================================ */
 
-import { Play, Pause, Circle, Repeat, SkipBack, ZoomIn, ZoomOut } from 'lucide-react';
+import { Play, Pause, Repeat, SkipBack, ZoomIn, ZoomOut } from 'lucide-react';
 
 import { useAppStore } from '../../stores/appStore';
-import { useRecording } from '../../hooks/useRecording';
 
 /* ------------------------------------------------------------
    Helper: Format position as Bar:Beat
@@ -34,7 +33,6 @@ export function TransportBar() {
   const playback = useAppStore((state) => state.playback);
   const arrangement = useAppStore((state) => state.arrangement);
   const display = useAppStore((state) => state.display);
-  const armedVoiceId = useAppStore((state) => state.armedVoiceId);
 
   // Get actions from store
   const setPlaying = useAppStore((state) => state.setPlaying);
@@ -43,8 +41,7 @@ export function TransportBar() {
   const setZoomLevel = useAppStore((state) => state.setZoomLevel);
   const setPosition = useAppStore((state) => state.setPosition);
 
-  // Recording hook
-  const { toggleRecording, isRecording } = useRecording();
+
 
   // Speed options
   const speedOptions = [0.5, 0.75, 1.0];
@@ -87,22 +84,6 @@ export function TransportBar() {
           className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 text-white/70 transition-all disabled:opacity-20"
         >
           <SkipBack size={20} />
-        </button>
-
-        <button
-          onClick={toggleRecording}
-          disabled={!arrangement || !armedVoiceId}
-          className={`
-            w-10 h-10 rounded-full flex items-center justify-center transition-all
-            ${isRecording
-              ? 'bg-red-500 shadow-[0_0_20px_rgba(239,68,68,0.5)]'
-              : armedVoiceId
-                ? 'bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20'
-                : 'bg-white/5 text-white/20'
-            }
-          `}
-        >
-          <Circle size={18} fill={isRecording ? 'currentColor' : 'none'} />
         </button>
       </div>
 
