@@ -75,6 +75,10 @@ interface AppState {
   // Playback state
   playback: PlaybackState;
 
+  // Global Mix
+  globalVolume: number;         // 0-1
+  globalReverb: number;         // 0-1
+
   // Recording
   armedVoiceId: string | null;  // Which voice is armed for recording
   recordings: Map<string, Recording>; // voiceId -> recording
@@ -132,6 +136,10 @@ interface AppActions {
   setVoiceVocalSolo: (voiceId: string, solo: boolean) => void;
   setVoiceVocalPan: (voiceId: string, pan: number) => void;
   setVoiceVocalReverb: (voiceId: string, reverb: number) => void;
+
+  // Global Mix
+  setGlobalVolume: (volume: number) => void;
+  setGlobalReverb: (reverb: number) => void;
 
   // Recording
   armVoice: (voiceId: string | null) => void;
@@ -230,7 +238,7 @@ const initialDisplaySettings: DisplaySettings = {
   labelFormat: 'degree',
   zoomLevel: 1,
   glowIntensity: 0,
-  gridOpacity: 0.5,
+  gridOpacity: 1.0,
   backgroundVideo: '/src/data/backgrounds/Forest1.mp4',
   backgroundBlur: 4,
   backgroundBrightness: 0.6,
@@ -243,6 +251,8 @@ const initialState: AppState = {
   transposition: 0,
   voiceStates: [],
   playback: initialPlaybackState,
+  globalVolume: 0.8,
+  globalReverb: 0.2,
   armedVoiceId: null,
   recordings: new Map(),
   livePitchTrace: [],
@@ -399,12 +409,16 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   })),
 
   setVoiceVocalReverb: (voiceId, reverb) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, vocalReverb: Math.max(0, Math.min(1, reverb)) } : v
-    ),
+    voiceStates: state.voiceStates.map(vs =>
+      vs.voiceId === voiceId ? { ...vs, vocalReverb: reverb } : vs
+    )
   })),
 
-  // -- Recording --
+  // Global Mix
+  setGlobalVolume: (volume) => set({ globalVolume: volume }),
+  setGlobalReverb: (reverb) => set({ globalReverb: reverb }),
+
+  // Recording
   armVoice: (voiceId) => set({ armedVoiceId: voiceId }),
 
   addRecording: (voiceId, recording) => set((state) => {

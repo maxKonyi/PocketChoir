@@ -59,7 +59,7 @@ export function degreeToSemitoneOffset(deg: number, octave: number, scaleType: s
  * Scale patterns as arrays of semitone offsets from the tonic.
  * Each number represents how many semitones above the tonic that scale degree is.
  */
-const SCALE_PATTERNS: Record<string, number[]> = {
+export const SCALE_PATTERNS: Record<string, number[]> = {
   'major': [0, 2, 4, 5, 7, 9, 11],  // 1, 2, 3, 4, 5, 6, 7
   'minor': [0, 2, 3, 5, 7, 8, 10],  // Natural minor
   'dorian': [0, 2, 3, 5, 7, 9, 10],

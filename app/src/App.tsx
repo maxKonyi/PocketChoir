@@ -10,7 +10,7 @@ import { TopBar } from './components/topbar';
 import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
 import { Grid } from './components/grid/Grid';
-import { LibraryModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
+import { LibraryModal, MixerModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
 import { BackgroundVideo } from './components/ui/BackgroundVideo';
 import { useAppStore } from './stores/appStore';
 import { AudioService } from './services/AudioService';
@@ -233,6 +233,7 @@ function App() {
 
       {/* Modals */}
       <LibraryModal />
+      <MixerModal />
       <MicSetupModal />
       <RangeSetupModal />
       <DisplaySettingsModal />

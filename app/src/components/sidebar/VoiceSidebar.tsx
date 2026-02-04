@@ -216,6 +216,9 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
 export function VoiceSidebar() {
   // Get arrangement from store
   const arrangement = useAppStore((state) => state.arrangement);
+  const voiceStates = useAppStore((state) => state.voiceStates);
+  const setVoiceVocalMuted = useAppStore((state) => state.setVoiceVocalMuted);
+  const setVoiceSynthMuted = useAppStore((state) => state.setVoiceSynthMuted);
   const clearAllRecordings = useAppStore((state) => state.clearAllRecordings);
 
   if (!arrangement) {
@@ -238,6 +241,45 @@ export function VoiceSidebar() {
           shrink-0
         "
       >
+
+        {/* Header controls: Global Toggles */}
+        <div className="flex gap-2 px-1 pb-1">
+          <button
+            onClick={() => {
+              // Logic: If any vocal is unmuted, mute all. If all muted, unmute all.
+              const anyUnmuted = voiceStates.some(v => !v.vocalMuted);
+              voiceStates.forEach(v => setVoiceVocalMuted(v.voiceId, anyUnmuted));
+            }}
+            className={`
+               flex-1 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all
+               border border-white/5 shadow-sm
+               ${voiceStates.every(v => v.vocalMuted)
+                ? 'bg-red-500/20 text-red-200 border-red-500/30'
+                : 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary-light)] border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/30'
+              }
+             `}
+          >
+            VOX
+          </button>
+
+          <button
+            onClick={() => {
+              // Logic: If any synth is unmuted, mute all. If all muted, unmute all.
+              const anyUnmuted = voiceStates.some(v => !v.synthMuted);
+              voiceStates.forEach(v => setVoiceSynthMuted(v.voiceId, anyUnmuted));
+            }}
+            className={`
+               flex-1 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all
+               border border-white/5 shadow-sm
+               ${voiceStates.every(v => v.synthMuted)
+                ? 'bg-red-500/20 text-red-200 border-red-500/30'
+                : 'bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary-light)] border-[var(--accent-secondary)]/30 hover:bg-[var(--accent-secondary)]/30'
+              }
+             `}
+          >
+            SYN
+          </button>
+        </div>
 
         {/* Header label */}
         <div className="text-[10px] text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-1.5 justify-center opacity-60">

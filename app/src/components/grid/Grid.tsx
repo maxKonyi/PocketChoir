@@ -12,7 +12,7 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import type { Arrangement, Voice, PitchPoint } from '../../types';
 import { useAppStore } from '../../stores/appStore';
-import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY } from '../../utils/music';
+import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 import { playbackEngine } from '../../services/PlaybackEngine';
 
@@ -265,20 +265,27 @@ export function Grid({
       ctx.globalAlpha = display.gridOpacity;
 
       for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
+        // Determine if this pitch is diatonic
+        // Normalize semi to 0-11 range relative to tonic
+        // minSemitone is relative to tonic, so semi is also relative to tonic
+        const noteInScale = ((semi % 12) + 12) % 12;
+        const scalePattern = SCALE_PATTERNS[arrangement.scale] || SCALE_PATTERNS['major'];
+        const isDiatonic = scalePattern.includes(noteInScale);
+
+        // Only draw grid lines for diatonic notes
+        if (!isDiatonic) continue;
+
         const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
         const label = semitoneToLabel(semi);
 
         // Make tonic (1) and octave brighter for orientation
         if (semi % 12 === 0) {
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-          ctx.lineWidth = 2;
-        } else if (label === '3' || label === '5' || label === '4') {
-          // Highlight important scale degrees (major third, fourth, fifth)
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Brighter tonic
+          ctx.lineWidth = 1.5;
         } else {
+          // Standard diatonic lines
           ctx.strokeStyle = pitchLineColor;
-          ctx.lineWidth = 1;
+          ctx.lineWidth = 0.5; // Thinner lines
         }
 
         ctx.beginPath();

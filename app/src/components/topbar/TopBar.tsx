@@ -5,7 +5,7 @@
    Controls: Library, Mic Setup, Display Settings, Theme, Mode Toggle
    ============================================================ */
 
-import { Library, Mic, Eye, Palette, Download } from 'lucide-react';
+import { Library, Mic, Eye, Palette, Download, Sliders } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { applyTheme, type ThemeName } from '../../utils/colors';
 
@@ -34,6 +34,7 @@ export function TopBar() {
 
   // Get actions from store
   const setLibraryOpen = useAppStore((state) => state.setLibraryOpen);
+  const setMixerOpen = useAppStore((state) => state.setMixerOpen);
   const setMicSetupOpen = useAppStore((state) => state.setMicSetupOpen);
   const setDisplaySettingsOpen = useAppStore((state) => state.setDisplaySettingsOpen);
   const setMode = useAppStore((state) => state.setMode);
@@ -101,48 +102,50 @@ export function TopBar() {
       z-30 shadow-2xl
     ">
 
-
-      {/* Left section - App title and arrangement selector */}
+      {/* Left section - App title */}
       <div className="flex items-center gap-4">
-        {/* App logo/title */}
         <span className="text-lg font-bold text-[var(--accent-primary)]">
           ♫ Harmony
         </span>
+      </div>
 
-        {/* Library / Arrangement selector */}
+      {/* Center - Library / Arrangement selector */}
+      <div className="absolute left-1/2 -translate-x-1/2">
         <button
           onClick={() => setLibraryOpen(true)}
           className="
-            flex items-center gap-2 px-3 py-1.5
+            flex items-center gap-2 px-4 py-2
             bg-[var(--button-bg)] text-[var(--text-primary)]
-            rounded-lg text-sm font-medium
-            hover:bg-[var(--button-bg-hover)] transition-colors
+            rounded-full text-base font-medium
+            hover:bg-[var(--button-bg-hover)] transition-all
             border border-[var(--border-color)]
+            shadow-sm hover:shadow-md
           "
           title="Open Library"
         >
-          <Library size={14} />
-          <span className="max-w-[200px] truncate">
+          <Library size={16} />
+          <span className="max-w-[300px] truncate">
             {arrangement?.title || 'Choose Arrangement...'}
           </span>
         </button>
       </div>
 
-      {/* Center - Arrangement info (when loaded) */}
-      {arrangement && (
-        <div className="flex items-center gap-4 text-sm text-[var(--text-muted)]">
-          <span>Key: <span className="text-[var(--text-primary)] font-medium">{arrangement.tonic} {arrangement.scale}</span></span>
-          <span>•</span>
-          <span>Tempo: <span className="text-[var(--text-primary)] font-medium">{arrangement.tempo} BPM</span></span>
-          <span>•</span>
-          <span><span className="text-[var(--text-primary)] font-medium">{arrangement.bars}</span> bars</span>
-          <span>•</span>
-          <span><span className="text-[var(--text-primary)] font-medium">{arrangement.voices.length}</span> voices</span>
-        </div>
-      )}
-
       {/* Right section - Settings buttons and mode toggle */}
       <div className="flex items-center gap-2">
+        {/* Mixer */}
+        <button
+          onClick={() => setMixerOpen(true)}
+          className="
+            p-2 rounded-lg
+            bg-[var(--button-bg)] text-[var(--text-secondary)]
+            hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
+            transition-colors
+          "
+          title="Mixer"
+        >
+          <Sliders size={16} />
+        </button>
+
         {/* Mic Setup */}
         <button
           onClick={() => setMicSetupOpen(true)}

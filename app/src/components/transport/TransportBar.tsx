@@ -84,11 +84,31 @@ export function TransportBar() {
       border border-white/5
     ">
 
-      {/* LEFT SECTION: Time & Metronome */}
-      <div className="flex items-center gap-4 z-10">
+      {/* LEFT SECTION: Key, Tempo, Time, Metronome */}
+      <div className="flex items-center gap-3 z-10 shrink-0">
+
+        {/* Key Display */}
+        {arrangement && (
+          <div className="flex flex-col items-center leading-none px-2">
+            <span className="text-[10px] text-white/40 uppercase font-bold tracking-wider">Key</span>
+            <span className="text-sm font-bold text-white shadow-sm tabular-nums text-center min-w-[30px]">{arrangement.tonic}</span>
+          </div>
+        )}
+
+        <div className="w-px h-6 bg-white/10" />
+
+        {/* Tempo Display */}
+        {arrangement && (
+          <div className="flex flex-col items-center leading-none px-2">
+            <span className="text-[10px] text-white/40 uppercase font-bold tracking-wider">BPM</span>
+            <span className="text-sm font-bold text-white shadow-sm tabular-nums text-center min-w-[30px]">{Math.round(arrangement.tempo)}</span>
+          </div>
+        )}
+
+        <div className="w-px h-6 bg-white/10" />
 
         {/* Position Display */}
-        <div className="text-2xl font-mono font-bold text-[var(--text-primary)] tabular-nums min-w-[80px] text-center">
+        <div className="text-2xl font-mono font-bold text-[var(--text-primary)] tabular-nums min-w-[70px] text-center">
           {arrangement ? formatPosition(playback.position, arrangement.timeSig) : '--:--'}
         </div>
 
