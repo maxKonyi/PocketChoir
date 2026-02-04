@@ -92,7 +92,10 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
             }
           `}
           style={{
-            backgroundColor: isRecording ? '#ef4444' : voiceColor,
+            backgroundColor: isRecording
+              ? '#ef4444'
+              : `color-mix(in srgb, ${voiceColor}, transparent 60%)`, // Glassy transparency
+            border: isRecording ? 'none' : `1px solid ${voiceColor}`, // Solid border
             opacity: vocalMuted && synthMuted ? 0.5 : 1
           }}
           title={mode === 'create' ? 'Select for editing' : 'Record'}

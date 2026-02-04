@@ -94,7 +94,7 @@ export function TopBar() {
 
   return (
     <header className="
-      absolute top-4 left-4 right-4
+      absolute top-4 left-[calc(11rem+50px)] right-[calc(2rem+20px)]
       h-14 px-6
       glass-pane glass-med rounded-2xl
       flex items-center justify-between

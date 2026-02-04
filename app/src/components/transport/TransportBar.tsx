@@ -76,7 +76,7 @@ export function TransportBar() {
 
   return (
     <div className="
-      absolute bottom-12 left-1/2 -translate-x-1/2
+      absolute bottom-12 left-[calc(50%+4.5rem+15px)] -translate-x-1/2
       flex items-center justify-between px-6 h-20
       w-auto min-w-[600px]
       glass-pane glass-med rounded-full
