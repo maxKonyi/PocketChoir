@@ -402,9 +402,10 @@ export function Grid({
         const voice = arrangement.voices[voiceIndex];
         const voiceState = voiceStates.find(v => v.voiceId === voiceId);
 
-        // Recorded traces follow the VOX (vocal) mute/solo state only.
-        const hasVocalSolo = voiceStates.some(v => v.vocalSolo);
-        const isVocalMuted = (voiceState?.vocalMuted ?? false) || (hasVocalSolo && !(voiceState?.vocalSolo ?? false));
+        // Recorded traces follow the VOX (vocal) mute/solo state.
+        // Solo is global across all tracks, but VOX coloring is based on VOX solo.
+        const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
+        const isVocalMuted = (voiceState?.vocalMuted ?? false) || (anySoloActive && !(voiceState?.vocalSolo ?? false));
 
         const voiceColor = isVocalMuted
           ? 'rgba(150, 150, 150, 0.4)'
@@ -451,9 +452,10 @@ export function Grid({
       const voice = arrangement.voices[voiceIndex];
       const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
-      // Contour lines follow the SYN (synth) mute/solo state only.
-      const hasSynthSolo = voiceStates.some(v => v.synthSolo);
-      const isSynthMuted = (voiceState?.synthMuted ?? false) || (hasSynthSolo && !(voiceState?.synthSolo ?? false));
+      // Contour lines follow the SYN (synth) mute/solo state.
+      // Solo is global across all tracks, but SYN coloring is based on SYN solo.
+      const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
+      const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
 
       // Get voice color
       const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';

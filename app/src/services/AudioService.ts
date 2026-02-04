@@ -46,7 +46,7 @@ class AudioServiceClass {
     this.dryGain.connect(this.masterGain);
 
     this.reverbGain = this.context.createGain();
-    this.reverbGain.gain.value = 0.3; // Default reverb level
+    this.reverbGain.gain.value = 0.4; // Default reverb level (matches choir_ref wet ≈ 0.40)
     this.reverbGain.connect(this.masterGain);
 
     // Create reverb convolver (we'll load an impulse response later)
@@ -90,18 +90,30 @@ class AudioServiceClass {
   private async createSyntheticReverb(): Promise<void> {
     if (!this.context || !this.reverbNode) return;
 
-    // Create a 2-second stereo impulse response
+    // Match choir_ref hall-ish reverb character:
+    // decay ≈ 2.9s, preDelay ≈ 10ms, wet controlled by reverbGain.
     const sampleRate = this.context.sampleRate;
-    const duration = 2; // seconds
-    const length = sampleRate * duration;
+    const decaySeconds = 2.9;
+    const preDelaySeconds = 0.01;
+    const totalSeconds = decaySeconds + preDelaySeconds;
+    const length = Math.floor(sampleRate * totalSeconds);
+    const preDelaySamples = Math.floor(sampleRate * preDelaySeconds);
     const impulse = this.context.createBuffer(2, length, sampleRate);
 
     // Fill with decaying noise for a simple reverb effect
     for (let channel = 0; channel < 2; channel++) {
       const channelData = impulse.getChannelData(channel);
       for (let i = 0; i < length; i++) {
+        if (i < preDelaySamples) {
+          channelData[i] = 0;
+          continue;
+        }
+
+        const t = i - preDelaySamples;
+        const decayLen = Math.max(1, length - preDelaySamples);
+
         // Exponential decay with random noise
-        const decay = Math.exp(-3 * i / length);
+        const decay = Math.exp(-3 * t / decayLen);
         channelData[i] = (Math.random() * 2 - 1) * decay;
       }
     }

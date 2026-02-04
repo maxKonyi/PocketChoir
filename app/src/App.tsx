@@ -107,9 +107,15 @@ function App() {
         onLoop: () => {
           console.log('Loop');
         },
+        metronomeEnabled: playback.metronomeEnabled,
       });
     }
   }, [arrangement, setPosition]);
+
+  // Keep the playback engine metronome setting in sync with the transport toggle.
+  useEffect(() => {
+    playbackEngine.setConfig({ metronomeEnabled: playback.metronomeEnabled });
+  }, [playback.metronomeEnabled]);
 
   /**
    * Handle play/pause state changes.

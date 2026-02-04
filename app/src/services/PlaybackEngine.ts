@@ -354,15 +354,14 @@ export class PlaybackEngine {
    * Check if a synth should be audible (considering synth mute/solo).
    */
   private isSynthAudible(voiceId: string): boolean {
-    // Synth soloing is independent of vocal soloing.
-    const isAnySynthSoloActive = this.synthSolo.size > 0;
+    // Solo is global across SYN + VOX tracks.
+    // If ANY solo is active anywhere, only SYN tracks that are soloed are audible.
+    const isAnySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
 
-    if (isAnySynthSoloActive) {
-      // If ANY synth solo is active, only audible if THIS synth is soloed.
+    if (isAnySoloActive) {
       return this.synthSolo.has(voiceId);
     }
 
-    // No synth solos active, audible unless muted.
     return !this.synthMuted.has(voiceId);
   }
 
@@ -370,15 +369,14 @@ export class PlaybackEngine {
    * Check if a recording should be audible (considering vocal mute/solo).
    */
   private isVocalAudible(voiceId: string): boolean {
-    // Vocal soloing is independent of synth soloing.
-    const isAnyVocalSoloActive = this.vocalSolo.size > 0;
+    // Solo is global across SYN + VOX tracks.
+    // If ANY solo is active anywhere, only VOX tracks that are soloed are audible.
+    const isAnySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
 
-    if (isAnyVocalSoloActive) {
-      // If ANY vocal solo is active, only audible if THIS vocal is soloed.
+    if (isAnySoloActive) {
       return this.vocalSolo.has(voiceId);
     }
 
-    // No vocal solos active, audible unless muted.
     return !this.vocalMuted.has(voiceId);
   }
 
@@ -489,9 +487,8 @@ export class PlaybackEngine {
 
     osc.connect(gain);
 
-    // Route click through the same global dry + reverb paths as the rest of the mix.
+    // Metronome should be DRY (excluded from reverb).
     gain.connect(AudioService.getDryGain());
-    gain.connect(AudioService.getReverbInput());
 
     osc.start(time);
     osc.stop(time + 0.05);
