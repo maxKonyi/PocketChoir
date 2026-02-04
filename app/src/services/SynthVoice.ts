@@ -98,6 +98,15 @@ export class SynthVoice {
   }
 
   /**
+   * Set stereo pan for this synth voice.
+   * @param pan - Stereo position (-1 = left, 0 = center, 1 = right)
+   */
+  setPan(pan: number): void {
+    const clamped = Math.max(-1, Math.min(1, pan));
+    this.panner.pan.rampTo(clamped, 0.05);
+  }
+
+  /**
    * Start playing a note at the given frequency.
    * @param frequency - Frequency in Hz
    * @param startTime - Optional start time (audio context time)

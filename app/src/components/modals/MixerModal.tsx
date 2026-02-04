@@ -27,6 +27,7 @@ export function MixerModal() {
     const setVoiceSynthVolume = useAppStore((state) => state.setVoiceSynthVolume);
     const setVoiceSynthMuted = useAppStore((state) => state.setVoiceSynthMuted);
     const setVoiceSynthSolo = useAppStore((state) => state.setVoiceSynthSolo);
+    const setVoiceSynthPan = useAppStore((state) => state.setVoiceSynthPan);
     const setVoiceVocalVolume = useAppStore((state) => state.setVoiceVocalVolume);
     const setVoiceVocalMuted = useAppStore((state) => state.setVoiceVocalMuted);
     const setVoiceVocalSolo = useAppStore((state) => state.setVoiceVocalSolo);
@@ -149,15 +150,29 @@ export function MixerModal() {
                                     {/* Synth Controls */}
                                     <div className="flex items-center gap-3 pr-4 border-r border-white/10">
                                         <div className="flex flex-col gap-1 w-full justify-center">
-                                            <input
-                                                type="range"
-                                                min="0"
-                                                max="1"
-                                                step="0.01"
-                                                value={vs.synthVolume}
-                                                onChange={(e) => setVoiceSynthVolume(voice.id, parseFloat(e.target.value))}
-                                                className="w-full accent-[var(--accent-primary)] h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
-                                            />
+                                            <div className="flex gap-2 w-full">
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="1"
+                                                    step="0.01"
+                                                    value={vs.synthVolume}
+                                                    onChange={(e) => setVoiceSynthVolume(voice.id, parseFloat(e.target.value))}
+                                                    className="w-full accent-[var(--accent-primary)] h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                                                    title="Synth Volume"
+                                                />
+
+                                                <input
+                                                    type="range"
+                                                    min="-1"
+                                                    max="1"
+                                                    step="0.1"
+                                                    value={vs.synthPan}
+                                                    onChange={(e) => setVoiceSynthPan(voice.id, parseFloat(e.target.value))}
+                                                    className="w-16 accent-[var(--accent-primary)]/50 h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                                                    title="Synth Pan Left/Right"
+                                                />
+                                            </div>
                                             <div className="flex justify-between items-center mt-1">
                                                 <div className="flex gap-1">
                                                     <button
@@ -175,7 +190,7 @@ export function MixerModal() {
                                     `}
                                                     >S</button>
                                                 </div>
-                                                <span className="text-[9px] text-white/30 tabular-nums">Vol {Math.round(vs.synthVolume * 100)}</span>
+                                                <span className="text-[9px] text-white/30 tabular-nums">Vol {Math.round(vs.synthVolume * 100)} | Pan {vs.synthPan.toFixed(1)}</span>
                                             </div>
                                         </div>
                                     </div>

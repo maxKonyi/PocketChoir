@@ -176,7 +176,8 @@ class MicrophoneServiceClass {
     this.monitorNode = ctx.createGain();
     this.monitorNode.gain.value = 0; // Off by default
     this.inputGainNode.connect(this.monitorNode);
-    this.monitorNode.connect(AudioService.getMasterGain());
+    this.monitorNode.connect(AudioService.getDryGain());
+    this.monitorNode.connect(AudioService.getReverbInput());
   }
 
   /**

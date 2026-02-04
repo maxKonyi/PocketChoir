@@ -33,6 +33,7 @@ interface VoiceState {
   synthVolume: number;      // 0-1
   synthMuted: boolean;
   synthSolo: boolean;
+  synthPan: number;         // -1 to 1
 
   // Recording state
   isArmed: boolean;         // Ready to record
@@ -141,6 +142,7 @@ interface AppActions {
   setVoiceSynthVolume: (voiceId: string, volume: number) => void;
   setVoiceSynthMuted: (voiceId: string, muted: boolean) => void;
   setVoiceSynthSolo: (voiceId: string, solo: boolean) => void;
+  setVoiceSynthPan: (voiceId: string, pan: number) => void;
   setVoiceVocalVolume: (voiceId: string, volume: number) => void;
   setVoiceVocalMuted: (voiceId: string, muted: boolean) => void;
   setVoiceVocalSolo: (voiceId: string, solo: boolean) => void;
@@ -437,6 +439,12 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     ),
   })),
 
+  setVoiceSynthPan: (voiceId, pan) => set((state) => ({
+    voiceStates: state.voiceStates.map((v) =>
+      v.voiceId === voiceId ? { ...v, synthPan: Math.max(-1, Math.min(1, pan)) } : v
+    ),
+  })),
+
   setVoiceVocalVolume: (voiceId, volume) => set((state) => ({
     voiceStates: state.voiceStates.map((v) =>
       v.voiceId === voiceId ? { ...v, vocalVolume: Math.max(0, Math.min(1, volume)) } : v
@@ -595,17 +603,26 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
 
   // -- Utility --
   initializeVoiceStates: (voices) => {
-    const voiceStates: VoiceState[] = voices.map((voice) => ({
+    // Keep default panning consistent with the reference synth defaults in SynthVoice.
+    // Index mapping: Soprano=0, Alto=1, Tenor=2, Bass=3 (and extra voices default center).
+    const getDefaultPanForIndex = (voiceIndex: number): number => {
+      if (voiceIndex === 1) return -0.8;
+      if (voiceIndex === 2) return 0.8;
+      return 0;
+    };
+
+    const voiceStates: VoiceState[] = voices.map((voice, index) => ({
       voiceId: voice.id,
       synthVolume: 0.5,
       synthMuted: false,
       synthSolo: false,
+      synthPan: getDefaultPanForIndex(index),
       isArmed: false,
       hasRecording: false,
       vocalVolume: 0.8,
       vocalMuted: false,
       vocalSolo: false,
-      vocalPan: 0,
+      vocalPan: getDefaultPanForIndex(index),
       vocalReverb: 0.3,
     }));
     set({ voiceStates, recordings: new Map(), livePitchTrace: [] });

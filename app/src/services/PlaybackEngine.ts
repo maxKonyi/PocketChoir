@@ -72,6 +72,10 @@ export class PlaybackEngine {
   private vocalMuted: Set<string> = new Set();
   private vocalSolo: Set<string> = new Set();
 
+  // Per-voice pan (stereo position) for each part.
+  // We keep vocal panners as native WebAudio nodes because recorded audio uses WebAudio.
+  private vocalPannerNodes: Map<string, StereoPannerNode> = new Map();
+
   // Loop settings
   private loopEnabled: boolean = true;
   private loopStartT16: number = 0;
@@ -120,6 +124,7 @@ export class PlaybackEngine {
     // Create synth voices and voice gain nodes for each voice in the arrangement
     this.disposeSynthVoices();
     this.vocalGainNodes.clear();
+    this.vocalPannerNodes.clear();
 
     const ctx = AudioService.getContext();
     arrangement.voices.forEach((voice, index) => {
@@ -130,8 +135,17 @@ export class PlaybackEngine {
       this.synthVoices.set(voice.id, synth);
 
       const gain = ctx.createGain();
+
+      // Recorded vocal routing:
+      // source -> gain (volume/mute/solo) -> stereo panner -> global chorus
+      // (Chorus is the shared "mix bus" for everything in the app.)
+      const panner = ctx.createStereoPanner();
+      gain.connect(panner);
+
       // Connect to global chorus using Tone.connect (supports both native and Tone nodes)
-      Tone.connect(gain, AudioService.getChorus());
+      Tone.connect(panner, AudioService.getChorus());
+
+      this.vocalPannerNodes.set(voice.id, panner);
       this.vocalGainNodes.set(voice.id, gain);
 
       // Set initial volumes
@@ -229,6 +243,28 @@ export class PlaybackEngine {
   }
 
   /**
+   * Set pan for a voice's synth or vocal track.
+   * @param pan - Stereo pan (-1 = left, 0 = center, 1 = right)
+   */
+  setVoicePan(voiceId: string, pan: number, part: 'synth' | 'vocal' = 'synth'): void {
+    const clamped = Math.max(-1, Math.min(1, pan));
+
+    if (part === 'synth') {
+      const synth = this.synthVoices.get(voiceId);
+      if (synth) {
+        synth.setPan(clamped);
+      }
+      return;
+    }
+
+    const panner = this.vocalPannerNodes.get(voiceId);
+    if (!panner) return;
+
+    const ctx = AudioService.getContext();
+    panner.pan.setTargetAtTime(clamped, ctx.currentTime, 0.05);
+  }
+
+  /**
    * Set solo state for a voice.
    */
   setVoiceSolo(voiceId: string, solo: boolean, part: 'synth' | 'vocal' = 'synth'): void {
@@ -318,13 +354,15 @@ export class PlaybackEngine {
    * Check if a synth should be audible (considering synth mute/solo).
    */
   private isSynthAudible(voiceId: string): boolean {
-    const isAnySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
+    // Synth soloing is independent of vocal soloing.
+    const isAnySynthSoloActive = this.synthSolo.size > 0;
 
-    if (isAnySoloActive) {
-      // If ANY solo is active (vocal or synth), only play if THIS synth is soloed
+    if (isAnySynthSoloActive) {
+      // If ANY synth solo is active, only audible if THIS synth is soloed.
       return this.synthSolo.has(voiceId);
     }
-    // No solos active, check mute
+
+    // No synth solos active, audible unless muted.
     return !this.synthMuted.has(voiceId);
   }
 
@@ -332,13 +370,15 @@ export class PlaybackEngine {
    * Check if a recording should be audible (considering vocal mute/solo).
    */
   private isVocalAudible(voiceId: string): boolean {
-    const isAnySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
+    // Vocal soloing is independent of synth soloing.
+    const isAnyVocalSoloActive = this.vocalSolo.size > 0;
 
-    if (isAnySoloActive) {
-      // If ANY solo is active (vocal or synth), only play if THIS vocal is soloed
+    if (isAnyVocalSoloActive) {
+      // If ANY vocal solo is active, only audible if THIS vocal is soloed.
       return this.vocalSolo.has(voiceId);
     }
-    // No solos active, check mute
+
+    // No vocal solos active, audible unless muted.
     return !this.vocalMuted.has(voiceId);
   }
 
@@ -448,7 +488,10 @@ export class PlaybackEngine {
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
 
     osc.connect(gain);
-    gain.connect(AudioService.getMasterGain());
+
+    // Route click through the same global dry + reverb paths as the rest of the mix.
+    gain.connect(AudioService.getDryGain());
+    gain.connect(AudioService.getReverbInput());
 
     osc.start(time);
     osc.stop(time + 0.05);

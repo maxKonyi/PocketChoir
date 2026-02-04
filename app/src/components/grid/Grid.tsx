@@ -402,11 +402,11 @@ export function Grid({
         const voice = arrangement.voices[voiceIndex];
         const voiceState = voiceStates.find(v => v.voiceId === voiceId);
 
-        // Determine if this voice is muted or soloed out
-        const hasSolo = voiceStates.some(v => v.synthSolo);
-        const isMuted = voiceState?.synthMuted || (hasSolo && !voiceState?.synthSolo);
+        // Recorded traces follow the VOX (vocal) mute/solo state only.
+        const hasVocalSolo = voiceStates.some(v => v.vocalSolo);
+        const isVocalMuted = (voiceState?.vocalMuted ?? false) || (hasVocalSolo && !(voiceState?.vocalSolo ?? false));
 
-        const voiceColor = isMuted
+        const voiceColor = isVocalMuted
           ? 'rgba(150, 150, 150, 0.4)'
           : (voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d');
 
@@ -414,7 +414,7 @@ export function Grid({
           arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
           color: voiceColor,
           lineWidth: 10,
-          opacity: isMuted ? 0.2 : 0.4,
+          opacity: isVocalMuted ? 0.2 : 0.4,
           isLive: false,
           effectiveTonicMidi,
           minSemitone,
@@ -451,20 +451,20 @@ export function Grid({
       const voice = arrangement.voices[voiceIndex];
       const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
-      // Determine if this voice is muted or soloed out
-      const hasSolo = voiceStates.some(v => v.synthSolo);
-      const isMuted = voiceState?.synthMuted || (hasSolo && !voiceState?.synthSolo);
+      // Contour lines follow the SYN (synth) mute/solo state only.
+      const hasSynthSolo = voiceStates.some(v => v.synthSolo);
+      const isSynthMuted = (voiceState?.synthMuted ?? false) || (hasSynthSolo && !(voiceState?.synthSolo ?? false));
 
       // Get voice color
       const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
-      const voiceColor = isMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
+      const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
       const glowColor = voiceColor.includes('rgba') ? voiceColor : voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
 
       // Draw contour with glow effect
       ctx.save();
 
       // Glow layer - only if not muted
-      if (display.glowIntensity > 0 && !isMuted) {
+      if (display.glowIntensity > 0 && !isSynthMuted) {
         ctx.shadowColor = glowColor;
         ctx.shadowBlur = 10 * display.glowIntensity;
         ctx.strokeStyle = voiceColor;
@@ -488,7 +488,7 @@ export function Grid({
         const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
         // Draw node glow - only if not muted
-        if (display.glowIntensity > 0 && !isMuted) {
+        if (display.glowIntensity > 0 && !isSynthMuted) {
           ctx.shadowColor = voiceColor;
           ctx.shadowBlur = 8 * display.glowIntensity;
         }
@@ -498,14 +498,14 @@ export function Grid({
         ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
         ctx.fillStyle = voiceColor; // Fully opaque fill
         ctx.fill();
-        ctx.strokeStyle = isMuted ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
+        ctx.strokeStyle = isSynthMuted ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
         ctx.shadowBlur = 0;
 
         // Always draw scale degree number inside node (white text for contrast)
-        ctx.fillStyle = isMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
+        ctx.fillStyle = isSynthMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
         ctx.font = 'bold 12px system-ui';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';

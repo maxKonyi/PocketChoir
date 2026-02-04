@@ -30,6 +30,9 @@ function App() {
   const transposition = useAppStore((state) => state.transposition);
   const autoTranspositionNotice = useAppStore((state) => state.autoTranspositionNotice);
 
+  const globalVolume = useAppStore((state) => state.globalVolume);
+  const globalReverb = useAppStore((state) => state.globalReverb);
+
   // Count-in visual state
   const [countInDisplay, setCountInDisplay] = useState<number | null>(null);
 
@@ -50,6 +53,34 @@ function App() {
     if (!AudioService.isReady()) {
       try {
         await AudioService.initialize();
+
+        // Ensure the playback engine has its nodes ready even before you press play.
+        // This also ensures panning defaults + mixer settings can apply immediately.
+        if (arrangement && !playbackEngine.getIsPlaying()) {
+          playbackEngine.initialize(arrangement, {
+            onPositionUpdate: (t16) => {
+              setPosition(t16);
+            },
+          });
+        }
+
+        // Apply the current mixer values immediately after audio starts.
+        // Without this, settings may not apply until you move a slider/toggle.
+        AudioService.setMasterVolume(globalVolume);
+        AudioService.setReverbLevel(globalReverb);
+
+        voiceStates.forEach(vs => {
+          playbackEngine.setVoiceVolume(vs.voiceId, vs.synthVolume, 'synth');
+          playbackEngine.setVoiceMuted(vs.voiceId, vs.synthMuted, 'synth');
+          playbackEngine.setVoiceSolo(vs.voiceId, vs.synthSolo, 'synth');
+          playbackEngine.setVoicePan(vs.voiceId, vs.synthPan, 'synth');
+
+          playbackEngine.setVoiceVolume(vs.voiceId, vs.vocalVolume, 'vocal');
+          playbackEngine.setVoiceMuted(vs.voiceId, vs.vocalMuted, 'vocal');
+          playbackEngine.setVoiceSolo(vs.voiceId, vs.vocalSolo, 'vocal');
+          playbackEngine.setVoicePan(vs.voiceId, vs.vocalPan, 'vocal');
+        });
+
         console.log('Audio initialized');
       } catch (error) {
         console.error('Failed to initialize audio:', error);
@@ -166,13 +197,26 @@ function App() {
       playbackEngine.setVoiceVolume(vs.voiceId, vs.synthVolume, 'synth');
       playbackEngine.setVoiceMuted(vs.voiceId, vs.synthMuted, 'synth');
       playbackEngine.setVoiceSolo(vs.voiceId, vs.synthSolo, 'synth');
+      playbackEngine.setVoicePan(vs.voiceId, vs.synthPan, 'synth');
 
       // Vocal sync
       playbackEngine.setVoiceVolume(vs.voiceId, vs.vocalVolume, 'vocal');
       playbackEngine.setVoiceMuted(vs.voiceId, vs.vocalMuted, 'vocal');
       playbackEngine.setVoiceSolo(vs.voiceId, vs.vocalSolo, 'vocal');
+      playbackEngine.setVoicePan(vs.voiceId, vs.vocalPan, 'vocal');
     });
   }, [voiceStates]);
+
+  // Sync the global mixer controls into the audio engine.
+  useEffect(() => {
+    if (!AudioService.isReady()) return;
+    AudioService.setMasterVolume(globalVolume);
+  }, [globalVolume]);
+
+  useEffect(() => {
+    if (!AudioService.isReady()) return;
+    AudioService.setReverbLevel(globalReverb);
+  }, [globalReverb]);
 
   /**
    * Keyboard controls (Space for play/pause/stop recording).

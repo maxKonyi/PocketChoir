@@ -56,13 +56,18 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
   const isSelectedForEdit = mode === 'create' && selectedVoiceId === voiceId;
 
   // Visual status for soloed out
-  // If ANY solo is active (in the entire app), and THIS specific control isn't soloed, it is "soloed out"
-  const anySoloActive = useAppStore((state) =>
-    state.voiceStates.some(v => v.synthSolo || v.vocalSolo)
+  // Soloing is independent for synth vs vocal.
+  // If ANY solo is active for that part, and THIS voice isn't soloed, it is "soloed out".
+  const anySynthSoloActive = useAppStore((state) =>
+    state.voiceStates.some(v => v.synthSolo)
   );
 
-  const synthSoloedOut = anySoloActive && !synthSolo;
-  const vocalSoloedOut = anySoloActive && !vocalSolo;
+  const anyVocalSoloActive = useAppStore((state) =>
+    state.voiceStates.some(v => v.vocalSolo)
+  );
+
+  const synthSoloedOut = anySynthSoloActive && !synthSolo;
+  const vocalSoloedOut = anyVocalSoloActive && !vocalSolo;
 
   return (
     <div className="flex flex-col gap-1 p-1.5 rounded-[1.25rem] bg-white/5 border border-white/5">

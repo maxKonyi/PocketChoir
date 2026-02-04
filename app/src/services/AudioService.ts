@@ -66,8 +66,10 @@ class AudioServiceClass {
       wet: 0.04
     }).start();
 
-    // Connect Chorus to master gain
-    this.globalChorus.connect(this.masterGain);
+    // Route the shared mix bus through a dry path + a reverb send.
+    // Dry is always full-strength (dryGain = 1.0). Wet level is controlled by reverbGain.
+    this.globalChorus.connect(this.dryGain);
+    this.globalChorus.connect(this.reverbNode);
 
     // Generate a simple synthetic reverb impulse response
     await this.createSyntheticReverb();
