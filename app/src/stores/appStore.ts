@@ -17,6 +17,7 @@ import type {
   VocalRange,
 } from '../types';
 import type { ThemeName } from '../utils/colors';
+import { getArrangementFrequencyRange, noteNameToFrequency, suggestTranspositionToFitRange } from '../utils/music';
 
 /* ------------------------------------------------------------
    State Types
@@ -69,6 +70,10 @@ interface AppState {
   arrangement: Arrangement | null;
   transposition: number;        // Semitones to transpose
 
+  // A short-lived UI message for auto-transposition events.
+  // (Shown after you close the mic modal or pick a new arrangement.)
+  autoTranspositionNotice: string | null;
+
   // Voice states (one per voice in arrangement)
   voiceStates: VoiceState[];
 
@@ -120,6 +125,11 @@ interface AppActions {
   // Arrangement
   setArrangement: (arrangement: Arrangement | null) => void;
   setTransposition: (semitones: number) => void;
+
+  // Auto-transpose helper
+  // Calculates a transposition based on the current arrangement + vocal range.
+  // If `announce` is true, it also sets a short-lived UI notice.
+  applyAutoTranspositionIfPossible: (announce: boolean) => void;
 
   // Create mode - node editing
   addNode: (voiceId: string, t16: number, deg: number, octave?: number) => void;
@@ -249,6 +259,7 @@ const initialDisplaySettings: DisplaySettings = {
 const initialState: AppState = {
   arrangement: null,
   transposition: 0,
+  autoTranspositionNotice: null,
   voiceStates: [],
   playback: initialPlaybackState,
   globalVolume: 0.8,
@@ -303,9 +314,51 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
         },
       }));
     }
+
+    // After picking a new arrangement, try to auto-transpose it to match the user's range.
+    // We announce here because selecting a new arrangement is one of the requested triggers.
+    get().applyAutoTranspositionIfPossible(true);
   },
 
   setTransposition: (semitones) => set({ transposition: semitones }),
+
+  applyAutoTranspositionIfPossible: (announce) => {
+    const arrangement = get().arrangement;
+    const vocalRange = get().vocalRange;
+
+    // Nothing to do if we don't have an arrangement loaded.
+    if (!arrangement) return;
+
+    const arrangementRange = getArrangementFrequencyRange(
+      arrangement.voices,
+      arrangement.tonic,
+      arrangement.scale
+    );
+
+    // Prefer the stored frequencies (they are kept in sync in setVocalRange).
+    const userRange = {
+      lowFrequency: vocalRange.lowFrequency,
+      highFrequency: vocalRange.highFrequency,
+    };
+
+    const suggested = suggestTranspositionToFitRange(arrangementRange, userRange);
+
+    set({ transposition: suggested });
+
+    if (!announce) return;
+
+    const msg = suggested === 0
+      ? 'Arrangement fits your vocal range — no transposition needed.'
+      : `Arrangement auto-transposed by ${suggested > 0 ? '+' : ''}${suggested} semitones to fit your range.`;
+
+    set({ autoTranspositionNotice: msg });
+    window.setTimeout(() => {
+      // Only clear if nothing newer has replaced it.
+      if (get().autoTranspositionNotice === msg) {
+        set({ autoTranspositionNotice: null });
+      }
+    }, 4500);
+  },
 
   // -- Create Mode - Node Editing --
   addNode: (voiceId, t16, deg, octave = 0) => set((state) => {
@@ -499,9 +552,22 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   })),
 
   // -- Vocal Range --
-  setVocalRange: (range) => set((state) => ({
-    vocalRange: { ...state.vocalRange, ...range },
-  })),
+  setVocalRange: (range) => set((state) => {
+    const nextRange: VocalRange = { ...state.vocalRange, ...range };
+
+    // Keep note-name and frequency fields in sync.
+    // This ensures transposition suggestions work even when you set notes via the mic modal.
+    if (range.lowNote) {
+      nextRange.lowFrequency = noteNameToFrequency(range.lowNote) ?? nextRange.lowFrequency;
+    }
+    if (range.highNote) {
+      nextRange.highFrequency = noteNameToFrequency(range.highNote) ?? nextRange.highFrequency;
+    }
+
+    return {
+      vocalRange: nextRange,
+    };
+  }),
 
   // -- Display --
   setDisplaySettings: (settings) => set((state) => ({

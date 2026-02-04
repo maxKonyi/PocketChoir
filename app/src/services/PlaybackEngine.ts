@@ -32,7 +32,7 @@ export type CountInCallback = (beatNumber: number, totalBeats: number) => void;
  * Engine configuration.
  */
 interface PlaybackConfig {
-  onPositionUpdate: (t16: number) => void;
+  onPositionUpdate?: (t16: number, ms: number) => void;
   onLoop?: () => void;
   onCountIn?: (beat: number, total: number) => void;
   onStart?: () => void;

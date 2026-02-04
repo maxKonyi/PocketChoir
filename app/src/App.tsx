@@ -27,6 +27,8 @@ function App() {
   const countIn = useAppStore((state) => state.countIn);
   const theme = useAppStore((state) => state.theme);
   const setPosition = useAppStore((state) => state.setPosition);
+  const transposition = useAppStore((state) => state.transposition);
+  const autoTranspositionNotice = useAppStore((state) => state.autoTranspositionNotice);
 
   // Count-in visual state
   const [countInDisplay, setCountInDisplay] = useState<number | null>(null);
@@ -128,6 +130,12 @@ function App() {
   useEffect(() => {
     playbackEngine.setLoopEnabled(playback.loopEnabled);
   }, [playback.loopEnabled]);
+
+  // Keep playback engine transposition in sync with the app store.
+  // This is what actually transposes the arrangement playback to match your vocal range.
+  useEffect(() => {
+    playbackEngine.setTransposition(transposition);
+  }, [transposition]);
 
   /**
    * Sync recorded audio with the playback engine.
@@ -238,6 +246,15 @@ function App() {
       <RangeSetupModal />
       <DisplaySettingsModal />
       <CreateArrangementModal />
+
+      {/* Auto-transposition message (shows after picking an arrangement or closing mic setup) */}
+      {autoTranspositionNotice && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+          <div className="px-4 py-2 rounded-lg bg-green-500/20 text-green-200 text-sm border border-green-500/30 shadow-lg backdrop-blur-sm">
+            {autoTranspositionNotice}
+          </div>
+        </div>
+      )}
 
       {/* Count-in overlay */}
       {countInDisplay !== null && (

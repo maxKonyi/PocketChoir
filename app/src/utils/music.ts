@@ -279,6 +279,69 @@ export function getArrangementFrequencyRange(
 }
 
 /**
+ * Suggest a transposition that tries to fit the ENTIRE arrangement range
+ * (lowest to highest note) inside the user's vocal range.
+ *
+ * This differs from `suggestTransposition()` which matches midpoints and can
+ * still leave the arrangement too high or too low at the edges.
+ *
+ * @param arrangementRange - Min/max frequencies of arrangement
+ * @param vocalRange - User's vocal range
+ * @returns Suggested transposition in semitones
+ */
+export function suggestTranspositionToFitRange(
+  arrangementRange: { minFreq: number; maxFreq: number },
+  vocalRange: { lowFrequency: number; highFrequency: number }
+): number {
+  const arrMinMidi = frequencyToMidi(arrangementRange.minFreq);
+  const arrMaxMidi = frequencyToMidi(arrangementRange.maxFreq);
+  const userMinMidi = frequencyToMidi(vocalRange.lowFrequency);
+  const userMaxMidi = frequencyToMidi(vocalRange.highFrequency);
+
+  // If the arrangement already fits, no transposition needed.
+  if (arrMinMidi >= userMinMidi && arrMaxMidi <= userMaxMidi) {
+    return 0;
+  }
+
+  // Compute the set of semitone shifts that would make BOTH edges fit.
+  // We want:
+  //   arrMinMidi + shift >= userMinMidi  -> shift >= userMinMidi - arrMinMidi
+  //   arrMaxMidi + shift <= userMaxMidi  -> shift <= userMaxMidi - arrMaxMidi
+  const minShift = Math.ceil(userMinMidi - arrMinMidi);
+  const maxShift = Math.floor(userMaxMidi - arrMaxMidi);
+
+  // If there is an overlap interval, pick the shift closest to 0.
+  if (minShift <= maxShift) {
+    if (0 < minShift) return minShift;
+    if (0 > maxShift) return maxShift;
+    return 0;
+  }
+
+  // If it can't fully fit, choose the shift that minimizes the worst edge violation.
+  // We'll check a reasonable window of shifts and pick the best.
+  let bestShift = 0;
+  let bestScore = Infinity;
+
+  for (let shift = -24; shift <= 24; shift++) {
+    const shiftedMin = arrMinMidi + shift;
+    const shiftedMax = arrMaxMidi + shift;
+
+    const lowViolation = Math.max(0, userMinMidi - shiftedMin);
+    const highViolation = Math.max(0, shiftedMax - userMaxMidi);
+
+    const score = Math.max(lowViolation, highViolation);
+
+    // Prefer smaller absolute transpositions when scores tie.
+    if (score < bestScore || (score === bestScore && Math.abs(shift) < Math.abs(bestShift))) {
+      bestScore = score;
+      bestShift = shift;
+    }
+  }
+
+  return bestShift;
+}
+
+/**
  * Suggest transposition to fit a vocal range.
  * @param arrangementRange - Min/max frequencies of arrangement
  * @param vocalRange - User's vocal range

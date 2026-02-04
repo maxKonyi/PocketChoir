@@ -227,11 +227,9 @@ export function VoiceSidebar() {
 
   return (
     // Container defines the "safe zone" for centering.
-    // Top is pinned to the chord bar (approx 8.5rem / 136px).
+    // Top is pinned below the TopBar (approx 5rem / 80px).
     // Bottom uses `bottom-32` to clear the transport bar area.
-    // `my-auto` on the child box will center it vertically if it fits,
-    // or pin it to the top if it overflows (standard flex behavior).
-    <div className="absolute left-6 top-[8.5rem] bottom-32 flex flex-col items-start pointer-events-none z-20 w-fit">
+    <div className="absolute left-6 top-20 bottom-32 flex flex-col items-start pointer-events-none z-20 w-fit">
       <div
         className="
           my-auto
@@ -241,6 +239,12 @@ export function VoiceSidebar() {
           shrink-0
         "
       >
+
+        {/* Header label */}
+        <div className="text-[10px] text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-1.5 justify-center opacity-60">
+          <Layers size={11} />
+          <span>Tracks</span>
+        </div>
 
         {/* Header controls: Global Toggles */}
         <div className="flex gap-2 px-1 pb-1">
@@ -279,12 +283,6 @@ export function VoiceSidebar() {
           >
             SYN
           </button>
-        </div>
-
-        {/* Header label */}
-        <div className="text-[10px] text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-1.5 justify-center opacity-60">
-          <Layers size={11} />
-          <span>Tracks</span>
         </div>
 
         {/* Voice controls */}
