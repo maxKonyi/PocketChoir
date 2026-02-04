@@ -220,18 +220,18 @@ export function VoiceSidebar() {
   }
 
   return (
-    // Container that defines the available vertical space for the sidebar
-    // Starts at top-32 (approx chord bar bottom) and extends to bottom-24 (above transport)
-    // "h-[calc(100vh-12rem)]" or similar could work, but using absolute top/bottom is safer for anchoring.
-    // "pointer-events-none" allows clicking through the empty space around the sidebar.
-    <div className="absolute left-6 top-[8.5rem] bottom-32 flex flex-col justify-center pointer-events-none z-20">
+    // Container defines the "safe zone" for centering.
+    // Top is pinned to the chord bar (approx 8.5rem / 136px).
+    // Bottom uses `bottom-32` to clear the transport bar area.
+    // `my-auto` on the child box will center it vertically if it fits,
+    // or pin it to the top if it overflows (standard flex behavior).
+    <div className="absolute left-6 top-[8.5rem] bottom-32 flex flex-col items-start pointer-events-none z-20 w-fit">
       <div
         className="
+          my-auto
           flex flex-col gap-2.5 p-3 pb-4 pointer-events-auto
           glass-pane glass-sidebar glass-noise rounded-[2.5rem]
           shadow-2xl border border-white/10
-          max-h-full
-          /* If content is too tall, let it shrink/scroll or just be visible */
           shrink-0
         "
       >
@@ -243,7 +243,7 @@ export function VoiceSidebar() {
         </div>
 
         {/* Voice controls */}
-        <div className="flex flex-col gap-1.5 overflow-y-auto no-scrollbar">
+        <div className="flex flex-col gap-1.5">
           {arrangement.voices.map((voice, index) => (
             <VoiceControl
               key={voice.id}
