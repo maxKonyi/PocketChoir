@@ -149,6 +149,7 @@ interface AppActions {
   setLoopEnabled: (enabled: boolean) => void;
   setLoopPoints: (start: number, end: number) => void;
   setTempoMultiplier: (multiplier: number) => void;
+  setMetronomeEnabled: (enabled: boolean) => void;
 
   // Microphone
   setMicrophoneState: (state: Partial<MicrophoneState>) => void;
@@ -196,6 +197,7 @@ const initialPlaybackState: PlaybackState = {
   loopStart: 0,
   loopEnd: 64,           // Default 4 bars in 4/4 = 64 sixteenths
   tempoMultiplier: 1.0,
+  metronomeEnabled: false,
 };
 
 const initialMicrophoneState: MicrophoneState = {
@@ -442,6 +444,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   // -- Playback --
   setPlaying: (playing) => set((state) => ({
     playback: { ...state.playback, isPlaying: playing },
+  })),
+
+  setMetronomeEnabled: (enabled: boolean) => set((state) => ({
+    playback: { ...state.playback, metronomeEnabled: enabled },
   })),
 
   setRecording: (recording) => set((state) => ({

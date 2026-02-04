@@ -6,13 +6,13 @@
    Styled to match the cosmic/dreamy aesthetic from mockups.
    ============================================================ */
 
-import { Mic, Volume2, VolumeX, Headphones, Trash2, Edit3 } from 'lucide-react';
+import { Mic, Volume2, VolumeX, Headphones, Trash2, Edit3, Music, Layers } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { useAppStore } from '../../stores/appStore';
 import { useRecording } from '../../hooks/useRecording';
 
 /* ------------------------------------------------------------
-   Voice Control Row Component - Pill-style button per voice
+   Voice Control Row Component - Grouped controls per voice
    ------------------------------------------------------------ */
 
 interface VoiceControlProps {
@@ -40,130 +40,167 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
   const armVoice = useAppStore((state) => state.armVoice);
   const setVoiceSynthMuted = useAppStore((state) => state.setVoiceSynthMuted);
   const setVoiceSynthSolo = useAppStore((state) => state.setVoiceSynthSolo);
+  const setVoiceVocalMuted = useAppStore((state) => state.setVoiceVocalMuted);
+  const setVoiceVocalSolo = useAppStore((state) => state.setVoiceVocalSolo);
   const clearRecording = useAppStore((state) => state.clearRecording);
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
 
   const isArmed = armedVoiceId === voiceId;
   const isRecording = isArmed && playback.isRecording;
-  const isMuted = voiceState?.synthMuted ?? false;
-  const isSolo = voiceState?.synthSolo ?? false;
+
+  const synthMuted = voiceState?.synthMuted ?? false;
+  const synthSolo = voiceState?.synthSolo ?? false;
+  const vocalMuted = voiceState?.vocalMuted ?? false;
+  const vocalSolo = voiceState?.vocalSolo ?? false;
+
   const isSelectedForEdit = mode === 'create' && selectedVoiceId === voiceId;
 
-  // Visual state for solo/mute
-  const hasSolo = useAppStore((state) => state.voiceStates.some(v => v.synthSolo));
-  const isSoloedOut = hasSolo && !isSolo;
-  const visuallyDisabled = isMuted || isSoloedOut;
+  // Visual status for soloed out
+  // If ANY solo is active (in the entire app), and THIS specific control isn't soloed, it is "soloed out"
+  const anySoloActive = useAppStore((state) =>
+    state.voiceStates.some(v => v.synthSolo || v.vocalSolo)
+  );
+
+  const synthSoloedOut = anySoloActive && !synthSolo;
+  const vocalSoloedOut = anySoloActive && !vocalSolo;
 
   return (
-    <div className="flex flex-col gap-1">
-      {/* Main voice button - pill shaped, colored */}
-      <button
-        onClick={async () => {
-          if (mode === 'create') {
-            setSelectedVoiceId(voiceId);
-          } else {
-            // Immediate record: toggle if already recording this one, otherwise start
-            if (isRecording) {
-              stopRecording();
+    <div className="flex flex-col gap-1 p-1.5 rounded-[1.25rem] bg-white/5 border border-white/5">
+      {/* Header - Voice Name & RECORD/SELECT Button */}
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={async () => {
+            if (mode === 'create') {
+              setSelectedVoiceId(voiceId);
             } else {
-              armVoice(voiceId);
-              // startRecording now accepts a voiceId parameter to avoid race conditions
-              await startRecording(voiceId);
+              if (isRecording) {
+                stopRecording();
+              } else {
+                armVoice(voiceId);
+                await startRecording(voiceId);
+              }
             }
-          }
-        }}
-        className={`
-          flex items-center gap-2 px-3 py-2
-          rounded-full
-          transition-all duration-200
-          ${isRecording
-            ? 'ring-2 ring-red-500 shadow-[0_0_20px_rgba(239,68,68,0.5)] scale-105'
-            : (isArmed || isSelectedForEdit)
-              ? 'ring-2 ring-white/50 shadow-lg'
-              : 'hover:brightness-110 active:scale-95'
-          }
-        `}
-        style={{
-          backgroundColor: visuallyDisabled ? '#2a2a2a' : voiceColor,
-          opacity: visuallyDisabled ? 0.6 : 1,
-          boxShadow: isRecording
-            ? `0 0 25px rgba(239, 68, 68, 0.4)`
-            : (isArmed || isSelectedForEdit)
-              ? `0 0 20px ${voiceColor}80`
-              : `0 2px 8px ${voiceColor}40`,
-        }}
-        title={mode === 'create'
-          ? (isSelectedForEdit ? 'Selected for editing' : 'Click to select for editing')
-          : (isRecording ? 'Stop Recording' : 'Start Recording')
-        }
-      >
-        {/* Icon - Edit in create mode, Mic in play mode */}
-        {mode === 'create' ? (
-          <Edit3 size={14} className="text-white/90" />
-        ) : (
-          <Mic size={14} className={isRecording ? 'text-red-200 animate-pulse' : 'text-white/90'} />
-        )}
-
-        {/* Status indicator dot */}
-        <span
+          }}
           className={`
-            w-2.5 h-2.5 rounded-full 
-            ${isRecording ? 'bg-red-500 animate-pulse' : ''}
-            ${!isRecording && isArmed ? 'bg-white animate-pulse' : ''}
-            ${isSelectedForEdit ? 'bg-green-400 animate-pulse' : ''}
-            ${!isArmed && !isSelectedForEdit ? 'bg-white/30' : ''}
+            flex-1 flex items-center gap-1.5 px-2 py-1
+            rounded-full transition-all duration-200
+            ${isRecording
+              ? 'ring-2 ring-white shadow-[0_0_15px_rgba(239,68,68,0.5)] scale-[1.02]'
+              : (isArmed || isSelectedForEdit)
+                ? 'ring-1 ring-white/50 brightness-110'
+                : 'hover:brightness-110'
+            }
           `}
-        />
-
-        {/* Voice label */}
-        <span className="text-white font-medium text-xs">
-          {voiceName.toUpperCase()}
-        </span>
-      </button>
-
-      {/* Secondary controls row */}
-      <div className="flex items-center justify-center gap-1 px-1">
-        {/* Mute button */}
-        <Button
-          variant={isMuted ? 'danger' : 'ghost'}
-          size="icon"
-          onClick={() => setVoiceSynthMuted(voiceId, !isMuted)}
-          title={isMuted ? 'Unmute' : 'Mute'}
-          className="h-6 w-6 rounded-full"
+          style={{
+            backgroundColor: isRecording ? '#ef4444' : voiceColor,
+            opacity: vocalMuted && synthMuted ? 0.5 : 1
+          }}
+          title={mode === 'create' ? 'Select for editing' : 'Record'}
         >
-          {isMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}
-        </Button>
+          {mode === 'create' ? (
+            <Edit3 size={11} className="text-white" />
+          ) : (
+            <Mic size={11} className={isRecording ? 'text-white animate-pulse' : 'text-white'} />
+          )}
 
-        {/* Solo button */}
-        <Button
-          variant={isSolo ? 'primary' : 'ghost'}
-          size="icon"
-          onClick={() => setVoiceSynthSolo(voiceId, !isSolo)}
-          title={isSolo ? 'Unsolo' : 'Solo'}
-          className="h-6 w-6 rounded-full"
-        >
-          <Headphones size={12} />
-        </Button>
+          <span className="text-[9px] font-bold uppercase tracking-wider truncate text-white">
+            {voiceName}
+          </span>
 
-        {/* Delete recording button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => clearRecording(voiceId)}
-          disabled={!hasRecording}
-          title="Delete recording"
-          className="h-6 w-6 rounded-full hover:text-red-400"
-        >
-          <Trash2 size={12} />
-        </Button>
-
-        {/* Recording exists indicator */}
-        {hasRecording && (
+          {/* Recording indicator dot */}
           <div
-            className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]"
-            title="Has recording"
+            className={`
+              ml-auto w-1.5 h-1.5 rounded-full transition-all duration-300
+              ${hasRecording ? 'bg-green-400 shadow-[0_0_5px_rgba(74,222,128,1)]' : 'bg-white/20'}
+            `}
           />
-        )}
+        </button>
+
+        {/* Delete recording button - always visible but gated */}
+        <button
+          onClick={() => hasRecording && clearRecording(voiceId)}
+          disabled={!hasRecording}
+          className={`
+            p-1 transition-colors
+            ${hasRecording ? 'text-white/40 hover:text-red-400 cursor-pointer' : 'text-white/10 cursor-not-allowed'}
+          `}
+          title={hasRecording ? "Clear recording" : ""}
+        >
+          <Trash2 size={11} />
+        </button>
+      </div>
+
+      {/* Control Rows - spacing controlled by 'gap' below */}
+      <div className="flex flex-col gap-0 px-0.5 ml-0.5">
+
+        {/* Vocal Controls Row */}
+        <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center gap-1">
+            <div
+              className={`p-0.5 rounded-sm ${vocalMuted || vocalSoloedOut ? 'text-white/20' : 'text-white/80'}`}
+              title="Vocal Part"
+            >
+              <Mic size={11} />
+            </div>
+            <span className="text-[10px] uppercase tracking-tighter text-white/50 font-bold leading-none">Vox</span>
+          </div>
+
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant={vocalSolo ? 'primary' : 'ghost'}
+              size="icon"
+              onClick={() => setVoiceVocalSolo(voiceId, !vocalSolo)}
+              className="h-4.5 w-4.5 rounded-sm"
+              title="Solo Vocal"
+            >
+              <Headphones size={11} />
+            </Button>
+            <Button
+              variant={vocalMuted ? 'danger' : 'ghost'}
+              size="icon"
+              onClick={() => setVoiceVocalMuted(voiceId, !vocalMuted)}
+              className="h-4.5 w-4.5 rounded-sm"
+              title="Mute Vocal"
+            >
+              {vocalMuted ? <VolumeX size={11} /> : <Volume2 size={11} />}
+            </Button>
+          </div>
+        </div>
+
+        {/* Synth Controls Row */}
+        <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center gap-1">
+            <div
+              className={`p-0.5 rounded-sm ${synthMuted || synthSoloedOut ? 'text-white/20' : 'text-white/80'}`}
+              title="Synth Part"
+            >
+              <Music size={11} />
+            </div>
+            <span className="text-[10px] uppercase tracking-tighter text-white/50 font-bold leading-none">Syn</span>
+          </div>
+
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant={synthSolo ? 'primary' : 'ghost'}
+              size="icon"
+              onClick={() => setVoiceSynthSolo(voiceId, !synthSolo)}
+              className="h-4.5 w-4.5 rounded-sm"
+              title="Solo Synth"
+            >
+              <Headphones size={11} />
+            </Button>
+            <Button
+              variant={synthMuted ? 'danger' : 'ghost'}
+              size="icon"
+              onClick={() => setVoiceSynthMuted(voiceId, !synthMuted)}
+              className="h-4.5 w-4.5 rounded-sm"
+              title="Mute Synth"
+            >
+              {synthMuted ? <VolumeX size={11} /> : <Volume2 size={11} />}
+            </Button>
+          </div>
+        </div>
+
       </div>
     </div>
   );
@@ -183,47 +220,57 @@ export function VoiceSidebar() {
   }
 
   return (
-    <div
-      className="
-        absolute left-6 top-1/2 -translate-y-1/2 z-20
-        flex flex-col gap-4 p-4
-        glass-pane glass-sidebar glass-noise rounded-[2.5rem]
-        shadow-2xl border border-white/10
-      "
-    >
-      {/* Header label */}
-      <div className="text-xs text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-2 justify-center">
-        <Mic size={12} />
-        <span>Vox</span>
-      </div>
-
-      {/* Voice controls */}
-      <div className="flex flex-col gap-2">
-        {arrangement.voices.map((voice, index) => (
-          <VoiceControl
-            key={voice.id}
-            voiceId={voice.id}
-            voiceName={voice.name}
-            voiceColor={voice.color}
-            voiceIndex={index}
-          />
-        ))}
-      </div>
-
-      {/* Clear all button */}
-      <button
-        onClick={clearAllRecordings}
+    // Container that defines the available vertical space for the sidebar
+    // Starts at top-32 (approx chord bar bottom) and extends to bottom-24 (above transport)
+    // "h-[calc(100vh-12rem)]" or similar could work, but using absolute top/bottom is safer for anchoring.
+    // "pointer-events-none" allows clicking through the empty space around the sidebar.
+    <div className="absolute left-6 top-[8.5rem] bottom-32 flex flex-col justify-center pointer-events-none z-20">
+      <div
         className="
-          px-4 py-2 mt-2
-          text-[10px] font-bold uppercase tracking-widest
-          text-white/40 hover:text-white/80
+          flex flex-col gap-2.5 p-3 pb-4 pointer-events-auto
+          glass-pane glass-sidebar glass-noise rounded-[2.5rem]
+          shadow-2xl border border-white/10
+          max-h-full
+          /* If content is too tall, let it shrink/scroll or just be visible */
+          shrink-0
+        "
+      >
+
+        {/* Header label */}
+        <div className="text-[10px] text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-1.5 justify-center opacity-60">
+          <Layers size={11} />
+          <span>Tracks</span>
+        </div>
+
+        {/* Voice controls */}
+        <div className="flex flex-col gap-1.5 overflow-y-auto no-scrollbar">
+          {arrangement.voices.map((voice, index) => (
+            <VoiceControl
+              key={voice.id}
+              voiceId={voice.id}
+              voiceName={voice.name}
+              voiceColor={voice.color}
+              voiceIndex={index}
+            />
+          ))}
+        </div>
+
+        {/* Clear all button */}
+        <button
+          onClick={clearAllRecordings}
+          className="
+          px-3 py-1.5 mt-2 mb-1
+          text-[9px] font-bold uppercase tracking-widest
+          text-white/30 hover:text-white/60
           bg-white/5 hover:bg-white/10
           rounded-full
           transition-all
+          shrink-0
         "
-      >
-        Clear All
-      </button>
+        >
+          Clear All
+        </button>
+      </div>
     </div>
   );
 }

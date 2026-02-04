@@ -254,9 +254,59 @@ export const movingMelody: Arrangement = {
 };
 
 /**
+ * Six-voice stress test.
+ * Used to verify UI and audio engine with maximum track count.
+ */
+export const sixPartStressTest: Arrangement = {
+  id: 'arr_005',
+  title: 'Six-Part Stress Test',
+  description: 'Full 6-voice harmony for testing performance and UI',
+  tempo: 90,
+  timeSig: { numerator: 4, denominator: 4 },
+  bars: 4,
+  tonic: 'C',
+  scale: 'major',
+  difficulty: 3,
+  tags: ['test', 'stress'],
+  voices: [
+    {
+      id: 'v1', name: 'Soprano 1', color: '#ff6b9d',
+      nodes: [{ t16: 0, deg: 1, octave: 1 }, { t16: 16, deg: 2, octave: 1 }, { t16: 32, deg: 3, octave: 1 }, { t16: 48, deg: 1, octave: 2 }, { t16: 64, deg: 1, term: true }]
+    },
+    {
+      id: 'v2', name: 'Soprano 2', color: '#4ecdc4',
+      nodes: [{ t16: 0, deg: 5 }, { t16: 16, deg: 6 }, { t16: 32, deg: 5 }, { t16: 48, deg: 7 }, { t16: 64, deg: 5, term: true }]
+    },
+    {
+      id: 'v3', name: 'Alto 1', color: '#ffe66d',
+      nodes: [{ t16: 0, deg: 3 }, { t16: 16, deg: 4 }, { t16: 32, deg: 3 }, { t16: 48, deg: 5 }, { t16: 64, deg: 3, term: true }]
+    },
+    {
+      id: 'v4', name: 'Alto 2', color: '#ff8c42',
+      nodes: [{ t16: 0, deg: 1 }, { t16: 16, deg: 2 }, { t16: 32, deg: 1 }, { t16: 48, deg: 3 }, { t16: 64, deg: 1, term: true }]
+    },
+    {
+      id: 'v5', name: 'Tenor', color: '#a78bfa',
+      nodes: [{ t16: 0, deg: 5, octave: -1 }, { t16: 16, deg: 4, octave: -1 }, { t16: 32, deg: 5, octave: -1 }, { t16: 48, deg: 1 }, { t16: 64, deg: 5, octave: -1, term: true }]
+    },
+    {
+      id: 'v6', name: 'Bass', color: '#34d399',
+      nodes: [{ t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 5, octave: -2 }, { t16: 32, deg: 1, octave: -1 }, { t16: 48, deg: 4, octave: -1 }, { t16: 64, deg: 1, octave: -1, term: true }]
+    },
+  ],
+  chords: [
+    { t16: 0, duration16: 16, name: 'C' },
+    { t16: 16, duration16: 16, name: 'F' },
+    { t16: 32, duration16: 16, name: 'C' },
+    { t16: 48, duration16: 16, name: 'G' },
+  ],
+};
+
+/**
  * All sample arrangements exported as an array.
  */
 export const sampleArrangements: Arrangement[] = [
+  sixPartStressTest,
   twoPartWarmup,
   threePartChords,
   fourPartJazz,

@@ -32,11 +32,11 @@ export type CountInCallback = (beatNumber: number, totalBeats: number) => void;
  * Engine configuration.
  */
 interface PlaybackConfig {
-  onPositionUpdate?: PositionCallback;
-  onLoop?: LoopCallback;
-  onCountIn?: CountInCallback;
-  onPlaybackEnd?: () => void;
+  onPositionUpdate: (t16: number) => void;
+  onLoop?: () => void;
+  onCountIn?: (beat: number, total: number) => void;
   onStart?: () => void;
+  metronomeEnabled?: boolean;
 }
 
 /**
@@ -52,7 +52,10 @@ export class PlaybackEngine {
   // Recorded audio
   private audioBuffers: Map<string, AudioBuffer> = new Map();
   private activeAudioSources: Map<string, AudioBufferSourceNode> = new Map();
-  private vocalGainNodes: Map<string, GainNode> = new Map();
+  private lastBeatClicked: number = -1;
+
+  // Track loop animation frame
+  private animationFrameId: number | null = null;
 
   // Playback state
   private isPlaying: boolean = false;
@@ -60,10 +63,14 @@ export class PlaybackEngine {
   private startPosition: number = 0;    // Position in ms when playback started
   private currentPositionMs: number = 0;
 
-  // Mute/solo state per voice
-  private voiceVolumes: Map<string, number> = new Map();
-  private mutedVoices: Set<string> = new Set();
-  private soloedVoices: Set<string> = new Set();
+  // Mute/solo state per voice (separate for synth and vocal)
+  private synthVolumes: Map<string, number> = new Map();
+  private synthMuted: Set<string> = new Set();
+  private synthSolo: Set<string> = new Set();
+
+  private vocalVolumes: Map<string, number> = new Map();
+  private vocalMuted: Set<string> = new Set();
+  private vocalSolo: Set<string> = new Set();
 
   // Loop settings
   private loopEnabled: boolean = true;
@@ -79,10 +86,12 @@ export class PlaybackEngine {
   private transposition: number = 0;
 
   // Animation frame for position updates
-  private animationFrameId: number | null = null;
+  // (animationFrameId declared above)
 
   // Callbacks
-  private config: PlaybackConfig = {};
+  private config: PlaybackConfig = {
+    onPositionUpdate: () => { }, // Default no-op
+  };
 
   // Count-in
   private isCountingIn: boolean = false;
@@ -90,6 +99,9 @@ export class PlaybackEngine {
   // Recording trigger
   private recordingVoiceId: string | null = null;
   private onRecordingComplete: ((voiceId: string, blob: Blob) => void) | null = null;
+
+  // Vocal Gain Nodes
+  private vocalGainNodes: Map<string, GainNode> = new Map();
 
   /**
    * Initialize the engine with an arrangement.
@@ -123,7 +135,8 @@ export class PlaybackEngine {
       this.vocalGainNodes.set(voice.id, gain);
 
       // Set initial volumes
-      this.setVoiceVolume(voice.id, 0.5);
+      this.setVoiceVolume(voice.id, 0.5, 'synth');
+      this.setVoiceVolume(voice.id, 0.8, 'vocal');
     });
 
     console.log(`PlaybackEngine initialized with ${arrangement.voices.length} voices`);
@@ -205,11 +218,12 @@ export class PlaybackEngine {
   /**
    * Set muted state for a voice.
    */
-  setVoiceMuted(voiceId: string, muted: boolean): void {
+  setVoiceMuted(voiceId: string, muted: boolean, part: 'synth' | 'vocal' = 'synth'): void {
+    const set = part === 'synth' ? this.synthMuted : this.vocalMuted;
     if (muted) {
-      this.mutedVoices.add(voiceId);
+      set.add(voiceId);
     } else {
-      this.mutedVoices.delete(voiceId);
+      set.delete(voiceId);
     }
     this.updateAllVoiceVolumes();
   }
@@ -217,40 +231,63 @@ export class PlaybackEngine {
   /**
    * Set solo state for a voice.
    */
-  setVoiceSolo(voiceId: string, solo: boolean): void {
+  setVoiceSolo(voiceId: string, solo: boolean, part: 'synth' | 'vocal' = 'synth'): void {
+    const set = part === 'synth' ? this.synthSolo : this.vocalSolo;
     if (solo) {
-      this.soloedVoices.add(voiceId);
+      set.add(voiceId);
     } else {
-      this.soloedVoices.delete(voiceId);
+      set.delete(voiceId);
     }
     this.updateAllVoiceVolumes();
   }
 
   /**
-   * Set volume for a voice's synth and recording.
+   * Set volume for a voice's synth or recording.
    */
-  setVoiceVolume(voiceId: string, volume: number): void {
-    this.voiceVolumes.set(voiceId, volume);
-    this.updateVoiceVolume(voiceId);
+  setVoiceVolume(voiceId: string, volume: number, part: 'synth' | 'vocal' = 'synth'): void {
+    const map = part === 'synth' ? this.synthVolumes : this.vocalVolumes;
+    map.set(voiceId, volume);
+    this.updateVoiceVolume(voiceId, part);
   }
 
   /**
    * Internal helper to sync gain nodes with current mute/solo/volume state.
    */
-  private updateVoiceVolume(voiceId: string): void {
-    const baseVolume = this.voiceVolumes.get(voiceId) ?? 0.5;
-    const isAudible = this.isVoiceAudible(voiceId);
-    const targetVolume = isAudible ? baseVolume : 0;
+  private updateVoiceVolume(voiceId: string, part?: 'synth' | 'vocal'): void {
+    // If part is specified, only update that part. Otherwise update both.
 
-    const synth = this.synthVoices.get(voiceId);
-    if (synth) {
-      synth.setVolume(targetVolume);
+    if (!part || part === 'synth') {
+      const baseVolume = this.synthVolumes.get(voiceId) ?? 0.5;
+      const isAudible = this.isSynthAudible(voiceId);
+      const targetVolume = isAudible ? baseVolume : 0;
+
+      const synth = this.synthVoices.get(voiceId);
+      if (synth) {
+        synth.setVolume(targetVolume);
+      }
     }
 
-    const vocalGain = this.vocalGainNodes.get(voiceId);
-    if (vocalGain) {
-      const ctx = AudioService.getContext();
-      vocalGain.gain.setTargetAtTime(targetVolume, ctx.currentTime, 0.05);
+    if (!part || part === 'vocal') {
+      const baseVolume = this.vocalVolumes.get(voiceId) ?? 0.8;
+      const isAudible = this.isVocalAudible(voiceId);
+      const targetVolume = isAudible ? baseVolume : 0;
+
+      const vocalGain = this.vocalGainNodes.get(voiceId);
+      if (vocalGain) {
+        const ctx = AudioService.getContext();
+        vocalGain.gain.setTargetAtTime(targetVolume, ctx.currentTime, 0.05);
+      }
+
+      // If vocal audibility changed during playback, we might need to start/stop the source
+      // (Simplified: startAudioSource handles start, stopAudioSource handles stop)
+      if (this.isPlaying) {
+        const source = this.activeAudioSources.get(voiceId);
+        if (isAudible && !source) {
+          this.startAudioSource(voiceId, this.getCurrentPositionMs());
+        } else if (!isAudible && source) {
+          this.stopAudioSource(voiceId);
+        }
+      }
     }
   }
 
@@ -278,15 +315,31 @@ export class PlaybackEngine {
   }
 
   /**
-   * Check if a voice should be audible (considering mute/solo).
+   * Check if a synth should be audible (considering synth mute/solo).
    */
-  private isVoiceAudible(voiceId: string): boolean {
-    // If any voice is soloed, only soloed voices play
-    if (this.soloedVoices.size > 0) {
-      return this.soloedVoices.has(voiceId);
+  private isSynthAudible(voiceId: string): boolean {
+    const isAnySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
+
+    if (isAnySoloActive) {
+      // If ANY solo is active (vocal or synth), only play if THIS synth is soloed
+      return this.synthSolo.has(voiceId);
     }
-    // Otherwise, check if muted
-    return !this.mutedVoices.has(voiceId);
+    // No solos active, check mute
+    return !this.synthMuted.has(voiceId);
+  }
+
+  /**
+   * Check if a recording should be audible (considering vocal mute/solo).
+   */
+  private isVocalAudible(voiceId: string): boolean {
+    const isAnySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
+
+    if (isAnySoloActive) {
+      // If ANY solo is active (vocal or synth), only play if THIS vocal is soloed
+      return this.vocalSolo.has(voiceId);
+    }
+    // No solos active, check mute
+    return !this.vocalMuted.has(voiceId);
   }
 
   /**
@@ -467,7 +520,7 @@ export class PlaybackEngine {
    */
   private startAudioSource(voiceId: string, fromMs: number): void {
     const buffer = this.audioBuffers.get(voiceId);
-    if (!buffer || !this.isVoiceAudible(voiceId)) return;
+    if (!buffer || !this.isVocalAudible(voiceId)) return;
 
     const ctx = AudioService.getContext();
     const currentTime = ctx.currentTime;
@@ -558,6 +611,21 @@ export class PlaybackEngine {
       const currentMs = this.getCurrentPositionMs();
       const currentT16 = this.getCurrentPositionT16();
 
+      // Metronome click logic
+      if (this.config.metronomeEnabled) {
+        const beatDuration = 60000 / this.getEffectiveTempo();
+        const beats = currentMs / beatDuration;
+        const currentBeat = Math.floor(beats);
+
+        if (this.lastBeatClicked !== currentBeat) {
+          // Play click sound on the beat
+          this.playClickSound(AudioService.getContext().currentTime);
+          this.lastBeatClicked = currentBeat;
+        }
+      } else {
+        this.lastBeatClicked = -1; // Reset when disabled
+      }
+
       // Check for loop
       const loopEndMs = t16ToMs(this.loopEndT16, this.getEffectiveTempo(), this.timeSig);
       if (this.loopEnabled && currentMs >= loopEndMs) {
@@ -604,7 +672,8 @@ export class PlaybackEngine {
     if (!this.arrangement) return;
 
     for (const voice of this.arrangement.voices) {
-      if (!this.isVoiceAudible(voice.id)) continue;
+      const synthAudible = this.isSynthAudible(voice.id);
+      if (!synthAudible) continue;
 
       const synth = this.synthVoices.get(voice.id);
       if (!synth) continue;
@@ -650,7 +719,7 @@ export class PlaybackEngine {
       const synth = this.synthVoices.get(voice.id);
       if (!synth) continue;
 
-      const audible = this.isVoiceAudible(voice.id);
+      const audible = this.isSynthAudible(voice.id);
 
       // Find which node we should be playing
       let activeNode: Node | null = null;

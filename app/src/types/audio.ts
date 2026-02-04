@@ -38,6 +38,7 @@ export interface PlaybackState {
   loopStart: number;        // Loop start position in 16th-note steps
   loopEnd: number;          // Loop end position in 16th-note steps
   tempoMultiplier: number;  // Playback speed multiplier (0.5, 0.75, 1.0)
+  metronomeEnabled: boolean; // Whether the metronome click is active during playback
 }
 
 /**

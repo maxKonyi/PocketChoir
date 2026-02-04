@@ -17,10 +17,12 @@ import { AudioService } from './services/AudioService';
 import { playbackEngine } from './services/PlaybackEngine';
 import { useRecording } from './hooks/useRecording';
 import { applyTheme } from './utils/colors';
+import { sixPartStressTest } from './data/arrangements';
 
 function App() {
   // Get state and actions from store
   const arrangement = useAppStore((state) => state.arrangement);
+  const setArrangement = useAppStore((state) => state.setArrangement);
   const playback = useAppStore((state) => state.playback);
   const countIn = useAppStore((state) => state.countIn);
   const theme = useAppStore((state) => state.theme);
@@ -28,6 +30,15 @@ function App() {
 
   // Count-in visual state
   const [countInDisplay, setCountInDisplay] = useState<number | null>(null);
+
+  /**
+   * Load default arrangement on startup.
+   */
+  useEffect(() => {
+    if (!arrangement) {
+      setArrangement(sixPartStressTest);
+    }
+  }, [setArrangement, arrangement]);
 
   /**
    * Initialize audio on first user interaction.
@@ -143,9 +154,15 @@ function App() {
   const voiceStates = useAppStore((state) => state.voiceStates);
   useEffect(() => {
     voiceStates.forEach(vs => {
-      playbackEngine.setVoiceVolume(vs.voiceId, vs.synthVolume);
-      playbackEngine.setVoiceMuted(vs.voiceId, vs.synthMuted);
-      playbackEngine.setVoiceSolo(vs.voiceId, vs.synthSolo);
+      // Synth sync
+      playbackEngine.setVoiceVolume(vs.voiceId, vs.synthVolume, 'synth');
+      playbackEngine.setVoiceMuted(vs.voiceId, vs.synthMuted, 'synth');
+      playbackEngine.setVoiceSolo(vs.voiceId, vs.synthSolo, 'synth');
+
+      // Vocal sync
+      playbackEngine.setVoiceVolume(vs.voiceId, vs.vocalVolume, 'vocal');
+      playbackEngine.setVoiceMuted(vs.voiceId, vs.vocalMuted, 'vocal');
+      playbackEngine.setVoiceSolo(vs.voiceId, vs.vocalSolo, 'vocal');
     });
   }, [voiceStates]);
 

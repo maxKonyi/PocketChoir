@@ -8,6 +8,7 @@
 import { Play, Pause, Repeat, SkipBack, ZoomIn, ZoomOut } from 'lucide-react';
 
 import { useAppStore } from '../../stores/appStore';
+import { playbackEngine } from '../../services/PlaybackEngine';
 
 /* ------------------------------------------------------------
    Helper: Format position as Bar:Beat
@@ -28,20 +29,24 @@ function formatPosition(t16: number, timeSig: { numerator: number; denominator: 
    Component
    ------------------------------------------------------------ */
 
+/* ------------------------------------------------------------
+   Component
+   ------------------------------------------------------------ */
+
 export function TransportBar() {
   // Get state from store
   const playback = useAppStore((state) => state.playback);
   const arrangement = useAppStore((state) => state.arrangement);
   const display = useAppStore((state) => state.display);
 
-  // Get actions from store
+  // actions
   const setPlaying = useAppStore((state) => state.setPlaying);
   const setLoopEnabled = useAppStore((state) => state.setLoopEnabled);
+  const setMetronomeEnabled = useAppStore((state) => state.setMetronomeEnabled);
   const setTempoMultiplier = useAppStore((state) => state.setTempoMultiplier);
   const setZoomLevel = useAppStore((state) => state.setZoomLevel);
-  const setPosition = useAppStore((state) => state.setPosition);
-
-
+  // setPosition is unused here because we use playbackEngine.seek directly for interactions that need immediate engine response
+  // const setPosition = useAppStore((state) => state.setPosition);
 
   // Speed options
   const speedOptions = [0.5, 0.75, 1.0];
@@ -57,38 +62,88 @@ export function TransportBar() {
    * Reset to beginning.
    */
   const handleRestart = () => {
-    setPosition(0);
+    // const wasPlaying = playback.isPlaying; // Unused, seek maintains state
+    playbackEngine.seek(0);
   };
+
+  // Symmetrical Widths:
+  // Center (Play) takes 80px
+  // Side sections split remaining (800 - 80 = 720 / 2 = 360px each)
 
   return (
     <div className="
       absolute bottom-12 left-1/2 -translate-x-1/2
-      flex items-center justify-between
-      w-[800px] h-20 px-4
+      flex items-center
+      w-[800px] h-20
       glass-pane glass-med rounded-full
       shadow-[0_20px_50px_rgba(0,0,0,0.4)] z-40
       border border-white/5
     ">
 
-      {/* Left Section: Position & Basic Controls */}
-      <div className="flex-1 flex items-center gap-4 pl-6">
-        <div className="text-2xl font-mono font-bold text-[var(--text-primary)] tabular-nums min-w-[70px]">
+      {/* LEFT SECTION: Position, Metronome, Loop */}
+      <div className="flex-1 flex items-center justify-start pl-6 gap-4">
+
+        {/* Position Display */}
+        <div className="text-2xl font-mono font-bold text-[var(--text-primary)] tabular-nums w-[80px] text-center">
           {arrangement ? formatPosition(playback.position, arrangement.timeSig) : '--:--'}
         </div>
 
-        <div className="w-px h-6 bg-white/10 mx-2" />
+        <div className="w-px h-6 bg-white/10" />
 
-        <button
-          onClick={handleRestart}
-          disabled={!arrangement}
-          className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 text-white/70 transition-all disabled:opacity-20"
-        >
-          <SkipBack size={20} />
-        </button>
+        {/* Playback Configuration Group */}
+        <div className="flex items-center gap-1">
+          {/* Restart */}
+          <button
+            onClick={handleRestart}
+            disabled={!arrangement}
+            className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 text-white/70 transition-all disabled:opacity-20"
+            title="Restart"
+          >
+            <SkipBack size={20} />
+          </button>
+
+          {/* Loop */}
+          <button
+            onClick={() => setLoopEnabled(!playback.loopEnabled)}
+            disabled={!arrangement}
+            className={`
+                w-10 h-10 rounded-full flex items-center justify-center transition-all
+                ${playback.loopEnabled
+                ? 'bg-[var(--accent-secondary)] text-white shadow-lg shadow-[var(--accent-secondary)]/30'
+                : 'text-white/40 hover:bg-white/10 hover:text-white'
+              }
+                disabled:opacity-20
+              `}
+            title="Toggle Loop"
+          >
+            <Repeat size={20} />
+          </button>
+
+          {/* Metronome */}
+          <button
+            onClick={() => setMetronomeEnabled(!playback.metronomeEnabled)}
+            className={`
+                 w-10 h-10 rounded-full flex items-center justify-center transition-all relative
+                 ${playback.metronomeEnabled
+                ? 'bg-blue-500/80 text-white shadow-lg shadow-blue-500/30'
+                : 'text-white/40 hover:bg-white/10 hover:text-white'
+              }
+               `}
+            title="Metronome"
+          >
+            {/* Simple dot-based metronome icon representation or text */}
+            <div className="flex gap-0.5 items-end h-3">
+              <div className={`w-0.5 bg-current rounded-full ${playback.metronomeEnabled ? 'h-3 animate-pulse' : 'h-1.5'}`} />
+              <div className="w-0.5 h-2 bg-current rounded-full opacity-60" />
+              <div className="w-0.5 h-1.5 bg-current rounded-full opacity-40" />
+            </div>
+          </button>
+        </div>
+
       </div>
 
-      {/* Center Section: Main Action */}
-      <div className="flex-none relative w-20 flex justify-center">
+      {/* CENTER SECTION: Play Button */}
+      <div className="flex-none w-20 flex justify-center items-center relative z-50">
         <button
           onClick={handlePlayPause}
           disabled={!arrangement}
@@ -98,32 +153,17 @@ export function TransportBar() {
         </button>
       </div>
 
-      {/* Right Section: Configuration & View */}
-      <div className="flex-1 flex items-center justify-end gap-4 pr-6">
-        <button
-          onClick={() => setLoopEnabled(!playback.loopEnabled)}
-          disabled={!arrangement}
-          className={`
-            w-10 h-10 rounded-full flex items-center justify-center transition-all
-            ${playback.loopEnabled
-              ? 'bg-[var(--accent-secondary)] text-white shadow-lg shadow-[var(--accent-secondary)]/30'
-              : 'text-white/40 hover:bg-white/10 hover:text-white'
-            }
-            disabled:opacity-20
-          `}
-        >
-          <Repeat size={20} />
-        </button>
+      {/* RIGHT SECTION: Speed & Zoom */}
+      <div className="flex-1 flex items-center justify-end pr-6 gap-4">
 
-        <div className="w-px h-6 bg-white/10 mx-2" />
-
+        {/* Speed Controls */}
         <div className="flex bg-white/5 rounded-full p-1 border border-white/5">
           {speedOptions.map((speed) => (
             <button
               key={speed}
               onClick={() => setTempoMultiplier(speed)}
               className={`
-                px-2.5 py-1 text-[10px] font-bold rounded-full transition-all
+                px-3 py-1 text-[10px] font-bold rounded-full transition-all
                 ${playback.tempoMultiplier === speed
                   ? 'bg-white/20 text-white'
                   : 'text-white/40 hover:text-white/60'
@@ -135,21 +175,26 @@ export function TransportBar() {
           ))}
         </div>
 
+        <div className="w-px h-6 bg-white/10" />
+
+        {/* Zoom Controls */}
         <div className="flex items-center gap-1 bg-white/5 rounded-full p-1 border border-white/5">
           <button
             onClick={() => setZoomLevel(Math.max(0.5, display.zoomLevel - 0.25))}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
           >
             <ZoomOut size={14} />
           </button>
           <button
             onClick={() => setZoomLevel(Math.min(4, display.zoomLevel + 0.25))}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
           >
             <ZoomIn size={14} />
           </button>
         </div>
+
       </div>
+
     </div>
   );
 }
