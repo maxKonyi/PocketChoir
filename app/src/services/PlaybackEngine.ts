@@ -46,6 +46,10 @@ export class PlaybackEngine {
   // Synth voices (one per arrangement voice)
   private synthVoices: Map<string, SynthVoice> = new Map();
 
+  // Recorded audio
+  private audioBuffers: Map<string, AudioBuffer> = new Map();
+  private activeAudioSources: Map<string, AudioBufferSourceNode> = new Map();
+
   // Playback state
   private isPlaying: boolean = false;
   private startTime: number = 0;        // AudioContext time when playback started
@@ -138,6 +142,30 @@ export class PlaybackEngine {
   }
 
   /**
+   * Set a recorded audio blob for a voice.
+   * Decodes the blob into an AudioBuffer for fast playback.
+   */
+  async setAudioRecording(voiceId: string, blob: Blob): Promise<void> {
+    if (blob.size === 0) {
+      this.audioBuffers.delete(voiceId);
+      return;
+    }
+
+    try {
+      const buffer = await AudioService.decodeAudioBlob(blob);
+      this.audioBuffers.set(voiceId, buffer);
+      console.log(`Audio recording loaded for voice ${voiceId}, duration: ${buffer.duration.toFixed(2)}s`);
+
+      // If we're already playing, start this source immediately
+      if (this.isPlaying) {
+        this.startAudioSource(voiceId, this.getCurrentPositionMs());
+      }
+    } catch (error) {
+      console.error(`Failed to decode audio for voice ${voiceId}:`, error);
+    }
+  }
+
+  /**
    * Set loop enabled/disabled.
    */
   setLoopEnabled(enabled: boolean): void {
@@ -222,7 +250,10 @@ export class PlaybackEngine {
     // Start the update loop
     this.startUpdateLoop();
 
-    // Schedule initial notes
+    // Start audio recordings
+    this.startAudioSources(this.currentPositionMs);
+
+    // Schedule initial synth notes
     this.scheduleNotesFromPosition(this.getCurrentPositionT16());
   }
 
@@ -294,6 +325,9 @@ export class PlaybackEngine {
     for (const synth of this.synthVoices.values()) {
       synth.noteOff();
     }
+
+    // Stop all audio recordings
+    this.stopAudioSources();
   }
 
   /**
@@ -323,6 +357,68 @@ export class PlaybackEngine {
 
     if (wasPlaying) {
       this.play();
+    }
+  }
+
+  /**
+   * Start playback of all relevant recorded audio buffers.
+   */
+  private startAudioSources(fromMs: number): void {
+    for (const voiceId of this.audioBuffers.keys()) {
+      this.startAudioSource(voiceId, fromMs);
+    }
+  }
+
+  /**
+   * Start playback of a single recorded audio buffer.
+   */
+  private startAudioSource(voiceId: string, fromMs: number): void {
+    const buffer = this.audioBuffers.get(voiceId);
+    if (!buffer || !this.isVoiceAudible(voiceId)) return;
+
+    const ctx = AudioService.getContext();
+    const currentTime = ctx.currentTime;
+    const offset = fromMs / 1000;
+
+    // Stop existing if any
+    this.stopAudioSource(voiceId);
+
+    // Only play if the offset is within the buffer duration
+    if (offset < buffer.duration) {
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+
+      // Connect to the same output chain as synths (via Chorus)
+      // We use (node as any) to bypass strict Tone.js vs Native Audio node types
+      source.connect(AudioService.getChorus() as any);
+
+      source.start(currentTime, offset);
+      this.activeAudioSources.set(voiceId, source);
+    }
+  }
+
+  /**
+   * Stop all active audio sources.
+   */
+  private stopAudioSources(): void {
+    for (const voiceId of this.activeAudioSources.keys()) {
+      this.stopAudioSource(voiceId);
+    }
+  }
+
+  /**
+   * Stop a specific audio source.
+   */
+  private stopAudioSource(voiceId: string): void {
+    const source = this.activeAudioSources.get(voiceId);
+    if (source) {
+      try {
+        source.stop();
+      } catch (e) {
+        // Source might have already ended or not started
+      }
+      source.disconnect();
+      this.activeAudioSources.delete(voiceId);
     }
   }
 
@@ -376,6 +472,11 @@ export class PlaybackEngine {
         for (const synth of this.synthVoices.values()) {
           synth.noteOff();
         }
+
+        // Loop audio recordings
+        this.stopAudioSources();
+        this.startAudioSources(loopStartMs);
+
         this.scheduleNotesFromPosition(this.loopStartT16);
 
         if (this.config.onLoop) {

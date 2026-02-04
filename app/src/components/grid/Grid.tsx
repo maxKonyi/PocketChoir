@@ -397,7 +397,41 @@ export function Grid({
     }
 
     if (!onlyChords) {
-      // Draw contour lines for each voice
+      // 1. Draw recorded pitch traces (behind contours)
+      ctx.save();
+      for (const [voiceId, recording] of recordings.entries()) {
+        const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
+        if (voiceIndex === -1) continue;
+
+        const voice = arrangement.voices[voiceIndex];
+        const voiceColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+
+        ctx.strokeStyle = voiceColor;
+        ctx.lineWidth = 10;
+        ctx.globalAlpha = 0.45;
+
+        drawPitchTrace(ctx, recording.pitchTrace, minFreq, maxFreq, startT16, endT16,
+          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
+      }
+      ctx.restore();
+
+      // 2. Draw live pitch trace (during recording - also behind contours but slightly higher alpha)
+      if (livePitchTrace.length > 0 && armedVoiceId) {
+        ctx.save();
+        const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
+        const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
+        const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
+
+        ctx.strokeStyle = traceColor;
+        ctx.lineWidth = 10;
+        ctx.globalAlpha = 0.55;
+
+        drawPitchTrace(ctx, livePitchTrace, minFreq, maxFreq, startT16, endT16,
+          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
+        ctx.restore();
+      }
+
+      // 3. Draw contour lines for each voice
       for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
         const voice = arrangement.voices[voiceIndex];
         const voiceState = voiceStates.find(v => v.voiceId === voice.id);
@@ -466,41 +500,7 @@ export function Grid({
         ctx.restore();
       }
 
-      // Draw recorded pitch traces
-      for (const [voiceId, recording] of recordings.entries()) {
-        const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
-        if (voiceIndex === -1) continue;
-
-        const voice = arrangement.voices[voiceIndex];
-        const voiceColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
-
-        ctx.strokeStyle = voiceColor;
-        ctx.lineWidth = 1.5;
-        ctx.globalAlpha = 0.6;
-
-        drawPitchTrace(ctx, recording.pitchTrace, minFreq, maxFreq, startT16, endT16,
-          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
-
-        ctx.globalAlpha = 1;
-      }
-
-      // Draw live pitch trace (during recording)
-      if (livePitchTrace.length > 0 && armedVoiceId) {
-        const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
-        const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
-        const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
-
-        ctx.strokeStyle = traceColor;
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.8;
-
-        drawPitchTrace(ctx, livePitchTrace, minFreq, maxFreq, startT16, endT16,
-          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
-
-        ctx.globalAlpha = 1;
-      }
-
-      // Draw playhead - read directly from engine for smooth animation
+      // 4. Draw playhead - read directly from engine for smooth animation
       const playheadT16 = playbackEngine.getCurrentPositionT16();
       const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
 
@@ -520,8 +520,6 @@ export function Grid({
       ctx.stroke();
       ctx.shadowBlur = 0;
     }
-
-
   }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange]);
 
   /**

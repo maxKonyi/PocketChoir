@@ -77,8 +77,27 @@ export function useRecording() {
   }, []);
 
   /**
+   * Stop recording and save the result.
+   */
+  const stopRecording = useCallback(() => {
+    if (!isRecordingRef.current || !armedVoiceId) return;
+
+    isRecordingRef.current = false;
+    playbackActuallyStartedRef.current = false;
+
+    // Stop pitch detection
+    pitchDetectorRef.current?.stop();
+
+    // Stop microphone audio recording
+    MicrophoneService.stopRecording();
+
+    // Stop playback
+    setPlaying(false);
+    setRecording(false);
+  }, [armedVoiceId, setPlaying, setRecording]);
+
+  /**
    * Start recording on the armed voice.
-   * Resets to the start of the arrangement for consistent timing.
    */
   const startRecording = useCallback(async () => {
     if (!armedVoiceId || !arrangement) {
@@ -118,81 +137,59 @@ export function useRecording() {
         }
       }
 
-      // Use the playback engine's current position directly
-      // This ensures perfect sync with the playhead
       const time = playbackEngine.getCurrentPositionMs();
-
-      // Skip if we somehow get a negative time
       if (time < 0) return;
 
-      // Create pitch point
       const point: PitchPoint = {
         time,
         frequency: result.frequency,
         confidence: result.confidence,
       };
 
-      // Add to local trace (no React re-render)
       pitchTraceRef.current.push(point);
 
-      // Throttled update to React state for live visualization
-      // This prevents performance issues from too many state updates
       const now = performance.now();
       if (now - lastTraceUpdateRef.current > LIVE_TRACE_UPDATE_INTERVAL) {
         lastTraceUpdateRef.current = now;
-        // Send a copy of the entire trace to React
         setLivePitchTrace([...pitchTraceRef.current]);
       }
     });
 
-    // Start pitch detection with trace recording
+    // Start pitch detection
     pitchDetectorRef.current?.start(true);
 
-    // Start playback and set recording state
-    // The App.tsx effect will handle starting the playback engine
+    // Start audio recording via MicrophoneService
+    const currentVoiceId = armedVoiceId;
+    const currentTrace = pitchTraceRef;
+
+    MicrophoneService.startRecording(async (blob) => {
+      // Create the final recording object when recording stops
+      const finalTrace = [...currentTrace.current];
+      const recording: Recording = {
+        voiceId: currentVoiceId,
+        pitchTrace: finalTrace,
+        audioBlob: blob,
+        duration: finalTrace.length > 0 ? finalTrace[finalTrace.length - 1].time : 0,
+        recordedAt: new Date().toISOString(),
+      };
+
+      // Save to store
+      addRecording(currentVoiceId, recording);
+
+      // Update PlaybackEngine with the new audio buffer
+      await playbackEngine.setAudioRecording(currentVoiceId, blob);
+
+      console.log('Recording saved with audio. Points:', finalTrace.length);
+      setLivePitchTrace(finalTrace);
+    });
+
+    // Start playback
     setRecording(true);
     setPlaying(true);
 
     console.log('Recording started for voice:', armedVoiceId);
     return true;
-  }, [armedVoiceId, arrangement, initMicrophone, setLivePitchTrace, setRecording, setPlaying]);
-
-  /**
-   * Stop recording and save the result.
-   */
-  const stopRecording = useCallback(() => {
-    if (!isRecordingRef.current || !armedVoiceId) return;
-
-    isRecordingRef.current = false;
-    playbackActuallyStartedRef.current = false;
-
-    // Stop pitch detection
-    pitchDetectorRef.current?.stop();
-
-    // Stop playback
-    setPlaying(false);
-    setRecording(false);
-
-    // Use the locally stored trace (not the throttled React state)
-    const finalTrace = [...pitchTraceRef.current];
-
-    // Create the recording object
-    const recording: Recording = {
-      voiceId: armedVoiceId,
-      pitchTrace: finalTrace,
-      audioBlob: new Blob(), // Empty blob for now - full audio recording not implemented
-      duration: finalTrace.length > 0 ? finalTrace[finalTrace.length - 1].time : 0,
-      recordedAt: new Date().toISOString(),
-    };
-
-    // Save the recording
-    addRecording(armedVoiceId, recording);
-
-    console.log('Recording saved, Points:', recording.pitchTrace.length);
-
-    // Final update to live trace to show complete recording
-    setLivePitchTrace(finalTrace);
-  }, [armedVoiceId, addRecording, setLivePitchTrace, setPlaying, setRecording]);
+  }, [armedVoiceId, arrangement, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying]);
 
   /**
    * Toggle recording state.

@@ -117,6 +117,18 @@ function App() {
     playbackEngine.setLoopEnabled(playback.loopEnabled);
   }, [playback.loopEnabled]);
 
+  /**
+   * Sync recorded audio with the playback engine.
+   */
+  const recordings = useAppStore((state) => state.recordings);
+  useEffect(() => {
+    recordings.forEach((recording, voiceId) => {
+      if (recording.audioBlob && recording.audioBlob.size > 0) {
+        playbackEngine.setAudioRecording(voiceId, recording.audioBlob);
+      }
+    });
+  }, [recordings]);
+
   return (
     <div
       className="h-screen w-screen overflow-hidden relative"
