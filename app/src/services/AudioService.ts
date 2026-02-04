@@ -1,9 +1,4 @@
-/* ============================================================
-   AUDIO SERVICE
-   
-   Central service for managing all Web Audio API operations.
-   Creates and manages the audio context, master output, and effects.
-   ============================================================ */
+import * as Tone from 'tone';
 
 /**
  * Singleton service for managing the Web Audio API context and routing.
@@ -12,17 +7,20 @@
 class AudioServiceClass {
   // The main Web Audio context - all audio operations use this
   private context: AudioContext | null = null;
-  
+
   // Master gain node - controls overall volume
   private masterGain: GainNode | null = null;
-  
+
   // Reverb effect using ConvolverNode
   private reverbNode: ConvolverNode | null = null;
   private reverbGain: GainNode | null = null;  // Wet signal level
   private dryGain: GainNode | null = null;     // Dry signal level
-  
+
   // Track whether audio context has been started (requires user gesture)
   private isStarted = false;
+
+  // Global Chorus effect from choir_ref
+  private globalChorus: Tone.Chorus | null = null;
 
   /**
    * Initialize the audio context. Must be called after a user gesture.
@@ -36,35 +34,51 @@ class AudioServiceClass {
 
     // Create the audio context
     this.context = new AudioContext();
-    
+
     // Create the master gain node (controls overall volume)
     this.masterGain = this.context.createGain();
     this.masterGain.gain.value = 0.8; // Default to 80% volume
     this.masterGain.connect(this.context.destination);
-    
+
     // Create dry/wet routing for reverb effect
     this.dryGain = this.context.createGain();
     this.dryGain.gain.value = 1.0;
     this.dryGain.connect(this.masterGain);
-    
+
     this.reverbGain = this.context.createGain();
     this.reverbGain.gain.value = 0.3; // Default reverb level
     this.reverbGain.connect(this.masterGain);
-    
+
     // Create reverb convolver (we'll load an impulse response later)
     this.reverbNode = this.context.createConvolver();
     this.reverbNode.connect(this.reverbGain);
-    
+
+    // Initialize Tone.js with this context
+    await Tone.setContext(this.context);
+
+    // Create global Chorus from choir_ref
+    this.globalChorus = new Tone.Chorus({
+      frequency: 0.1,
+      delayTime: 10,
+      depth: 0.71,
+      feedback: 0.47,
+      spread: 181,
+      wet: 0.04
+    }).start();
+
+    // Connect Chorus to master gain
+    this.globalChorus.connect(this.masterGain);
+
     // Generate a simple synthetic reverb impulse response
     await this.createSyntheticReverb();
-    
+
     // Resume context if it's suspended (browser autoplay policy)
     if (this.context.state === 'suspended') {
       await this.context.resume();
     }
-    
+
     this.isStarted = true;
-    console.log('AudioService initialized');
+    console.log('AudioService initialized with Tone.js and global Chorus');
   }
 
   /**
@@ -73,13 +87,13 @@ class AudioServiceClass {
    */
   private async createSyntheticReverb(): Promise<void> {
     if (!this.context || !this.reverbNode) return;
-    
+
     // Create a 2-second stereo impulse response
     const sampleRate = this.context.sampleRate;
     const duration = 2; // seconds
     const length = sampleRate * duration;
     const impulse = this.context.createBuffer(2, length, sampleRate);
-    
+
     // Fill with decaying noise for a simple reverb effect
     for (let channel = 0; channel < 2; channel++) {
       const channelData = impulse.getChannelData(channel);
@@ -89,7 +103,7 @@ class AudioServiceClass {
         channelData[i] = (Math.random() * 2 - 1) * decay;
       }
     }
-    
+
     this.reverbNode.buffer = impulse;
   }
 
@@ -203,15 +217,15 @@ class AudioServiceClass {
     const ctx = this.getContext();
     const gain = ctx.createGain();
     gain.gain.value = initialGain;
-    
+
     // Connect to dry output
     gain.connect(this.getDryGain());
-    
+
     // Optionally connect to reverb
     if (connectToReverb && this.reverbNode) {
       gain.connect(this.reverbNode);
     }
-    
+
     return gain;
   }
 
@@ -224,6 +238,16 @@ class AudioServiceClass {
     const ctx = this.getContext();
     const arrayBuffer = await blob.arrayBuffer();
     return ctx.decodeAudioData(arrayBuffer);
+  }
+
+  /**
+   * Get the global Chorus node.
+   */
+  getChorus(): Tone.Chorus {
+    if (!this.globalChorus) {
+      throw new Error('AudioService not initialized. Call initialize() first.');
+    }
+    return this.globalChorus;
   }
 
   /**

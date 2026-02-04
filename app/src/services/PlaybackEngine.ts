@@ -42,45 +42,41 @@ interface PlaybackConfig {
 export class PlaybackEngine {
   // Current arrangement
   private arrangement: Arrangement | null = null;
-  
+
   // Synth voices (one per arrangement voice)
   private synthVoices: Map<string, SynthVoice> = new Map();
-  
+
   // Playback state
   private isPlaying: boolean = false;
   private startTime: number = 0;        // AudioContext time when playback started
   private startPosition: number = 0;    // Position in ms when playback started
   private currentPositionMs: number = 0;
-  
+
   // Loop settings
   private loopEnabled: boolean = true;
   private loopStartT16: number = 0;
   private loopEndT16: number = 64;
-  
+
   // Tempo
   private tempoMultiplier: number = 1.0;
   private baseTempo: number = 120;
   private timeSig: TimeSignature = { numerator: 4, denominator: 4 };
-  
+
   // Transposition
   private transposition: number = 0;
-  
+
   // Mute/solo state per voice
   private mutedVoices: Set<string> = new Set();
   private soloedVoices: Set<string> = new Set();
-  
+
   // Animation frame for position updates
   private animationFrameId: number | null = null;
-  
-  // Scheduled note events (for cleanup)
-  private scheduledEvents: Array<{ voiceId: string; nodeIndex: number; time: number }> = [];
-  
+
   // Callbacks
   private config: PlaybackConfig = {};
-  
+
   // Count-in
   private isCountingIn: boolean = false;
-  private countInOscillator: OscillatorNode | null = null;
 
   /**
    * Initialize the engine with an arrangement.
@@ -92,18 +88,21 @@ export class PlaybackEngine {
     this.config = config;
     this.baseTempo = arrangement.tempo;
     this.timeSig = arrangement.timeSig;
-    
+
     // Set loop end to arrangement length
     this.loopEndT16 = arrangementTotalSixteenths(arrangement.bars, this.timeSig);
-    
+
     // Create synth voices for each voice in the arrangement
     this.disposeSynthVoices();
-    for (const voice of arrangement.voices) {
-      const synth = createSynthVoice(voice.id);
+    arrangement.voices.forEach((voice, index) => {
+      const synth = createSynthVoice(voice.id, index);
+      if (AudioService.isReady()) {
+        synth.initialize();
+      }
       synth.setVolume(0.5);
       this.synthVoices.set(voice.id, synth);
-    }
-    
+    });
+
     console.log(`PlaybackEngine initialized with ${arrangement.voices.length} voices`);
   }
 
@@ -208,21 +207,21 @@ export class PlaybackEngine {
       console.warn('No arrangement loaded');
       return;
     }
-    
+
     // Make sure audio context is running
     await AudioService.resume();
-    
+
     if (countInBars > 0) {
       await this.performCountIn(countInBars);
     }
-    
+
     this.isPlaying = true;
     this.startTime = AudioService.getCurrentTime();
     this.startPosition = this.currentPositionMs;
-    
+
     // Start the update loop
     this.startUpdateLoop();
-    
+
     // Schedule initial notes
     this.scheduleNotesFromPosition(this.getCurrentPositionT16());
   }
@@ -236,22 +235,22 @@ export class PlaybackEngine {
     const effectiveTempo = this.baseTempo * this.tempoMultiplier;
     const beatDurationMs = 60000 / effectiveTempo;
     const totalBeats = bars * this.timeSig.numerator;
-    
+
     for (let beat = 0; beat < totalBeats; beat++) {
       if (!this.isCountingIn) break; // Allow cancellation
-      
+
       // Play click sound
       this.playClickSound(ctx.currentTime);
-      
+
       // Callback for visual count-in
       if (this.config.onCountIn) {
         this.config.onCountIn(beat + 1, totalBeats);
       }
-      
+
       // Wait for next beat
       await new Promise(resolve => setTimeout(resolve, beatDurationMs));
     }
-    
+
     this.isCountingIn = false;
   }
 
@@ -260,20 +259,20 @@ export class PlaybackEngine {
    */
   private playClickSound(time: number): void {
     const ctx = AudioService.getContext();
-    
+
     // Create a short click using an oscillator
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    
+
     osc.type = 'sine';
     osc.frequency.value = 880; // A5
-    
+
     gain.gain.setValueAtTime(0.3, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
-    
+
     osc.connect(gain);
     gain.connect(AudioService.getMasterGain());
-    
+
     osc.start(time);
     osc.stop(time + 0.05);
   }
@@ -284,20 +283,17 @@ export class PlaybackEngine {
   stop(): void {
     this.isPlaying = false;
     this.isCountingIn = false;
-    
+
     // Stop the update loop
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
-    
+
     // Stop all synth voices
     for (const synth of this.synthVoices.values()) {
       synth.noteOff();
     }
-    
-    // Clear scheduled events
-    this.scheduledEvents = [];
   }
 
   /**
@@ -305,7 +301,7 @@ export class PlaybackEngine {
    */
   pause(): void {
     if (!this.isPlaying) return;
-    
+
     // Save current position
     this.currentPositionMs = this.getCurrentPositionMs();
     this.stop();
@@ -317,14 +313,14 @@ export class PlaybackEngine {
    */
   seek(t16: number): void {
     const wasPlaying = this.isPlaying;
-    
+
     if (wasPlaying) {
       this.stop();
     }
-    
+
     // Convert to ms and set position
     this.currentPositionMs = t16ToMs(t16, this.getEffectiveTempo(), this.timeSig);
-    
+
     if (wasPlaying) {
       this.play();
     }
@@ -344,7 +340,7 @@ export class PlaybackEngine {
     if (!this.isPlaying) {
       return this.currentPositionMs;
     }
-    
+
     const elapsed = (AudioService.getCurrentTime() - this.startTime) * 1000;
     return this.startPosition + elapsed;
   }
@@ -364,10 +360,10 @@ export class PlaybackEngine {
   private startUpdateLoop(): void {
     const update = () => {
       if (!this.isPlaying) return;
-      
+
       const currentMs = this.getCurrentPositionMs();
       const currentT16 = this.getCurrentPositionT16();
-      
+
       // Check for loop
       const loopEndMs = t16ToMs(this.loopEndT16, this.getEffectiveTempo(), this.timeSig);
       if (this.loopEnabled && currentMs >= loopEndMs) {
@@ -375,30 +371,30 @@ export class PlaybackEngine {
         const loopStartMs = t16ToMs(this.loopStartT16, this.getEffectiveTempo(), this.timeSig);
         this.startTime = AudioService.getCurrentTime();
         this.startPosition = loopStartMs;
-        
+
         // Stop all notes and reschedule
         for (const synth of this.synthVoices.values()) {
           synth.noteOff();
         }
         this.scheduleNotesFromPosition(this.loopStartT16);
-        
+
         if (this.config.onLoop) {
           this.config.onLoop();
         }
       }
-      
+
       // Position update callback
       if (this.config.onPositionUpdate) {
         this.config.onPositionUpdate(currentT16, currentMs);
       }
-      
+
       // Update notes (check if any should start/stop)
       this.updateNotes(currentT16);
-      
+
       // Continue loop
       this.animationFrameId = requestAnimationFrame(update);
     };
-    
+
     this.animationFrameId = requestAnimationFrame(update);
   }
 
@@ -407,23 +403,23 @@ export class PlaybackEngine {
    */
   private scheduleNotesFromPosition(fromT16: number): void {
     if (!this.arrangement) return;
-    
+
     for (const voice of this.arrangement.voices) {
       if (!this.isVoiceAudible(voice.id)) continue;
-      
+
       const synth = this.synthVoices.get(voice.id);
       if (!synth) continue;
-      
+
       // Find the current or next node
       const nodeIndex = this.findNodeAtOrAfter(voice.nodes, fromT16);
       if (nodeIndex === -1) continue;
-      
+
       // If we're in the middle of a note, start it
       const prevIndex = nodeIndex > 0 ? nodeIndex - 1 : -1;
       if (prevIndex >= 0) {
         const prevNode = voice.nodes[prevIndex];
         const currentNode = voice.nodes[nodeIndex];
-        
+
         // Check if prev node spans to current position
         if (!prevNode.term && prevNode.t16 <= fromT16 && currentNode.t16 > fromT16) {
           const freq = this.getNodeFrequency(voice, prevNode);
@@ -450,21 +446,20 @@ export class PlaybackEngine {
    */
   private updateNotes(currentT16: number): void {
     if (!this.arrangement) return;
-    
+
     for (const voice of this.arrangement.voices) {
       const synth = this.synthVoices.get(voice.id);
       if (!synth) continue;
-      
+
       const audible = this.isVoiceAudible(voice.id);
-      
+
       // Find which node we should be playing
       let activeNode: Node | null = null;
-      let nextNode: Node | null = null;
-      
+
       for (let i = 0; i < voice.nodes.length; i++) {
         const node = voice.nodes[i];
         const next = voice.nodes[i + 1];
-        
+
         if (node.t16 <= currentT16) {
           if (node.term) {
             // Termination node - no active note
@@ -472,18 +467,17 @@ export class PlaybackEngine {
           } else if (next && next.t16 > currentT16) {
             // We're between this node and the next
             activeNode = node;
-            nextNode = next;
           } else if (!next && node.t16 <= currentT16) {
             // Last node, hold until end
             activeNode = node;
           }
         }
       }
-      
+
       // Update synth
       if (audible && activeNode) {
         const freq = this.getNodeFrequency(voice, activeNode);
-        
+
         if (!synth.getIsPlaying()) {
           synth.noteOn(freq);
         } else if (Math.abs(synth.getFrequency() - freq) > 1) {
@@ -501,9 +495,9 @@ export class PlaybackEngine {
   /**
    * Get the frequency for a node, considering transposition.
    */
-  private getNodeFrequency(voice: Voice, node: Node): number {
+  private getNodeFrequency(_voice: Voice, node: Node): number {
     if (!this.arrangement) return 440;
-    
+
     // Get base frequency from scale degree
     let freq = scaleDegreeToFrequency(
       node.deg,
@@ -512,12 +506,12 @@ export class PlaybackEngine {
       4,
       node.octave || 0
     );
-    
+
     // Apply transposition
     if (this.transposition !== 0) {
       freq *= Math.pow(2, this.transposition / 12);
     }
-    
+
     return freq;
   }
 
