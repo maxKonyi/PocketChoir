@@ -24,7 +24,7 @@ import type { PitchPoint, Recording } from '../types';
 // Throttle interval for live trace updates (ms)
 // Lower = smoother trace but more re-renders
 // Higher = choppier trace but better performance
-const LIVE_TRACE_UPDATE_INTERVAL = 100; // 10fps for React updates
+const LIVE_TRACE_UPDATE_INTERVAL = 33; // ~30fps like reference
 
 /**
  * Hook for managing voice recording with pitch detection.
@@ -107,9 +107,6 @@ export function useRecording() {
     // Set up pitch detection callback
     pitchDetectorRef.current?.setCallback((result: PitchDetectionResult) => {
       if (!isRecordingRef.current) return;
-
-      // Only record if we have valid pitch data
-      if (result.frequency <= 0) return;
 
       // Wait for playback to actually start before recording points
       if (!playbackActuallyStartedRef.current) {

@@ -40,8 +40,8 @@ export class PitchDetector {
   private settings: PitchDetectionSettings = {
     minFrequency: 65,        // Extended bass range (C2) - from reference
     maxFrequency: 1200,      // Extended soprano range - from reference
-    smoothingFactor: 0.5,    // Higher = smoother (0.3 in reference but we want smoother visual)
-    confidenceThreshold: 0.5, // Slightly higher to reduce noise
+    smoothingFactor: 0.4,    // Balanced responsiveness and smoothness
+    confidenceThreshold: 0.3, // Lower threshold for breathy notes (totally clean)
     updateInterval: 33,      // ~30fps like reference
   };
 
@@ -53,12 +53,13 @@ export class PitchDetector {
 
   // Smoothing state - ported from reference implementation
   private medianBuffer: number[] = [];
-  private medianSize: number = 9; // Increased from 7 for better outlier rejection
+  private medianSize: number = 7; // Reference size
   private smoothedMidi: number | null = null;
+  private jumpCounter: number = 0;
+  private pendingMidi: number | null = null;
 
   // Last detected pitch (for legacy compatibility)
   private lastFrequency: number = 0;
-  private lastConfidence: number = 0;
 
   // Recording state
   private isRunning: boolean = false;
@@ -125,7 +126,8 @@ export class PitchDetector {
     this.medianBuffer = [];
     this.smoothedMidi = null;
     this.lastFrequency = 0;
-    this.lastConfidence = 0;
+    this.jumpCounter = 0;
+    this.pendingMidi = null;
 
     // Clear and start recording pitch trace if requested
     if (recordTrace) {
@@ -196,25 +198,50 @@ export class PitchDetector {
         if (this.smoothedMidi === null) {
           this.smoothedMidi = median;
         } else {
-          // If the jump is large (possible octave error or new phrase), reset smoothing
-          // Threshold of 4 semitones catches most octave errors while allowing glides
+          // If the jump is large (possible octave error or new phrase), require confirmation
+          // Threshold of 4 semitones catches most octave errors
           if (Math.abs(this.smoothedMidi - median) > 4) {
-            this.smoothedMidi = median;
+            // Check if this jump persists
+            if (this.pendingMidi !== null && Math.abs(this.pendingMidi - median) < 1.0) {
+              this.jumpCounter++;
+            } else {
+              this.pendingMidi = median;
+              this.jumpCounter = 1;
+            }
+
+            if (this.jumpCounter >= 5) {
+              // Jump confirmed!
+              this.smoothedMidi = median;
+              this.jumpCounter = 0;
+              this.pendingMidi = null;
+            } else {
+              // Stay on last known pitch while waiting for confirmation
+              resultMidi = Math.round(this.smoothedMidi);
+              resultFrequency = this.lastFrequency;
+            }
           } else {
+            // Normal small movement, reset jump tracking
+            this.jumpCounter = 0;
+            this.pendingMidi = null;
             this.smoothedMidi = this.smoothedMidi * (1 - this.settings.smoothingFactor) + median * this.settings.smoothingFactor;
           }
         }
 
         // Convert back to frequency and note number
-        resultMidi = Math.round(this.smoothedMidi);
-        resultFrequency = 440 * Math.pow(2, (this.smoothedMidi - 69) / 12);
-        this.lastFrequency = resultFrequency;
-        this.lastConfidence = confidence;
+        if (this.jumpCounter < 5) {
+          resultMidi = Math.round(this.smoothedMidi);
+          resultFrequency = 440 * Math.pow(2, (this.smoothedMidi - 69) / 12);
+          this.lastFrequency = resultFrequency;
+        }
       }
     } else {
       // Signal lost - drain buffer for bridging short gaps (from reference)
       if (this.medianBuffer.length > 0) this.medianBuffer.shift();
-      if (this.medianBuffer.length === 0) this.smoothedMidi = null;
+      if (this.medianBuffer.length === 0) {
+        this.smoothedMidi = null;
+        this.jumpCounter = 0;
+        this.pendingMidi = null;
+      }
     }
 
     // Create result
@@ -243,60 +270,6 @@ export class PitchDetector {
     this.animationFrameId = requestAnimationFrame(this.detectLoopWithSmoothing);
   };
 
-  /**
-   * Perform pitch detection on current audio data.
-   * Uses autocorrelation (simplified YIN algorithm).
-   * (Legacy method kept for compatibility)
-   */
-  private detectPitch(): PitchDetectionResult {
-    if (!this.analyser || !this.dataBuffer) {
-      return { frequency: 0, confidence: 0, noteNumber: 0, cents: 0 };
-    }
-
-    // Get time-domain data
-    // Note: Type assertion needed due to TypeScript's strict ArrayBuffer typing
-    this.analyser.getFloatTimeDomainData(this.dataBuffer as unknown as Float32Array<ArrayBuffer>);
-
-    // Run autocorrelation to find pitch
-    const { frequency, confidence } = this.autocorrelate(this.dataBuffer as Float32Array);
-
-    // Apply smoothing
-    let smoothedFreq = frequency;
-    let smoothedConf = confidence;
-
-    if (this.lastFrequency > 0 && frequency > 0) {
-      // Only smooth if both current and last readings are valid
-      const factor = this.settings.smoothingFactor;
-      smoothedFreq = frequency * (1 - factor) + this.lastFrequency * factor;
-      smoothedConf = confidence * (1 - factor) + this.lastConfidence * factor;
-    }
-
-    // Update last values
-    this.lastFrequency = smoothedFreq > 0 ? smoothedFreq : this.lastFrequency * 0.9;
-    this.lastConfidence = smoothedConf;
-
-    // Apply confidence threshold
-    if (smoothedConf < this.settings.confidenceThreshold) {
-      return { frequency: 0, confidence: smoothedConf, noteNumber: 0, cents: 0 };
-    }
-
-    // Check frequency range
-    if (smoothedFreq < this.settings.minFrequency || smoothedFreq > this.settings.maxFrequency) {
-      return { frequency: 0, confidence: smoothedConf, noteNumber: 0, cents: 0 };
-    }
-
-    // Calculate MIDI note and cents offset
-    const noteNumber = 12 * Math.log2(smoothedFreq / 440) + 69;
-    const roundedNote = Math.round(noteNumber);
-    const cents = (noteNumber - roundedNote) * 100;
-
-    return {
-      frequency: smoothedFreq,
-      confidence: smoothedConf,
-      noteNumber: roundedNote,
-      cents,
-    };
-  }
 
   /**
    * Autocorrelation pitch detection algorithm.
@@ -316,7 +289,8 @@ export class PitchDetector {
     rms = Math.sqrt(rms / bufferSize);
 
     // If the signal is too quiet, return no pitch
-    if (rms < 0.01) {
+    // Threshold lowered per user request to avoid cutting off sustained notes
+    if (rms < 0.005) {
       return { frequency: 0, confidence: 0 };
     }
 
@@ -324,78 +298,86 @@ export class PitchDetector {
     const minLag = Math.floor(sampleRate / this.settings.maxFrequency);
     const maxLag = Math.ceil(sampleRate / this.settings.minFrequency);
 
-    // Compute the difference function (simplified YIN)
+    // Compute autocorrelation for all lags in range
     let bestLag = 0;
-    let bestConfidence = 0;
+    let absoluteBestCorrelation = -1;
+    const correlations = new Float32Array(maxLag + 1);
 
-    for (let lag = minLag; lag < maxLag && lag < bufferSize / 2; lag++) {
+    for (let lag = minLag; lag <= maxLag && lag < bufferSize / 2; lag++) {
       let correlation = 0;
       let norm1 = 0;
       let norm2 = 0;
 
-      for (let i = 0; i < bufferSize - lag; i++) {
+      const searchLen = Math.min(bufferSize - lag, 1024); // Optimized window like reference
+
+      for (let i = 0; i < searchLen; i++) {
         correlation += buffer[i] * buffer[i + lag];
         norm1 += buffer[i] * buffer[i];
         norm2 += buffer[i + lag] * buffer[i + lag];
       }
 
-      // Normalized correlation coefficient
       const normalization = Math.sqrt(norm1 * norm2);
       const normalizedCorrelation = normalization > 0 ? correlation / normalization : 0;
+      correlations[lag] = normalizedCorrelation;
 
-      if (normalizedCorrelation > bestConfidence) {
-        bestConfidence = normalizedCorrelation;
-        bestLag = lag;
+      if (normalizedCorrelation > absoluteBestCorrelation) {
+        absoluteBestCorrelation = normalizedCorrelation;
       }
     }
 
-    // Convert lag to frequency
+    // HEURISTIC: Find the FIRST peak that is "strong enough" (within 80% of absolute best)
+    // This favors higher frequencies (shorter periods) which helps avoid 
+    // jumping to the octave below (sub-harmonic error).
+    const threshold = absoluteBestCorrelation * 0.8;
+
+    for (let lag = minLag + 1; lag < maxLag; lag++) {
+      if (correlations[lag] > threshold &&
+        correlations[lag] > correlations[lag - 1] &&
+        correlations[lag] > correlations[lag + 1]) {
+        bestLag = lag;
+        break; // Found first strong peak!
+      }
+    }
+
+    // Fallback if no specific peak found
     if (bestLag === 0) {
+      for (let lag = minLag; lag <= maxLag; lag++) {
+        if (correlations[lag] === absoluteBestCorrelation) {
+          bestLag = lag;
+          break;
+        }
+      }
+    }
+
+    // Calculate final confidence
+    const confidence = absoluteBestCorrelation;
+
+    if (bestLag === 0 || confidence < this.settings.confidenceThreshold) {
       return { frequency: 0, confidence: 0 };
     }
 
-    // Parabolic interpolation for better precision
-    const frequency = sampleRate / this.interpolateLag(buffer, bestLag);
+    // Parabolic interpolation for better precision (already existed, but integrated)
+    const refinedLag = this.interpolateLagWithCorrelations(correlations, bestLag);
+    const frequency = sampleRate / refinedLag;
 
-    return { frequency, confidence: bestConfidence };
+    return { frequency, confidence };
   }
 
   /**
-   * Parabolic interpolation to refine the lag estimate.
-   * Provides sub-sample accuracy for better pitch precision.
+   * Refined interpolation using precomputed correlations.
    */
-  private interpolateLag(buffer: Float32Array, lag: number): number {
-    if (lag <= 1 || lag >= buffer.length / 2 - 1) {
-      return lag;
-    }
+  private interpolateLagWithCorrelations(correlations: Float32Array, lag: number): number {
+    if (lag <= 0 || lag >= correlations.length - 1) return lag;
 
-    // Get correlation at lag-1, lag, and lag+1
-    const s0 = this.correlationAtLag(buffer, lag - 1);
-    const s1 = this.correlationAtLag(buffer, lag);
-    const s2 = this.correlationAtLag(buffer, lag + 1);
+    const a = correlations[lag - 1];
+    const b = correlations[lag];
+    const c = correlations[lag + 1];
 
-    // Parabolic interpolation
-    const denominator = s0 - 2 * s1 + s2;
-    if (Math.abs(denominator) < 0.0001) {
-      return lag;
-    }
+    const denominator = 2 * (a - 2 * b + c);
+    if (Math.abs(denominator) < 0.0001) return lag;
 
-    const delta = 0.5 * (s0 - s2) / denominator;
-    return lag + delta;
-  }
-
-  /**
-   * Calculate correlation at a specific lag.
-   */
-  private correlationAtLag(buffer: Float32Array, lag: number): number {
-    let correlation = 0;
-    const length = buffer.length - lag;
-
-    for (let i = 0; i < length; i++) {
-      correlation += buffer[i] * buffer[i + lag];
-    }
-
-    return correlation;
+    const offset = (a - c) / denominator;
+    return lag + offset;
   }
 
   /**

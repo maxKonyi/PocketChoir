@@ -623,16 +623,24 @@ export function Grid({
 
     ctx.beginPath();
     let started = false;
+    let lastPointTime = -1;
 
     for (const point of trace) {
-      if (point.frequency <= 0 || point.confidence < 0.5) {
-        // No valid pitch - break the line
+      // Check for gaps: either explicit (zero frequency) or implicit (time jump > 150ms)
+      const isGap = point.frequency <= 0 || (lastPointTime !== -1 && point.time - lastPointTime > 150);
+
+      if (isGap || point.confidence < 0.3) {
+        // No valid pitch or gap detected - break the line
         if (started) {
           ctx.stroke();
           ctx.beginPath();
           started = false;
         }
-        continue;
+
+        if (isGap) {
+          lastPointTime = point.time;
+          continue;
+        }
       }
 
       // Convert time (ms) to t16 position
@@ -648,6 +656,8 @@ export function Grid({
       } else {
         ctx.lineTo(x, y);
       }
+
+      lastPointTime = point.time;
     }
 
     if (started) {

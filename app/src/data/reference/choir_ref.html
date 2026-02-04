@@ -422,11 +422,6 @@
           <input type="range" id="degreeGridSlider" min="0" max="1" step="0.01" value="1" />
           <span id="degreeGridValue">1.00</span>
         </div>
-        <div class="group inline">
-          <label for="latencySlider">Voc Latency:</label>
-          <input type="range" id="latencySlider" min="0" max="500" step="1" value="100" />
-          <span id="latencyValue">100</span> ms
-        </div>
       </div>
       <!-- Voice Controls for individual parts -->
       <div class="section">
@@ -727,7 +722,7 @@
       else if (i === 2) { filterFreq = 2500; panVal = 0.8; }
       const synth = new Tone.Synth({
         oscillator: { type: "triangle" },
-        envelope: { attack: 0.01, decay: 0.1, sustain: 0.8, release: 0.2 },
+        envelope: { attack: 0.05, decay: 0.1, sustain: 1, release: 0.1 },
         volume: -10,
         portamento: 0.1 
       });
@@ -1026,10 +1021,6 @@
       Tone.Transport.cancel(0);
       Tone.Transport.stop();
       forceReleaseAll();
-      
-      // Also stop all vocal players explicitly to be safe
-      stopVocalPlayback();
-      
       isPlaying = false;
       isPaused = false;
       pausedChordIndex = null;
@@ -1120,10 +1111,6 @@
       
       currentPart.loop = true;
       currentPart.loopEnd = voicedChords.length + "m";
-
-      // Also set the Transport to loop so that synced vocal players follow the loop
-      Tone.Transport.loop = true;
-      Tone.Transport.loopEnd = voicedChords.length + "m";
       
       // We're now in a playing state, although transport may be started later
       isPlaying = true;
@@ -1134,26 +1121,8 @@
         document.getElementById("restartBtn").disabled = true;
       }
       
-      // Re-sync all vocal players after cancel(0)
-      syncAllVocalPlayers();
-
-      // Ensure click track is active if enabled (cancel(0) stops it)
-      if (clickTrackEnabled) {
-        startClickTrack();
-      }
-
-      // Schedule micro-fades for vocal loops to prevent clicks at the end/start of loop
-      const loopTime = voicedChords.length + "m";
-      vocalFaderGains.forEach(gainNode => {
-        if (gainNode) {
-          // Fade out slightly before the loop end
-          Tone.Transport.scheduleRepeat((time) => {
-            gainNode.gain.setValueAtTime(1, time - 0.05);
-            gainNode.gain.linearRampToValueAtTime(0, time);
-            gainNode.gain.linearRampToValueAtTime(1, time + 0.05);
-          }, loopTime);
-        }
-      });
+      // Note: We don't start the transport here, the calling function will handle
+      // starting the transport if needed (allows for proper positioning)
     }
     function updateMutes() {
       for (let v = 0; v < numVoices; v++) {
@@ -1179,9 +1148,7 @@
         // Apply to vocal player
         if (vocalGains[v]) {
           // RESPECT playVocalsEnabled TOGGLE
-          // Also, if we are currently recording this voice, we should mute the player to avoid feedback
-          const isCurrentlyRecordingThisVoice = isRecording && recordingVoiceIndex === v;
-          if (shouldBeAudible && playVocalsEnabled && !isCurrentlyRecordingThisVoice) {
+          if (shouldBeAudible && playVocalsEnabled) {
             // Apply a +6dB boost to vocals to help them cut through the synth
             const vocalBoost = Math.pow(10, 6 / 20); 
             vocalGains[v].gain.rampTo(linearGain * vocalBoost, 0.1);
@@ -1550,16 +1517,14 @@
       }
       // If paused, resume playback
       else if (isPlaying && isPaused) {
-        // Re-trigger the paused chord so sound is heard immediately
-        const resumeDelay = 0.1;
-        const resumeTime = Tone.now() + resumeDelay;
+        // Optionally re-trigger the paused chord so sound is heard immediately
         const chord = currentVoicedChords[pausedChordIndex];
         if (chord) {
           for (let v = 0; v < numVoices; v++) {
             if (!userMuteStates[v]) { // Only play unmuted voices
               const midi = chord.notes[v];
               const freq = Tone.Frequency(midi, "midi").toFrequency();
-              synths[v].triggerAttack(freq, resumeTime, 1);
+              synths[v].triggerAttack(freq, Tone.now(), 1);
             }
           }
           
@@ -1583,13 +1548,7 @@
             }
           }
         }
-        
-        // Restart the click track schedule (it was cleared by Transport.cancel or pause)
-        if (clickTrackEnabled) {
-          startClickTrack();
-        }
-        
-        Tone.Transport.start("+" + resumeDelay, pausedChordIndex + "m");
+        Tone.Transport.start("+0.02", pausedChordIndex + "m");
         isPaused = false;
         playPauseBtn.textContent = "Pause (space)";
         restartBtn.disabled = false;
@@ -1600,7 +1559,7 @@
         currentTempo = parseInt(tempoSliderEl.value, 10);
         Tone.Transport.bpm.value = currentTempo;
         schedulePlayback(currentVoicedChords, currentTempo);
-        Tone.Transport.start("+0.1");
+        Tone.Transport.start();
         playPauseBtn.textContent = "Pause (space)";
         restartBtn.disabled = false;
       }
@@ -2846,9 +2805,6 @@
     // Tone.js Players for vocal playback (one per voice)
     const vocalPlayers = [null, null, null, null];
 
-    // Added fader gains for vocal loops to prevent clicks
-    const vocalFaderGains = [null, null, null, null];
-
     // Reference to the vocal gain nodes for mixing
     const vocalGains = [];
     const vocalPanners = []; // To store panners for vocal tracks
@@ -2856,71 +2812,70 @@
     // ===== CLICK + COUNT-IN =====
     // Click track synth - uses a short percussive sound
     let clickSynth = null;        // Will be initialized on first use
-    let clickEventId = null;      // ID for the scheduled repeat event (replaces Tone.Loop)
+    let clickLoop = null;         // Tone.Loop for the click track
     let countInScheduleId = null; // ID for scheduled count-in events
-    let vocalLatencyCompensation = 0.100; // Default 100ms latency compensation
 
     /**
-     * Initialize the click synth (creates the synth only, no scheduling).
+     * Initialize the click synth if not already created.
+     * Uses a MembraneSynth for a drum-like click sound.
      */
     function initClickSynth() {
-      if (clickSynth) return;
-      
+      if (clickSynth) return; // Already initialized
+      // Create a simple membrane synth for the click sound
       clickSynth = new Tone.MembraneSynth({
-        pitchDecay: 0.008,
-        octaves: 2,
+        pitchDecay: 0.008,      // Very short pitch decay for a sharp click
+        octaves: 2,             // Pitch sweep range
         oscillator: { type: "sine" },
-        envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
+        envelope: {
+          attack: 0.001,        // Instant attack
+          decay: 0.1,           // Short decay
+          sustain: 0,           // No sustain
+          release: 0.05         // Quick release
+        },
+        volume: -10             // Moderate volume
       }).toDestination();
-      clickSynth.volume.value = -6;
     }
 
     /**
-     * Start the click track using Transport.scheduleRepeat for reliable timing.
-     * This cancels any previous click schedule and creates a new one.
+     * Start the click track loop.
+     * Plays a click on every beat, with a stronger accent on beat 1.
      */
     function startClickTrack() {
+      if (!clickTrackEnabled) return;
       initClickSynth();
       
-      // Cancel any existing click schedule to prevent duplicates
-      if (clickEventId !== null) {
-        Tone.Transport.clear(clickEventId);
-        clickEventId = null;
-      }
+      // Stop any existing click loop
+      stopClickTrack();
       
-      // Only schedule if click track is enabled
-      if (!clickTrackEnabled) return;
-      
-      // Use scheduleRepeat instead of Tone.Loop for more reliable first-beat firing
-      // Schedule starting at position 0, repeating every quarter note
-      clickEventId = Tone.Transport.scheduleRepeat((time) => {
-        // Calculate which beat we're on using transport position
-        const positionParts = Tone.Transport.position.split(":");
-        const measures = parseInt(positionParts[0]) || 0;
-        const beats = parseInt(positionParts[1]) || 0;
-        const totalBeats = measures * 4 + beats;
-        const isDownbeat = totalBeats % 4 === 0;
-        
+      // Create a new loop that triggers on every quarter note
+      let beatCounter = 0;
+      clickLoop = new Tone.Loop((time) => {
+        // Accent on beat 1 (higher pitch), lighter on other beats
+        const isDownbeat = beatCounter % 4 === 0;
         const pitch = isDownbeat ? "C4" : "C5";
         const velocity = isDownbeat ? 0.8 : 0.5;
         clickSynth.triggerAttackRelease(pitch, "32n", time, velocity);
-      }, "4n", 0);
+        beatCounter++;
+      }, "4n");
+      
+      clickLoop.start(0);
     }
 
     /**
-     * Stop the click track by clearing the scheduled repeat event.
+     * Stop the click track loop.
      */
     function stopClickTrack() {
-      if (clickEventId !== null) {
-        Tone.Transport.clear(clickEventId);
-        clickEventId = null;
+      if (clickLoop) {
+        clickLoop.stop();
+        clickLoop.dispose();
+        clickLoop = null;
       }
     }
 
     /**
      * Perform a 1-bar count-in before recording starts.
-     * Shows visual beat numbers and plays click sounds using precise Tone.js timing.
-     * @param {Function} onComplete - Callback when count-in finishes, receives the exact start time
+     * Shows visual beat numbers and plays click sounds.
+     * @param {Function} onComplete - Callback when count-in finishes
      */
     function doCountIn(onComplete) {
       initClickSynth();
@@ -2928,40 +2883,32 @@
       const countInDisplay = document.getElementById("countInDisplay");
       countInDisplay.style.display = "block";
       
-      const beatDuration = 60 / currentTempo;
-      // Start count-in slightly in the future to ensure everything is scheduled
-      const startTime = Tone.now() + 0.2; 
+      // Get the duration of one beat in seconds
+      const beatDuration = 60 / Tone.Transport.bpm.value;
       
-      // Schedule the 4 beats of the count-in bar
-      for (let i = 0; i < 4; i++) {
-        const beatTime = startTime + (i * beatDuration);
-        const beatNumber = i + 1;
-        const isDownbeat = (i === 0);
-        
-        // Schedule audio click
-        clickSynth.triggerAttackRelease(isDownbeat ? "C4" : "C5", "32n", beatTime, isDownbeat ? 0.8 : 0.5);
-        
-        // Schedule visual update precisely with the audio
-        Tone.Draw.schedule(() => {
-          countInDisplay.textContent = beatNumber.toString();
-          // Add a little pulse effect to the text
-          countInDisplay.style.transform = "translate(-50%, -50%) scale(1.2)";
-          setTimeout(() => {
-            countInDisplay.style.transform = "translate(-50%, -50%) scale(1.0)";
-          }, 100);
-        }, beatTime);
+      // Schedule 4 beats of count-in
+      let beatNumber = 1;
+      
+      // Immediately show and play beat 1
+      countInDisplay.textContent = beatNumber.toString();
+      const isDownbeat = true;
+      clickSynth.triggerAttackRelease(isDownbeat ? "C4" : "C5", "32n", Tone.now(), isDownbeat ? 0.8 : 0.5);
+      
+      // Schedule beats 2, 3, 4
+      for (let i = 1; i < 4; i++) {
+        const beat = i + 1;
+        setTimeout(() => {
+          countInDisplay.textContent = beat.toString();
+          const accent = beat === 1;
+          clickSynth.triggerAttackRelease(accent ? "C4" : "C5", "32n", Tone.now(), accent ? 0.8 : 0.5);
+        }, beatDuration * 1000 * i);
       }
       
-      // The moment recording should start (Beat 1 of the first measure)
-      const recordingStartTime = startTime + (4 * beatDuration);
-      
-      // We use a regular setTimeout to trigger the UI transition and startRecordingAfterCountIn,
-      // but we pass the precise recordingStartTime to ensure audio alignment.
-      const waitTimeMs = (recordingStartTime - Tone.now()) * 1000;
+      // After 4 beats, hide the display and call the callback
       setTimeout(() => {
         countInDisplay.style.display = "none";
-        onComplete(recordingStartTime);
-      }, Math.max(0, waitTimeMs));
+        if (onComplete) onComplete();
+      }, beatDuration * 1000 * 4);
     }
 
     // ===== MIC SETUP + ANALYSIS =====
@@ -3327,27 +3274,23 @@
       recordingVoiceIndex = voiceIndex;
       recordedChunks = [];
       
-      // Update volume immediately to mute the voice being recorded
-      updateMutes();
-      
       // Update UI to show recording state
       updateRecordingUI();
       
       // Do the count-in, then start actual recording
       await Tone.start();  // Make sure audio context is running
       
-      doCountIn((preciseStartTime) => {
+      doCountIn(() => {
         // After count-in, start the actual recording and playback
-        startRecordingAfterCountIn(voiceIndex, preciseStartTime);
+        startRecordingAfterCountIn(voiceIndex);
       });
     }
 
     /**
      * Called after the count-in completes to start actual recording.
      * @param {number} voiceIndex - Voice index being recorded
-     * @param {number} preciseStartTime - The Tone.now() time when the recording should start
      */
-    function startRecordingAfterCountIn(voiceIndex, preciseStartTime) {
+    function startRecordingAfterCountIn(voiceIndex) {
       // Use the mono summed stream from the audio context
       const recordStream = monoDest ? monoDest.stream : micStream;
       
@@ -3392,26 +3335,18 @@
       // Start pitch detection
       startPitchDetection();
       
-      // Stop and cancel transport to ensure a clean start for recording
-      Tone.Transport.stop();
-      Tone.Transport.cancel();
-      Tone.Transport.seconds = 0; // Explicitly reset to zero
-
-      // Start the synth playback if enabled (schedules into the transport)
-      if (playSynthEnabled && currentVoicedChords) {
-        schedulePlayback(currentVoicedChords, currentTempo);
-      }
-      
-      // Start the click track if enabled (schedules into the transport)
+      // Start the click track if enabled
       if (clickTrackEnabled) {
         startClickTrack();
       }
       
-      // Re-sync vocal players to the transport
-      syncAllVocalPlayers();
+      // Start the synth playback if enabled
+      if (playSynthEnabled && currentVoicedChords) {
+        schedulePlayback(currentVoicedChords, currentTempo);
+      }
       
-      // Start the transport precisely
-      Tone.Transport.start(preciseStartTime);
+      // Start the transport
+      Tone.Transport.start();
       isPlaying = true;
       document.getElementById("playPauseBtn").textContent = "Pause (space)";
       
@@ -3447,9 +3382,6 @@
       // Clear recording state
       isRecording = false;
       recordingVoiceIndex = null;
-
-      // Update volume to unmute the voice
-      updateMutes();
       
       // Update UI
       updateRecordingUI();
@@ -3486,21 +3418,6 @@
 
     // ===== VOCAL PLAYBACK (Tone.Player) =====
     /**
-     * Re-sync all vocal players to the transport.
-     * Useful after Tone.Transport.cancel() which may clear player sync events.
-     */
-    function syncAllVocalPlayers() {
-      vocalPlayers.forEach((player, i) => {
-        if (player && player.loaded) {
-          player.unsync(); // Clear previous sync to avoid duplicates
-          // Apply latency compensation: shift the start time of the recording 
-          // earlier so it aligns with what the user heard while singing.
-          player.sync().start(0, vocalLatencyCompensation);
-        }
-      });
-    }
-
-    /**
      * Create a Tone.Player for a recorded voice.
      * @param {number} voiceIndex - Voice index
      * @param {string} blobUrl - URL of the recorded audio blob
@@ -3508,8 +3425,6 @@
     function createVocalPlayer(voiceIndex, blobUrl) {
       // Dispose of existing player if any
       if (vocalPlayers[voiceIndex]) {
-        vocalPlayers[voiceIndex].unsync(); // Unsync before disposing
-        vocalPlayers[voiceIndex].stop();   // Hard stop
         vocalPlayers[voiceIndex].dispose();
       }
       
@@ -3518,18 +3433,10 @@
         url: blobUrl,
         loop: true,
         volume: 0,
-        fadeIn: 0.05,  // Super tiny fade in to prevent pops/clicks
-        fadeOut: 0.05, // Super tiny fade out to prevent pops/clicks
         onload: () => {
           // Normalize the audio once it's loaded to maximize volume
           if (player.buffer) {
             player.buffer = player.buffer.normalize();
-          }
-          // Ensure it's synced once loaded, but ONLY if it's the current player
-          if (vocalPlayers[voiceIndex] === player) {
-            player.unsync(); 
-            // Apply latency compensation here as well
-            player.sync().start(0, vocalLatencyCompensation);
           }
         }
       });
@@ -3541,20 +3448,13 @@
         vocalPanners[voiceIndex].connect(vocalReverb);
       }
 
-      // Initialize vocal fader if it doesn't exist
-      if (!vocalFaderGains[voiceIndex]) {
-        vocalFaderGains[voiceIndex] = new Tone.Gain(1);
-        vocalFaderGains[voiceIndex].connect(vocalPanners[voiceIndex]);
-      }
-
       // Initialize vocal gain if it doesn't exist
       if (!vocalGains[voiceIndex]) {
         vocalGains[voiceIndex] = new Tone.Gain(1);
-        vocalGains[voiceIndex].connect(vocalFaderGains[voiceIndex]);
+        vocalGains[voiceIndex].connect(vocalPanners[voiceIndex]);
       }
       
       player.connect(vocalGains[voiceIndex]);
-      
       vocalPlayers[voiceIndex] = player;
       
       // Update volume immediately to match current solo/mute state
@@ -3563,10 +3463,16 @@
 
     /**
      * Start playing all recorded vocals in sync with the transport.
-     * (Empty because players are now synced to the transport automatically)
      */
     function startVocalPlayback() {
-      // Logic moved to player.sync() in createVocalPlayer
+      if (!playVocalsEnabled) return;
+      
+      vocalPlayers.forEach((player, idx) => {
+        if (player && player.loaded && voiceRecordings[idx]) {
+          // Sync the player to start at the current transport position
+          player.start(0);
+        }
+      });
     }
 
     /**
@@ -3575,8 +3481,6 @@
     function stopVocalPlayback() {
       vocalPlayers.forEach(player => {
         if (player) {
-          // If synced, stop() will also unsync, so we just use stop() if we want it to cease immediately
-          // but usually sync() handles this via Transport
           player.stop();
         }
       });
@@ -3895,19 +3799,6 @@
     const openVocalReverbBtn = document.getElementById("openVocalReverbBtn");
     const closeVocalReverbBtn = document.getElementById("closeVocalReverbPanel");
     
-    // Latency Slider Logic
-    const latencySlider = document.getElementById("latencySlider");
-    const latencyValue = document.getElementById("latencyValue");
-    if (latencySlider) {
-      latencySlider.addEventListener("input", (e) => {
-        const ms = parseInt(e.target.value, 10);
-        latencyValue.textContent = ms;
-        vocalLatencyCompensation = ms / 1000;
-        // Re-sync all players with the new latency offset
-        syncAllVocalPlayers();
-      });
-    }
-
     openVocalReverbBtn.addEventListener("click", () => {
       vocalReverbPanel.style.display = "block";
     });
@@ -3945,24 +3836,24 @@
     // but we add a hook to manage vocal playback when Choir Mode is active)
     const originalSchedulePlayback = schedulePlayback;
     
-    // Clean up old listeners before adding new ones
-    Tone.Transport.off("start");
-    Tone.Transport.off("stop");
-    Tone.Transport.off("pause");
-
     // Add a Transport event to start vocals when playback begins
     Tone.Transport.on("start", () => {
-      // Vocal starting logic moved to player.sync() in createVocalPlayer
+      if (choirModeEnabled && playVocalsEnabled && !isRecording) {
+        startVocalPlayback();
+      }
+      if (choirModeEnabled && clickTrackEnabled && !isRecording) {
+        startClickTrack();
+      }
     });
     
     Tone.Transport.on("stop", () => {
-      // stopVocalPlayback removed as players are synced to Transport
-      // stopClickTrack removed as the loop handles its own state
+      stopVocalPlayback();
+      stopClickTrack();
     });
     
     Tone.Transport.on("pause", () => {
-      // stopVocalPlayback removed as players are synced to Transport
-      // stopClickTrack removed as the loop handles its own state
+      stopVocalPlayback();
+      stopClickTrack();
     });
 
   </script>
