@@ -12,7 +12,7 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import type { Arrangement, Voice, PitchPoint } from '../../types';
 import { useAppStore } from '../../stores/appStore';
-import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency } from '../../utils/music';
+import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 import { playbackEngine } from '../../services/PlaybackEngine';
 
@@ -82,26 +82,6 @@ function degreeToY(
   return semitoneToY(semitone, minSemitone, maxSemitone, gridTop, gridHeight);
 }
 
-/**
- * Convert a frequency to Y position (for pitch trace).
- */
-function frequencyToY(
-  frequency: number,
-  minFreq: number,
-  maxFreq: number,
-  gridTop: number,
-  gridHeight: number
-): number {
-  if (frequency <= 0) return gridTop + gridHeight; // Off-screen for no pitch
-
-  // Use logarithmic scale for frequency
-  const logMin = Math.log2(minFreq);
-  const logMax = Math.log2(maxFreq);
-  const logFreq = Math.log2(frequency);
-
-  const normalized = (logFreq - logMin) / (logMax - logMin);
-  return gridTop + gridHeight * (1 - normalized);
-}
 
 /**
  * Convert a time position (t16) to X position on the grid.
@@ -159,6 +139,7 @@ export function Grid({
   const removeNode = useAppStore((state) => state.removeNode);
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
   const updateNode = useAppStore((state) => state.updateNode);
+  const transposition = useAppStore((state) => state.transposition);
 
   /**
    * Calculate the pitch range for the arrangement in semitones.
@@ -166,7 +147,7 @@ export function Grid({
    * Uses zoomLevel to adjust the visible range (higher zoom = fewer semitones visible).
    */
   const getPitchRange = useCallback(() => {
-    if (!arrangement) return { minSemitone: -5, maxSemitone: 19, minFreq: 130, maxFreq: 520 };
+    if (!arrangement) return { minSemitone: -5, maxSemitone: 19, minFreq: 130, maxFreq: 520, effectiveTonicMidi: 60 };
 
     let minSemi = Infinity;
     let maxSemi = -Infinity;
@@ -204,12 +185,17 @@ export function Grid({
     const finalMax = Math.ceil(center + zoomedRange / 2);
 
     // Calculate frequency range (using MIDI-based calculation)
-    // Tonic at octave 4 = MIDI 60 for C
-    const tonicMidi = 60; // Simplified - assuming C4 as reference
-    const minFreq = midiToFrequency(tonicMidi + finalMin);
-    const maxFreq = midiToFrequency(tonicMidi + finalMax);
+    // Get the MIDI pitch of the arrangement's tonic at base octave 4
+    const tonicMidi = noteNameToMidi(`${arrangement.tonic}4`) || 60;
 
-    return { minSemitone: finalMin, maxSemitone: finalMax, minFreq, maxFreq };
+    // We also need to factor in playback transposition for the frequencies
+    // but the grid itself stays in 'compositional' semitones (where tonic is 0)
+    const effectiveTonicMidi = tonicMidi + (transposition || 0);
+
+    const minFreq = midiToFrequency(effectiveTonicMidi + finalMin);
+    const maxFreq = midiToFrequency(effectiveTonicMidi + finalMax);
+
+    return { minSemitone: finalMin, maxSemitone: finalMax, minFreq, maxFreq, effectiveTonicMidi };
   }, [arrangement, display.zoomLevel]);
 
   /**
@@ -266,7 +252,7 @@ export function Grid({
     }
 
     // Get pitch range (now in semitones)
-    const { minSemitone, maxSemitone, minFreq, maxFreq } = getPitchRange();
+    const { minSemitone, maxSemitone, effectiveTonicMidi } = getPitchRange();
 
     // Time range (in 16th notes) - calculate based on time signature
     const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
@@ -302,11 +288,11 @@ export function Grid({
 
         // Draw semitone label on the left
         if (semi >= minSemitone + 1 && semi <= maxSemitone - 1) {
-          ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.3)';
-          ctx.font = '10px system-ui';
+          ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.35)';
+          ctx.font = 'bold 10px system-ui';
           ctx.textAlign = 'right';
           ctx.textBaseline = 'middle';
-          ctx.fillText(label, gridLeft - 8, y);
+          ctx.fillText(label, gridLeft - 10, y);
         }
       }
 
@@ -397,11 +383,11 @@ export function Grid({
     }
 
     if (!onlyChords) {
-      // 1. Draw recorded pitch traces (behind contours)
       ctx.save();
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
+      // 1. Draw recorded pitch traces (behind contours)
       for (const [voiceId, recording] of recordings.entries()) {
         const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
         if (voiceIndex === -1) continue;
@@ -417,129 +403,132 @@ export function Grid({
           ? 'rgba(150, 150, 150, 0.4)'
           : (voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d');
 
-        ctx.strokeStyle = voiceColor;
-        ctx.lineWidth = 10;
-        ctx.globalAlpha = isMuted ? 0.3 : 0.45;
-
-        drawPitchTrace(ctx, recording.pitchTrace, minFreq, maxFreq, startT16, endT16,
-          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
+        drawPitchTrace(ctx, recording.pitchTrace, startT16, endT16,
+          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
+          color: voiceColor,
+          lineWidth: 10,
+          opacity: isMuted ? 0.2 : 0.4,
+          isLive: false,
+          effectiveTonicMidi,
+          minSemitone,
+          maxSemitone
+        });
       }
-      ctx.restore();
 
-      // 2. Draw live pitch trace (during recording - also behind contours but slightly higher alpha)
+      // 2. Draw live pitch trace (during recording)
       if (livePitchTrace.length > 0 && armedVoiceId && playback.isRecording) {
-        ctx.save();
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
         const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
         const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
         const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
 
-        ctx.strokeStyle = traceColor;
-        ctx.lineWidth = 10;
-        ctx.globalAlpha = 0.55;
-
-        drawPitchTrace(ctx, livePitchTrace, minFreq, maxFreq, startT16, endT16,
-          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight);
-        ctx.restore();
-      }
-
-      // 3. Draw contour lines for each voice
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-
-      for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
-        const voice = arrangement.voices[voiceIndex];
-        const voiceState = voiceStates.find(v => v.voiceId === voice.id);
-
-        // Determine if this voice is muted or soloed out
-        const hasSolo = voiceStates.some(v => v.synthSolo);
-        const isMuted = voiceState?.synthMuted || (hasSolo && !voiceState?.synthSolo);
-
-        // Get voice color
-        const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
-        const voiceColor = isMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
-        const glowColor = voiceColor.includes('rgba') ? voiceColor : voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
-
-        // Draw contour with glow effect
-        ctx.save();
-
-        // Glow layer - only if not muted
-        if (display.glowIntensity > 0 && !isMuted) {
-          ctx.shadowColor = glowColor;
-          ctx.shadowBlur = 10 * display.glowIntensity;
-          ctx.strokeStyle = voiceColor;
-          ctx.lineWidth = 3;
-          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
-        }
-
-        // Main line
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = voiceColor;
-        ctx.lineWidth = 2;
-        drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
-
-        // Draw nodes - larger circles with scale degree numbers (like mockup)
-        const nodeRadius = 12; // Larger nodes to fit numbers
-
-        for (const node of voice.nodes) {
-          if (node.term) continue; // Skip termination nodes
-
-          const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
-          const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
-
-          // Draw node glow - only if not muted
-          if (display.glowIntensity > 0 && !isMuted) {
-            ctx.shadowColor = voiceColor;
-            ctx.shadowBlur = 8 * display.glowIntensity;
-          }
-
-          // Draw node circle with opaque fill (mockup style)
-          ctx.beginPath();
-          ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
-          ctx.fillStyle = voiceColor; // Fully opaque fill
-          ctx.fill();
-          ctx.strokeStyle = isMuted ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-
-          ctx.shadowBlur = 0;
-
-          // Always draw scale degree number inside node (white text for contrast)
-          ctx.fillStyle = isMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
-          ctx.font = 'bold 12px system-ui';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(String(node.deg), x, y + 0.5);
-        }
-
-        ctx.restore();
+        drawPitchTrace(ctx, livePitchTrace, startT16, endT16,
+          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
+          color: traceColor,
+          lineWidth: 10,
+          opacity: 0.8,
+          isLive: true,
+          effectiveTonicMidi,
+          minSemitone,
+          maxSemitone
+        });
       }
       ctx.restore();
-
-      // 4. Draw playhead - read directly from engine for smooth animation
-      const playheadT16 = playbackEngine.getCurrentPositionT16();
-      const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
-
-      ctx.strokeStyle = playheadColor;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(playheadX, gridTop);
-      ctx.lineTo(playheadX, gridTop + gridHeight);
-      ctx.stroke();
-
-      // Playhead glow
-      ctx.shadowColor = playheadColor;
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.moveTo(playheadX, gridTop);
-      ctx.lineTo(playheadX, gridTop + gridHeight);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
     }
-  }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange]);
+
+    // 3. Draw contour lines for each voice
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
+      const voice = arrangement.voices[voiceIndex];
+      const voiceState = voiceStates.find(v => v.voiceId === voice.id);
+
+      // Determine if this voice is muted or soloed out
+      const hasSolo = voiceStates.some(v => v.synthSolo);
+      const isMuted = voiceState?.synthMuted || (hasSolo && !voiceState?.synthSolo);
+
+      // Get voice color
+      const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+      const voiceColor = isMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
+      const glowColor = voiceColor.includes('rgba') ? voiceColor : voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
+
+      // Draw contour with glow effect
+      ctx.save();
+
+      // Glow layer - only if not muted
+      if (display.glowIntensity > 0 && !isMuted) {
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = 10 * display.glowIntensity;
+        ctx.strokeStyle = voiceColor;
+        ctx.lineWidth = 3;
+        drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
+      }
+
+      // Main line
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = voiceColor;
+      ctx.lineWidth = 2;
+      drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
+
+      // Draw nodes - larger circles with scale degree numbers (like mockup)
+      const nodeRadius = 12; // Larger nodes to fit numbers
+
+      for (const node of voice.nodes) {
+        if (node.term) continue; // Skip termination nodes
+
+        const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
+        const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+        // Draw node glow - only if not muted
+        if (display.glowIntensity > 0 && !isMuted) {
+          ctx.shadowColor = voiceColor;
+          ctx.shadowBlur = 8 * display.glowIntensity;
+        }
+
+        // Draw node circle with opaque fill (mockup style)
+        ctx.beginPath();
+        ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = voiceColor; // Fully opaque fill
+        ctx.fill();
+        ctx.strokeStyle = isMuted ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        // Always draw scale degree number inside node (white text for contrast)
+        ctx.fillStyle = isMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
+        ctx.font = 'bold 12px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(node.deg), x, y + 0.5);
+      }
+
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // 4. Draw playhead - read directly from engine for smooth animation
+    const playheadT16 = playbackEngine.getCurrentPositionT16();
+    const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
+
+    ctx.strokeStyle = playheadColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(playheadX, gridTop);
+    ctx.lineTo(playheadX, gridTop + gridHeight);
+    ctx.stroke();
+
+    // Playhead glow
+    ctx.shadowColor = playheadColor;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(playheadX, gridTop);
+    ctx.lineTo(playheadX, gridTop + gridHeight);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -620,13 +609,11 @@ export function Grid({
   }
 
   /**
-   * Draw a pitch trace (user recording).
+   * Draw a pitch trace (user recording) with clean, neon glow.
    */
   function drawPitchTrace(
     ctx: CanvasRenderingContext2D,
     trace: PitchPoint[],
-    minFreq: number,
-    maxFreq: number,
     startT16: number,
     endT16: number,
     tempo: number,
@@ -634,51 +621,129 @@ export function Grid({
     gridLeft: number,
     gridTop: number,
     gridWidth: number,
-    gridHeight: number
+    gridHeight: number,
+    options: {
+      color: string;
+      lineWidth: number;
+      opacity: number;
+      isLive: boolean;
+      effectiveTonicMidi: number;
+      minSemitone: number;
+      maxSemitone: number;
+    }
   ) {
     if (trace.length < 2) return;
 
-    ctx.beginPath();
-    let started = false;
-    let lastPointTime = -1;
+    const { color, lineWidth, opacity, isLive, effectiveTonicMidi, minSemitone, maxSemitone } = options;
 
-    for (const point of trace) {
-      // Check for gaps: either explicit (zero frequency) or implicit (time jump > 150ms)
-      const isGap = point.frequency <= 0 || (lastPointTime !== -1 && point.time - lastPointTime > 150);
-
-      if (isGap || point.confidence < 0.3) {
-        // No valid pitch or gap detected - break the line
-        if (started) {
-          ctx.stroke();
-          ctx.beginPath();
-          started = false;
-        }
-
-        if (isGap) {
-          lastPointTime = point.time;
-          continue;
-        }
-      }
-
-      // Convert time (ms) to t16 position
-      const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
-      const t16 = point.time / sixteenthMs;
-
-      const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
-      const y = frequencyToY(point.frequency, minFreq, maxFreq, gridTop, gridHeight);
-
-      if (!started) {
-        ctx.moveTo(x, y);
-        started = true;
-      } else {
-        ctx.lineTo(x, y);
-      }
-
-      lastPointTime = point.time;
+    function getPitchY(frequency: number): number {
+      // Calibrate against the grid: 
+      // 1. Get MIDI pitch of frequency
+      const midi = (A4_MIDI + 12 * Math.log2(frequency / A4_FREQUENCY));
+      // 2. Convert to semitone offset from EFFECTIVE tonic (including transposition)
+      const semitone = midi - effectiveTonicMidi;
+      // 3. Map to Y using the shared semitoneToY logic
+      return semitoneToY(semitone, minSemitone, maxSemitone, gridTop, gridHeight);
     }
 
-    if (started) {
-      ctx.stroke();
+    function drawPath(width: number, alpha: number, blur?: number, composite: GlobalCompositeOperation = 'source-over') {
+      ctx.save();
+      ctx.beginPath();
+      ctx.lineWidth = width;
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = alpha;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalCompositeOperation = composite;
+
+      if (blur) {
+        ctx.shadowBlur = blur;
+        ctx.shadowColor = color;
+      }
+
+      let started = false;
+      let lastPointTime = -1;
+
+      for (const point of trace) {
+        const isGap = point.frequency <= 0 || (lastPointTime !== -1 && point.time - lastPointTime > 150);
+
+        if (isGap || point.confidence < 0.3) {
+          if (started) {
+            ctx.stroke();
+            ctx.beginPath();
+            started = false;
+          }
+          if (isGap) {
+            lastPointTime = point.time;
+            continue;
+          }
+        }
+
+        const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
+        const t16 = point.time / sixteenthMs;
+        const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
+        const y = getPitchY(point.frequency);
+
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+        lastPointTime = point.time;
+      }
+
+      if (started) {
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Pass 1: The Glow Pass (Same method as contour lines)
+    // Forced to equivalent of intensity 1 (shadowBlur 10)
+    ctx.save();
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = color;
+    drawPath(lineWidth, opacity * 0.8);
+    ctx.restore();
+
+    // Pass 2: The Core Pass (Solid line)
+    drawPath(lineWidth, opacity);
+
+    // Live Head Flair (Pulse only, no particles)
+    if (isLive) {
+      const lastPoint = trace[trace.length - 1];
+      if (lastPoint && lastPoint.frequency > 0) {
+        const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
+        const t16 = lastPoint.time / sixteenthMs;
+        const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
+        const y = getPitchY(lastPoint.frequency);
+
+        ctx.save();
+        // Bright Pulsing Cursor
+        const pulse = Math.sin(Date.now() / 150) * 2 + 8;
+
+        // Glow circle
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, pulse * 2.5);
+        grad.addColorStop(0, '#fff');
+        grad.addColorStop(0.2, color);
+        grad.addColorStop(1, 'transparent');
+
+        ctx.fillStyle = grad;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.arc(x, y, pulse * 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Sharp highlight center
+        ctx.fillStyle = '#fff';
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      }
     }
   }
 

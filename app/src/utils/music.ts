@@ -60,25 +60,25 @@ export function degreeToSemitoneOffset(deg: number, octave: number, scaleType: s
  * Each number represents how many semitones above the tonic that scale degree is.
  */
 const SCALE_PATTERNS: Record<string, number[]> = {
-  'major':            [0, 2, 4, 5, 7, 9, 11],  // 1, 2, 3, 4, 5, 6, 7
-  'minor':            [0, 2, 3, 5, 7, 8, 10],  // Natural minor
-  'dorian':           [0, 2, 3, 5, 7, 9, 10],
-  'mixolydian':       [0, 2, 4, 5, 7, 9, 10],
+  'major': [0, 2, 4, 5, 7, 9, 11],  // 1, 2, 3, 4, 5, 6, 7
+  'minor': [0, 2, 3, 5, 7, 8, 10],  // Natural minor
+  'dorian': [0, 2, 3, 5, 7, 9, 10],
+  'mixolydian': [0, 2, 4, 5, 7, 9, 10],
   'pentatonic-major': [0, 2, 4, 7, 9],         // 5 notes: 1, 2, 3, 5, 6
   'pentatonic-minor': [0, 3, 5, 7, 10],        // 5 notes: 1, b3, 4, 5, b7
-  'blues':            [0, 3, 5, 6, 7, 10],     // Minor pentatonic + blue note
-  'chromatic':        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  'blues': [0, 3, 5, 6, 7, 10],     // Minor pentatonic + blue note
+  'chromatic': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 };
 
 /**
  * Reference frequency for A4 (standard tuning).
  */
-const A4_FREQUENCY = 440;
+export const A4_FREQUENCY = 440;
 
 /**
  * MIDI note number for A4.
  */
-const A4_MIDI = 69;
+export const A4_MIDI = 69;
 
 /**
  * Parse a note name like "C4" or "F#3" into its components.
@@ -89,12 +89,12 @@ export function parseNoteName(noteName: string): { note: string; octave: number 
   // Match note name (letter + optional accidental) and octave number
   const match = noteName.match(/^([A-Ga-g][#b]?)(-?\d+)$/);
   if (!match) return null;
-  
+
   const note = match[1].charAt(0).toUpperCase() + match[1].slice(1); // Normalize case
   const octave = parseInt(match[2], 10);
-  
+
   if (NOTE_TO_SEMITONE[note] === undefined) return null;
-  
+
   return { note, octave };
 }
 
@@ -106,7 +106,7 @@ export function parseNoteName(noteName: string): { note: string; octave: number 
 export function noteNameToMidi(noteName: string): number | null {
   const parsed = parseNoteName(noteName);
   if (!parsed) return null;
-  
+
   const semitone = NOTE_TO_SEMITONE[parsed.note];
   // MIDI note = (octave + 1) * 12 + semitone
   // C4 = 60, so C-1 = 0
@@ -179,13 +179,13 @@ export function scaleDegreeToSemitones(
 ): number {
   const pattern = SCALE_PATTERNS[scaleType] || SCALE_PATTERNS['major'];
   const scaleLength = pattern.length;
-  
+
   // Handle degrees outside the basic scale (e.g., degree 8 = octave above 1)
   // Degree 1 = index 0, degree 2 = index 1, etc.
   const degreeIndex = scaleDegree - 1;
   const octaves = Math.floor(degreeIndex / scaleLength);
   const indexInScale = ((degreeIndex % scaleLength) + scaleLength) % scaleLength; // Handle negatives
-  
+
   return pattern[indexInScale] + (octaves + octaveOffset) * 12;
 }
 
@@ -211,16 +211,16 @@ export function scaleDegreeToFrequency(
     console.warn(`Invalid tonic: ${tonic}, defaulting to C`);
     return scaleDegreeToFrequency(scaleDegree, 'C', scaleType, baseOctave, octaveOffset);
   }
-  
+
   // Calculate MIDI note for the tonic at baseOctave
   const tonicMidi = (baseOctave + 1) * 12 + tonicSemitone;
-  
+
   // Get semitone offset for this scale degree
   const semitoneOffset = scaleDegreeToSemitones(scaleDegree, scaleType, octaveOffset);
-  
+
   // Final MIDI note
   const midi = tonicMidi + semitoneOffset;
-  
+
   return midiToFrequency(midi);
 }
 
@@ -233,7 +233,7 @@ export function scaleDegreeToFrequency(
 export function transposeTonic(tonic: string, semitones: number): string {
   const originalSemitone = NOTE_TO_SEMITONE[tonic];
   if (originalSemitone === undefined) return tonic;
-  
+
   const newSemitone = ((originalSemitone + semitones) % 12 + 12) % 12;
   return SEMITONE_TO_NOTE[newSemitone];
 }
@@ -254,7 +254,7 @@ export function getArrangementFrequencyRange(
 ): { minFreq: number; maxFreq: number; minNote: string; maxNote: string } {
   let minMidi = Infinity;
   let maxMidi = -Infinity;
-  
+
   for (const voice of voices) {
     for (const node of voice.nodes) {
       const freq = scaleDegreeToFrequency(
@@ -269,7 +269,7 @@ export function getArrangementFrequencyRange(
       maxMidi = Math.max(maxMidi, midi);
     }
   }
-  
+
   return {
     minFreq: midiToFrequency(minMidi),
     maxFreq: midiToFrequency(maxMidi),
@@ -294,7 +294,7 @@ export function suggestTransposition(
   const vocalMidMidi = frequencyToMidi(
     Math.sqrt(vocalRange.lowFrequency * vocalRange.highFrequency)
   );
-  
+
   // Round to nearest semitone
   return Math.round(vocalMidMidi - arrMidMidi);
 }
