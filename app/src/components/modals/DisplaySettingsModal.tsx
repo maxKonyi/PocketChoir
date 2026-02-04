@@ -183,6 +183,24 @@ export function DisplaySettingsModal() {
             />
           </div>
 
+          {/* Grid opacity */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[var(--text-primary)]">
+                Grid Opacity
+              </span>
+              <span className="text-xs text-[var(--text-muted)]">
+                {Math.round(display.gridOpacity * 100)}%
+              </span>
+            </div>
+            <Slider
+              value={display.gridOpacity * 100}
+              min={0}
+              max={100}
+              onChange={(e) => handleSliderChange('gridOpacity', Number(e.target.value) / 100)}
+            />
+          </div>
+
           {/* Label format */}
           <div className="space-y-2">
             <span className="text-sm text-[var(--text-primary)]">

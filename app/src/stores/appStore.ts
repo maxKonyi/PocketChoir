@@ -53,6 +53,7 @@ interface DisplaySettings {
   labelFormat: 'degree' | 'solfege' | 'noteName';
   zoomLevel: number;            // 1 = fit all, higher = zoomed in
   glowIntensity: number;        // 0-2, multiplier for glow effects
+  gridOpacity: number;          // 0-1, opacity of grid elements
   backgroundVideo: string;      // Current background video path (or 'none')
   backgroundBlur: number;       // Blur amount in px
   backgroundBrightness: number; // 0-1 brightness
@@ -226,7 +227,8 @@ const initialDisplaySettings: DisplaySettings = {
   showPitchLabels: false,
   labelFormat: 'degree',
   zoomLevel: 1,
-  glowIntensity: 1,
+  glowIntensity: 0,
+  gridOpacity: 0.5,
   backgroundVideo: '/src/data/backgrounds/Forest1.mp4',
   backgroundBlur: 4,
   backgroundBrightness: 0.6,

@@ -275,6 +275,9 @@ export function Grid({
 
     // Draw horizontal pitch lines (semitone-based chromatic grid)
     if (!onlyChords) {
+      ctx.save();
+      ctx.globalAlpha = display.gridOpacity;
+
       for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
         const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
         const label = semitoneToLabel(semi);
@@ -342,6 +345,7 @@ export function Grid({
         const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
         ctx.fillText(`${bar + 1}`, x, gridTop - 10);
       }
+      ctx.restore();
     }
 
     // Draw chord track
@@ -539,6 +543,8 @@ export function Grid({
     if (voice.nodes.length === 0) return;
 
     ctx.beginPath();
+    let lastX = 0;
+    let lastY = 0;
     let inPhrase = false;
 
     for (let i = 0; i < voice.nodes.length; i++) {
@@ -550,9 +556,38 @@ export function Grid({
         ctx.moveTo(x, y);
         inPhrase = true;
       } else {
-        // Draw line from previous node to this one
-        ctx.lineTo(x, y);
+        // Draw curved connection from previous node to this one
+        const nodeRadius = 12;
+        const bendWidth = Math.min(40, (x - lastX) * 0.8);
+        const bendStartX = x - bendWidth;
+
+        // Draw a straight horizontal line to the start of the bend
+        ctx.lineTo(bendStartX, lastY);
+
+        if (Math.abs(y - lastY) < 1) {
+          // Same pitch, just draw a straight line
+          ctx.lineTo(x, y);
+        } else {
+          // Pitch changes: enter from bottom if moving up, top if moving down
+          const isMovingUp = y < lastY;
+          const entryY = isMovingUp ? y + nodeRadius : y - nodeRadius;
+
+          // Curve to the entry point at the top/bottom of the circle
+          // cp1 maintains horizontal exit from the previous segment
+          // cp2 ensures vertical entry into the circle
+          const cp1x = bendStartX + bendWidth * 0.5;
+          const cp1y = lastY;
+          const cp2x = x;
+          const cp2y = lastY;
+
+          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, entryY);
+          // Final vertical segment to the center
+          ctx.lineTo(x, y);
+        }
       }
+
+      lastX = x;
+      lastY = y;
 
       // Check if this is a termination node
       if (node.term) {
