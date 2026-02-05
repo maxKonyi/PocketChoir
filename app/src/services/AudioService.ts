@@ -11,8 +11,8 @@ class AudioServiceClass {
   // Master gain node - controls overall volume
   private masterGain: GainNode | null = null;
 
-  // Reverb effect using ConvolverNode
-  private reverbNode: ConvolverNode | null = null;
+  // Reverb effect using Tone.Reverb (matches choir_ref behavior)
+  private reverbNode: Tone.Reverb | null = null;
   private reverbGain: GainNode | null = null;  // Wet signal level
   private dryGain: GainNode | null = null;     // Dry signal level
 
@@ -49,12 +49,17 @@ class AudioServiceClass {
     this.reverbGain.gain.value = 0.4; // Default reverb level (matches choir_ref wet ≈ 0.40)
     this.reverbGain.connect(this.masterGain);
 
-    // Create reverb convolver (we'll load an impulse response later)
-    this.reverbNode = this.context.createConvolver();
-    this.reverbNode.connect(this.reverbGain);
-
     // Initialize Tone.js with this context
     await Tone.setContext(this.context);
+
+    // Create Tone reverb node.
+    // IMPORTANT: We keep wet=1.0 on the effect itself and control overall reverb
+    // amount using `reverbGain`, so this acts like a global reverb send.
+    this.reverbNode = new Tone.Reverb({
+      decay: 2.9,
+      preDelay: 0.01,
+      wet: 1.0,
+    });
 
     // Create global Chorus from choir_ref
     this.globalChorus = new Tone.Chorus({
@@ -69,10 +74,13 @@ class AudioServiceClass {
     // Route the shared mix bus through a dry path + a reverb send.
     // Dry is always full-strength (dryGain = 1.0). Wet level is controlled by reverbGain.
     this.globalChorus.connect(this.dryGain);
+    // Tone nodes should connect to Tone nodes; use Tone.connect so this works
+    // even though `reverbGain` is a native WebAudio GainNode.
     this.globalChorus.connect(this.reverbNode);
+    Tone.connect(this.reverbNode, this.reverbGain);
 
-    // Generate a simple synthetic reverb impulse response
-    await this.createSyntheticReverb();
+    // Tone.Reverb needs to generate its internal impulse response.
+    await this.reverbNode.generate();
 
     // Resume context if it's suspended (browser autoplay policy)
     if (this.context.state === 'suspended') {
@@ -81,44 +89,6 @@ class AudioServiceClass {
 
     this.isStarted = true;
     console.log('AudioService initialized with Tone.js and global Chorus');
-  }
-
-  /**
-   * Create a simple synthetic reverb impulse response.
-   * This creates a basic room-like reverb without loading external files.
-   */
-  private async createSyntheticReverb(): Promise<void> {
-    if (!this.context || !this.reverbNode) return;
-
-    // Match choir_ref hall-ish reverb character:
-    // decay ≈ 2.9s, preDelay ≈ 10ms, wet controlled by reverbGain.
-    const sampleRate = this.context.sampleRate;
-    const decaySeconds = 2.9;
-    const preDelaySeconds = 0.01;
-    const totalSeconds = decaySeconds + preDelaySeconds;
-    const length = Math.floor(sampleRate * totalSeconds);
-    const preDelaySamples = Math.floor(sampleRate * preDelaySeconds);
-    const impulse = this.context.createBuffer(2, length, sampleRate);
-
-    // Fill with decaying noise for a simple reverb effect
-    for (let channel = 0; channel < 2; channel++) {
-      const channelData = impulse.getChannelData(channel);
-      for (let i = 0; i < length; i++) {
-        if (i < preDelaySamples) {
-          channelData[i] = 0;
-          continue;
-        }
-
-        const t = i - preDelaySamples;
-        const decayLen = Math.max(1, length - preDelaySamples);
-
-        // Exponential decay with random noise
-        const decay = Math.exp(-3 * t / decayLen);
-        channelData[i] = (Math.random() * 2 - 1) * decay;
-      }
-    }
-
-    this.reverbNode.buffer = impulse;
   }
 
   /**
@@ -153,8 +123,11 @@ class AudioServiceClass {
 
   /**
    * Get the reverb input node (for signals that should have reverb).
+   *
+   * NOTE: This returns a Tone node. If you're connecting from a native
+   * WebAudio node (like a GainNode), use `Tone.connect(nativeNode, reverbInput)`.
    */
-  getReverbInput(): ConvolverNode {
+  getReverbInput(): Tone.Reverb {
     if (!this.reverbNode) {
       throw new Error('AudioService not initialized. Call initialize() first.');
     }
@@ -237,7 +210,9 @@ class AudioServiceClass {
 
     // Optionally connect to reverb
     if (connectToReverb && this.reverbNode) {
-      gain.connect(this.reverbNode);
+      // `gain` is a native WebAudio node and `reverbNode` is a Tone node.
+      // Use Tone.connect to bridge the two safely.
+      Tone.connect(gain, this.reverbNode);
     }
 
     return gain;

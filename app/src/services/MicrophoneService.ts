@@ -6,6 +6,7 @@
    ============================================================ */
 
 import { AudioService } from './AudioService';
+import * as Tone from 'tone';
 import type { AudioInputDevice, MicrophoneState } from '../types';
 
 /**
@@ -55,9 +56,24 @@ class MicrophoneServiceClass {
    */
   async initialize(): Promise<void> {
     try {
+      // If we already have an active stream, don't re-request getUserMedia.
+      // Re-requesting can reset the user's chosen device and confuse the UI.
+      if (this.stream) {
+        await this.refreshDevices();
+        // If nothing is selected yet, follow the browser default.
+        if (!this.selectedDeviceId && this.devices.some(d => d.deviceId === 'default')) {
+          this.selectedDeviceId = 'default';
+        }
+        this.setupAudioRouting();
+        return;
+      }
+
       // Request microphone permission with a basic stream first
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          // Always follow the browser's current default input device.
+          // Chrome exposes this as a special deviceId called "default".
+          deviceId: 'default',
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false, // We handle gain ourselves
@@ -66,6 +82,11 @@ class MicrophoneServiceClass {
 
       // Enumerate available devices
       await this.refreshDevices();
+
+      // If the browser exposes a "default" input, treat that as selected.
+      if (!this.selectedDeviceId && this.devices.some(d => d.deviceId === 'default')) {
+        this.selectedDeviceId = 'default';
+      }
 
       // Set up audio routing
       this.setupAudioRouting();
@@ -92,9 +113,10 @@ class MicrophoneServiceClass {
           isDefault: device.deviceId === 'default',
         }));
 
-      // Select default device if none selected
+      // Select the browser default device if none selected.
       if (!this.selectedDeviceId && this.devices.length > 0) {
-        this.selectedDeviceId = this.devices[0].deviceId;
+        const defaultDevice = this.devices.find(d => d.deviceId === 'default');
+        this.selectedDeviceId = defaultDevice ? defaultDevice.deviceId : this.devices[0].deviceId;
       }
 
       return this.devices;
@@ -177,7 +199,8 @@ class MicrophoneServiceClass {
     this.monitorNode.gain.value = 0; // Off by default
     this.inputGainNode.connect(this.monitorNode);
     this.monitorNode.connect(AudioService.getDryGain());
-    this.monitorNode.connect(AudioService.getReverbInput());
+    // AudioService.getReverbInput() is a Tone node; bridge from WebAudio to Tone.
+    Tone.connect(this.monitorNode, AudioService.getReverbInput());
   }
 
   /**

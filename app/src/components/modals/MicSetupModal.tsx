@@ -61,6 +61,7 @@ export function MicSetupModal() {
   // Refs for volume meter loop
   const volumeRaf = useRef<number | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const analyserSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
   // Keep a ref in sync with state so async callbacks always see the latest value.
@@ -96,16 +97,24 @@ export function MicSetupModal() {
 
     try {
       await MicrophoneService.initialize();
-      const deviceList = await MicrophoneService.getDevices();
+      const deviceList = await MicrophoneService.refreshDevices();
       setDevices(deviceList);
 
-      // Set default device
-      const defaultDevice = deviceList.find(d => d.isDefault) || deviceList[0];
-      if (defaultDevice) {
-        setSelectedDevice(defaultDevice.deviceId);
-      }
+      const ms = MicrophoneService.getState();
+      const fallbackDevice = deviceList.find(d => d.isDefault) || deviceList[0];
+      const selected = ms.selectedDeviceId ?? fallbackDevice?.deviceId ?? null;
 
-      setMicrophoneState({ available: true, devices: deviceList });
+      setSelectedDevice(selected);
+      setInputGain(ms.inputGain ?? 1.0);
+      setIsMonitoring(ms.monitoring ?? false);
+
+      setMicrophoneState({
+        available: true,
+        devices: deviceList,
+        selectedDeviceId: selected,
+        inputGain: ms.inputGain ?? 1.0,
+        monitoring: ms.monitoring ?? false,
+      });
     } catch (err) {
       setError('Could not access microphone. Please check permissions.');
       console.error('Mic init error:', err);
@@ -122,15 +131,18 @@ export function MicSetupModal() {
 
     let mounted = true;
 
-    // Set up analysis if needed
+    // Set up analysis
     // We use the RAW stream for pitch + meter so you see your true interface level.
     const stream = MicrophoneService.getStream();
-    if (stream && !analyserRef.current) {
+    if (stream) {
       const ctx = AudioService.getContext();
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.7;
       source.connect(analyser);
+
+      analyserSourceRef.current = source;
       analyserRef.current = analyser;
       audioContextRef.current = ctx;
     }
@@ -152,7 +164,17 @@ export function MicSetupModal() {
           rmsSum += v * v;
         }
         const rms = Math.sqrt(rmsSum / timeData.length);
-        setVolumeLevel(Math.min(100, rms * 4000));
+
+        // Convert to dBFS-ish scale so it doesn't instantly pin at 100.
+        // Typical voice RMS tends to sit well below 0dB.
+        const db = 20 * Math.log10(rms + 1e-8);
+
+        // Map -60dB..-6dB to 0..100
+        const normalized = (db + 60) / 54;
+        const target = Math.max(0, Math.min(100, normalized * 100));
+
+        // Smooth so the meter rises/falls naturally.
+        setVolumeLevel((prev) => (prev * 0.85) + (target * 0.15));
 
       }
       volumeRaf.current = requestAnimationFrame(updateVolume);
@@ -163,8 +185,15 @@ export function MicSetupModal() {
     return () => {
       mounted = false;
       if (volumeRaf.current) cancelAnimationFrame(volumeRaf.current);
+
+      analyserSourceRef.current?.disconnect();
+      analyserRef.current?.disconnect();
+      analyserSourceRef.current = null;
+      analyserRef.current = null;
+      audioContextRef.current = null;
+      setVolumeLevel(0);
     };
-  }, [isOpen, microphoneState.available, isDetecting]);
+  }, [isOpen, microphoneState.available]);
 
 
   /**

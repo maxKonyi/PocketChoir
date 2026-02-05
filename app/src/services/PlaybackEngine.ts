@@ -52,7 +52,8 @@ export class PlaybackEngine {
   // Recorded audio
   private audioBuffers: Map<string, AudioBuffer> = new Map();
   private activeAudioSources: Map<string, AudioBufferSourceNode> = new Map();
-  private lastBeatClicked: number = -1;
+  // We schedule clicks ahead of time so they land exactly on the beat.
+  private nextMetronomeBeatToSchedule: number = 0;
 
   // Track loop animation frame
   private animationFrameId: number | null = null;
@@ -62,6 +63,18 @@ export class PlaybackEngine {
   private startTime: number = 0;        // AudioContext time when playback started
   private startPosition: number = 0;    // Position in ms when playback started
   private currentPositionMs: number = 0;
+
+  // Scheduling (for tight sync)
+  // We schedule a short time window ahead of the playhead so audio events fire
+  // exactly on time, instead of being delayed until the next animation frame.
+  private readonly scheduleLookaheadMs: number = 150;
+
+  // For each voice, track which node index we should schedule next.
+  private nextNodeIndexToSchedule: Map<string, number> = new Map();
+
+  // For each voice, track the last scheduled state so we can decide between
+  // starting a note (attack) vs gliding an already-playing note.
+  private scheduledSynthIsPlaying: Map<string, boolean> = new Map();
 
   // Mute/solo state per voice (separate for synth and vocal)
   private synthVolumes: Map<string, number> = new Map();
@@ -151,6 +164,10 @@ export class PlaybackEngine {
       // Set initial volumes
       this.setVoiceVolume(voice.id, 0.5, 'synth');
       this.setVoiceVolume(voice.id, 0.8, 'vocal');
+
+      // Reset scheduling state for this voice.
+      this.nextNodeIndexToSchedule.set(voice.id, 0);
+      this.scheduledSynthIsPlaying.set(voice.id, false);
     });
 
     console.log(`PlaybackEngine initialized with ${arrangement.voices.length} voices`);
@@ -406,14 +423,20 @@ export class PlaybackEngine {
     this.startTime = AudioService.getCurrentTime();
     this.startPosition = this.currentPositionMs;
 
+    // Reset metronome scheduling so beat 0 is aligned with the timeline.
+    // If we start from the middle, we start scheduling from the *current* beat.
+    const beatDurationMs = 60000 / this.getEffectiveTempo();
+    this.nextMetronomeBeatToSchedule = Math.floor(this.currentPositionMs / beatDurationMs);
+
     // Start the update loop
     this.startUpdateLoop();
 
     // Start audio recordings
     this.startAudioSources(this.currentPositionMs);
 
-    // Schedule initial synth notes
-    this.scheduleNotesFromPosition(this.getCurrentPositionT16());
+    // Schedule initial synth notes and then schedule upcoming changes.
+    this.primeSynthSchedulingFromPosition(this.getCurrentPositionT16());
+    this.scheduleAheadFromCurrentPosition();
 
     // Trigger start callback
     if (this.config.onStart) {
@@ -563,7 +586,12 @@ export class PlaybackEngine {
     if (!buffer || !this.isVocalAudible(voiceId)) return;
 
     const ctx = AudioService.getContext();
-    const currentTime = ctx.currentTime;
+    // Align recorded audio starts to the same clock as the playhead.
+    // If we're playing, compute the exact AudioContext time that corresponds
+    // to this timeline position.
+    const computedWhen = this.isPlaying ? this.getAudioTimeForTimelineMs(fromMs) : ctx.currentTime;
+    // Never schedule in the past (can cause immediate/late starts depending on browser).
+    const when = Math.max(ctx.currentTime, computedWhen);
     const offset = fromMs / 1000;
 
     // Stop existing if any
@@ -583,7 +611,7 @@ export class PlaybackEngine {
         source.connect(AudioService.getMasterGain());
       }
 
-      source.start(currentTime, offset);
+      source.start(when, offset);
       this.activeAudioSources.set(voiceId, source);
     }
   }
@@ -651,21 +679,6 @@ export class PlaybackEngine {
       const currentMs = this.getCurrentPositionMs();
       const currentT16 = this.getCurrentPositionT16();
 
-      // Metronome click logic
-      if (this.config.metronomeEnabled) {
-        const beatDuration = 60000 / this.getEffectiveTempo();
-        const beats = currentMs / beatDuration;
-        const currentBeat = Math.floor(beats);
-
-        if (this.lastBeatClicked !== currentBeat) {
-          // Play click sound on the beat
-          this.playClickSound(AudioService.getContext().currentTime);
-          this.lastBeatClicked = currentBeat;
-        }
-      } else {
-        this.lastBeatClicked = -1; // Reset when disabled
-      }
-
       // Check for loop
       const loopEndMs = t16ToMs(this.loopEndT16, this.getEffectiveTempo(), this.timeSig);
       if (this.loopEnabled && currentMs >= loopEndMs) {
@@ -673,6 +686,10 @@ export class PlaybackEngine {
         const loopStartMs = t16ToMs(this.loopStartT16, this.getEffectiveTempo(), this.timeSig);
         this.startTime = AudioService.getCurrentTime();
         this.startPosition = loopStartMs;
+
+        // Reset metronome scheduling to match the loop start.
+        const beatDurationMs = 60000 / this.getEffectiveTempo();
+        this.nextMetronomeBeatToSchedule = Math.floor(loopStartMs / beatDurationMs);
 
         // Stop all notes and reschedule
         for (const synth of this.synthVoices.values()) {
@@ -683,20 +700,27 @@ export class PlaybackEngine {
         this.stopAudioSources();
         this.startAudioSources(loopStartMs);
 
-        this.scheduleNotesFromPosition(this.loopStartT16);
+        // Re-prime and schedule notes from the loop start.
+        this.primeSynthSchedulingFromPosition(this.loopStartT16);
+
+        // Do not schedule until after we've updated all loop state.
+        // (Prevents doubled downbeat clicks when a "pre-loop" schedule and a
+        // "post-loop" schedule both include beat 0.)
 
         if (this.config.onLoop) {
           this.config.onLoop();
         }
       }
 
+      // Schedule upcoming metronome clicks and note changes.
+      // This must happen AFTER loop handling so we don't schedule overlapping
+      // clicks at the loop boundary.
+      this.scheduleAheadFromCurrentPosition();
+
       // Position update callback
       if (this.config.onPositionUpdate) {
         this.config.onPositionUpdate(currentT16, currentMs);
       }
-
-      // Update notes (check if any should start/stop)
-      this.updateNotes(currentT16);
 
       // Continue loop
       this.animationFrameId = requestAnimationFrame(update);
@@ -706,35 +730,158 @@ export class PlaybackEngine {
   }
 
   /**
-   * Schedule notes from a given position.
+   * Convert a timeline position in ms to the exact AudioContext time when that
+   * position should occur.
    */
-  private scheduleNotesFromPosition(fromT16: number): void {
+  private getAudioTimeForTimelineMs(timelineMs: number): number {
+    // startTime is the AudioContext time at which startPosition (timeline ms)
+    // occurred.
+    return this.startTime + (timelineMs - this.startPosition) / 1000;
+  }
+
+  /**
+   * Determine which synth notes should already be sounding at a given timeline
+   * position, and schedule them to start exactly at the playback start time.
+   */
+  private primeSynthSchedulingFromPosition(fromT16: number): void {
     if (!this.arrangement) return;
 
     for (const voice of this.arrangement.voices) {
-      const synthAudible = this.isSynthAudible(voice.id);
-      if (!synthAudible) continue;
-
       const synth = this.synthVoices.get(voice.id);
       if (!synth) continue;
 
-      // Find the current or next node
-      const nodeIndex = this.findNodeAtOrAfter(voice.nodes, fromT16);
-      if (nodeIndex === -1) continue;
+      // Reset per-voice scheduling markers.
+      this.scheduledSynthIsPlaying.set(voice.id, false);
 
-      // If we're in the middle of a note, start it
+      // Find the first node at/after the current position.
+      const nodeIndex = this.findNodeAtOrAfter(voice.nodes, fromT16);
+      this.nextNodeIndexToSchedule.set(voice.id, Math.max(0, nodeIndex));
+
+      // If we're already inside a held note (previous node spans over fromT16),
+      // schedule that note to start exactly at the current startTime.
       const prevIndex = nodeIndex > 0 ? nodeIndex - 1 : -1;
       if (prevIndex >= 0) {
         const prevNode = voice.nodes[prevIndex];
         const currentNode = voice.nodes[nodeIndex];
 
-        // Check if prev node spans to current position
         if (!prevNode.term && prevNode.t16 <= fromT16 && currentNode.t16 > fromT16) {
-          const freq = this.getNodeFrequency(voice, prevNode);
-          synth.noteOn(freq);
+          if (this.isSynthAudible(voice.id)) {
+            const freq = this.getNodeFrequency(voice, prevNode);
+            synth.noteOn(freq, this.startTime);
+            this.scheduledSynthIsPlaying.set(voice.id, true);
+          }
         }
       }
     }
+  }
+
+  /**
+   * Schedule metronome clicks + synth node changes a short time ahead of the
+   * playhead so they fire exactly on time.
+   */
+  private scheduleAheadFromCurrentPosition(): void {
+    if (!this.arrangement) return;
+
+    const currentMs = this.getCurrentPositionMs();
+    let lookaheadUntilMs = currentMs + this.scheduleLookaheadMs;
+
+    // If looping is enabled and we're close to the loop end, do NOT schedule
+    // events that land exactly on/after the loop boundary.
+    // Those events will be scheduled after the loop reset, and scheduling them
+    // both before and after the reset causes a doubled downbeat click.
+    if (this.loopEnabled) {
+      const loopEndMs = t16ToMs(this.loopEndT16, this.getEffectiveTempo(), this.timeSig);
+      if (currentMs < loopEndMs && lookaheadUntilMs >= loopEndMs) {
+        // Use a small safety margin because floating point rounding can cause
+        // a "loop end" beat to land a hair before loopEndMs.
+        lookaheadUntilMs = Math.max(currentMs, loopEndMs - 5);
+      }
+    }
+
+    // 1) Metronome: schedule each beat click at its exact AudioContext time.
+    if (this.config.metronomeEnabled) {
+      const beatDurationMs = 60000 / this.getEffectiveTempo();
+
+      while ((this.nextMetronomeBeatToSchedule * beatDurationMs) <= lookaheadUntilMs) {
+        const beatMs = this.nextMetronomeBeatToSchedule * beatDurationMs;
+
+        // Only schedule future (or "now") clicks. If we've fallen behind,
+        // advance without trying to schedule in the past.
+        if (beatMs >= currentMs - 1) {
+          const ctxTime = AudioService.getCurrentTime();
+          const clickTime = Math.max(ctxTime, this.getAudioTimeForTimelineMs(beatMs));
+          this.playClickSound(clickTime);
+        }
+
+        this.nextMetronomeBeatToSchedule += 1;
+      }
+    } else {
+      // Keep the next beat marker consistent with the current playhead.
+      const beatDurationMs = 60000 / this.getEffectiveTempo();
+      this.nextMetronomeBeatToSchedule = Math.floor(currentMs / beatDurationMs);
+    }
+
+    // 2) Synth notes: schedule node events (attack / glide / release) ahead of time.
+    const lookaheadUntilT16 = this.msToT16(lookaheadUntilMs);
+
+    for (const voice of this.arrangement.voices) {
+      const synth = this.synthVoices.get(voice.id);
+      if (!synth) continue;
+
+      // If this synth is muted/unsoloed, don't schedule any future events.
+      if (!this.isSynthAudible(voice.id)) continue;
+
+      let nextIndex = this.nextNodeIndexToSchedule.get(voice.id) ?? 0;
+      let isPlaying = this.scheduledSynthIsPlaying.get(voice.id) ?? false;
+
+      while (nextIndex >= 0 && nextIndex < voice.nodes.length) {
+        const node = voice.nodes[nextIndex];
+
+        if (node.t16 > lookaheadUntilT16) {
+          break;
+        }
+
+        // Convert the node's musical time to an exact AudioContext time.
+        const nodeMs = this.t16ToTimelineMs(node.t16);
+        const eventTime = this.getAudioTimeForTimelineMs(nodeMs);
+
+        if (node.term) {
+          // Termination node means silence.
+          synth.noteOff(eventTime);
+          isPlaying = false;
+        } else {
+          const freq = this.getNodeFrequency(voice, node);
+
+          if (!isPlaying) {
+            synth.noteOn(freq, eventTime);
+            isPlaying = true;
+          } else {
+            // Already sounding: glide to the new pitch instead of re-attacking.
+            synth.glideTo(freq, 0.05, eventTime);
+          }
+        }
+
+        nextIndex += 1;
+      }
+
+      this.nextNodeIndexToSchedule.set(voice.id, nextIndex);
+      this.scheduledSynthIsPlaying.set(voice.id, isPlaying);
+    }
+  }
+
+  /**
+   * Convert t16 -> timeline ms using the current tempo/time signature.
+   */
+  private t16ToTimelineMs(t16: number): number {
+    return t16ToMs(t16, this.getEffectiveTempo(), this.timeSig);
+  }
+
+  /**
+   * Convert timeline ms -> t16 using the current tempo/time signature.
+   */
+  private msToT16(ms: number): number {
+    const sixteenthMs = sixteenthDurationMs(this.getEffectiveTempo(), this.timeSig);
+    return ms / sixteenthMs;
   }
 
   /**
@@ -749,56 +896,6 @@ export class PlaybackEngine {
     return -1;
   }
 
-  /**
-   * Update note playback based on current position.
-   */
-  private updateNotes(currentT16: number): void {
-    if (!this.arrangement) return;
-
-    for (const voice of this.arrangement.voices) {
-      const synth = this.synthVoices.get(voice.id);
-      if (!synth) continue;
-
-      const audible = this.isSynthAudible(voice.id);
-
-      // Find which node we should be playing
-      let activeNode: Node | null = null;
-
-      for (let i = 0; i < voice.nodes.length; i++) {
-        const node = voice.nodes[i];
-        const next = voice.nodes[i + 1];
-
-        if (node.t16 <= currentT16) {
-          if (node.term) {
-            // Termination node - no active note
-            activeNode = null;
-          } else if (next && next.t16 > currentT16) {
-            // We're between this node and the next
-            activeNode = node;
-          } else if (!next && node.t16 <= currentT16) {
-            // Last node, hold until end
-            activeNode = node;
-          }
-        }
-      }
-
-      // Update synth
-      if (audible && activeNode) {
-        const freq = this.getNodeFrequency(voice, activeNode);
-
-        if (!synth.getIsPlaying()) {
-          synth.noteOn(freq);
-        } else if (Math.abs(synth.getFrequency() - freq) > 1) {
-          // Frequency changed, glide to it
-          synth.glideTo(freq, 0.05);
-        }
-      } else {
-        if (synth.getIsPlaying()) {
-          synth.noteOff();
-        }
-      }
-    }
-  }
 
   /**
    * Get the frequency for a node, considering transposition.
