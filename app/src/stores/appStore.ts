@@ -476,6 +476,12 @@ export const useAppStore = create<AppState & AppActions>()(
         set({ arrangement });
       }
 
+      // In Create mode, always default the editor to the first available voice.
+      // This prevents stale selection from a previous arrangement (e.g. selecting Voice 3
+      // when the new arrangement only has Voice 1).
+      const firstVoiceId = arrangement.voices[0]?.id ?? null;
+      set({ selectedVoiceId: firstVoiceId });
+
       get().initializeVoiceStates(arrangement.voices);
       // Set loop end to arrangement length and reset position
       const totalSixteenths = arrangement.bars * arrangement.timeSig.numerator * 4;
@@ -591,6 +597,27 @@ export const useAppStore = create<AppState & AppActions>()(
 
     const updatedVoices = state.arrangement.voices.map((voice) => {
       if (voice.id !== voiceId) return voice;
+
+      // If the node being removed is a "real" note, we also remove its attached anchor
+      // (the first termination node after it, up to the next real note).
+      // This prevents leaving behind an orphaned anchor that still affects phrase logic.
+      const nodeToRemove = voice.nodes.find((n) => n.t16 === t16);
+      if (nodeToRemove && !nodeToRemove.term) {
+        const nextNonTerm = voice.nodes
+          .filter((n) => !n.term && n.t16 > t16)
+          .sort((a, b) => a.t16 - b.t16)[0];
+
+        const attachedAnchor = voice.nodes
+          .filter((n) => n.term && n.t16 > t16 && (!nextNonTerm || n.t16 < nextNonTerm.t16))
+          .sort((a, b) => a.t16 - b.t16)[0];
+
+        const attachedAnchorT16 = attachedAnchor ? attachedAnchor.t16 : null;
+        return {
+          ...voice,
+          nodes: voice.nodes.filter((n) => n.t16 !== t16 && (attachedAnchorT16 === null || n.t16 !== attachedAnchorT16)),
+        };
+      }
+
       return {
         ...voice,
         nodes: voice.nodes.filter((n) => n.t16 !== t16),

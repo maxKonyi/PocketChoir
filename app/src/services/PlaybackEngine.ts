@@ -218,6 +218,49 @@ export class PlaybackEngine {
     this.timeSig = arrangement.timeSig;
     this.loopEndT16 = arrangementTotalSixteenths(arrangement.bars, this.timeSig);
 
+    // If new voices were added while editing (Create mode), make sure we create
+    // the corresponding synth + preview synth voices and routing nodes.
+    // `updateArrangement` normally avoids re-initializing the engine so playback
+    // doesn't restart, but we still need audio nodes for any new tracks.
+    const ctx = AudioService.getContext();
+    arrangement.voices.forEach((voice, index) => {
+      if (!this.synthVoices.has(voice.id)) {
+        const synth = createSynthVoice(voice.id, index);
+        if (AudioService.isReady()) {
+          synth.initialize();
+        }
+        this.synthVoices.set(voice.id, synth);
+
+        const previewSynth = createSynthVoice(`${voice.id}__preview`, index);
+        if (AudioService.isReady()) {
+          previewSynth.initialize();
+        }
+        previewSynth.setReleaseTime(this.previewReleaseMs / 1000);
+        this.previewSynthVoices.set(voice.id, previewSynth);
+
+        const gain = ctx.createGain();
+        const panner = ctx.createStereoPanner();
+        gain.connect(panner);
+        Tone.connect(panner, AudioService.getChorus());
+
+        this.vocalPannerNodes.set(voice.id, panner);
+        this.vocalGainNodes.set(voice.id, gain);
+
+        // Ensure default volume/mute/solo/pan maps are applied for the new voice.
+        this.setVoiceVolume(voice.id, 0.5, 'synth');
+        this.setVoiceVolume(voice.id, 0.8, 'vocal');
+        this.setVoiceMuted(voice.id, false, 'synth');
+        this.setVoiceMuted(voice.id, false, 'vocal');
+        this.setVoiceSolo(voice.id, false, 'synth');
+        this.setVoiceSolo(voice.id, false, 'vocal');
+
+        this.nextNodeIndexToSchedule.set(voice.id, 0);
+        this.scheduledSynthIsPlaying.set(voice.id, false);
+        this.previewSynthIsPlaying.set(voice.id, false);
+        this.previewOverrideUntilMs.set(voice.id, 0);
+      }
+    });
+
     // Ensure loop end is valid.
     if (this.loopEndT16 <= this.loopStartT16) {
       this.loopStartT16 = 0;

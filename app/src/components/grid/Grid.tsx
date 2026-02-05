@@ -1079,7 +1079,17 @@ export function Grid({
       // show a dashed line indicating the note holds to the end of the loop.
       if (playbackEngine.getIsPlaying()) {
         const endX = t16ToX(endT16, startT16, endT16, gridLeft, gridWidth);
+
+        // IMPORTANT:
+        // We must stroke the contour so far using a solid line BEFORE enabling dashes.
+        // Otherwise the dash pattern applies to the entire path and the whole voice
+        // appears dashed (which is the bug you were seeing).
+        ctx.stroke();
+
+        // Now draw ONLY the final "hold" extension as a separate dashed segment.
         ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
         ctx.setLineDash([6, 6]);
         ctx.lineTo(endX, lastY);
         ctx.stroke();
