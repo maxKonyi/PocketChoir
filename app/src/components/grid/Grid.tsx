@@ -10,7 +10,7 @@
    ============================================================ */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { Arrangement, Voice, PitchPoint } from '../../types';
+import type { Arrangement, Voice, PitchPoint, Chord } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
@@ -51,6 +51,49 @@ function semitoneOffsetToY(
  */
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/**
+ * Extract the root note (letter + accidental) from a chord name.
+ */
+function parseChordRoot(chordName: string): string | null {
+  const match = chordName.match(/^([A-Ga-g][#b]?)/);
+  if (!match) return null;
+  const root = match[1];
+  return root.charAt(0).toUpperCase() + (root.charAt(1) || '').replace('b', 'b').replace('#', '#');
+}
+
+/**
+ * Convert a bare note name to a semitone index (0-11).
+ */
+function getNoteSemitone(noteName: string): number | null {
+  const midi = noteNameToMidi(`${noteName}4`);
+  if (midi === null) return null;
+  return ((midi % 12) + 12) % 12;
+}
+
+/**
+ * Determine whether a chord belongs to the current scale/tonic.
+ */
+function isChordDiatonic(chord: Chord, arrangement: Arrangement): boolean {
+  if (!arrangement?.tonic) return true;
+
+  // Prefer explicit scale-degree roots when available
+  if (typeof chord.root === 'number') {
+    return chord.root >= 1 && chord.root <= 7;
+  }
+
+  const rootNote = parseChordRoot(chord.name);
+  const tonicNote = arrangement.tonic;
+  if (!rootNote || !tonicNote) return true;
+
+  const chordSemitone = getNoteSemitone(rootNote);
+  const tonicSemitone = getNoteSemitone(tonicNote);
+  if (chordSemitone === null || tonicSemitone === null) return true;
+
+  const interval = ((chordSemitone - tonicSemitone) % 12 + 12) % 12;
+  const scalePattern = SCALE_PATTERNS[arrangement.scale] || SCALE_PATTERNS['major'];
+  return scalePattern.includes(interval);
 }
 
 /**
@@ -464,6 +507,14 @@ export function Grid({
     const pitchLineColor = getCssVar('--grid-pitch-line') || 'rgba(255, 255, 255, 0.05)';
     const playheadColor = getCssVar('--playhead-color') || '#ffffff';
     const textColor = getCssVar('--text-secondary') || '#a8a3b8';
+    const chordFillTop = getCssVar('--chord-fill-top') || '#5a4c80';
+    const chordFillBottom = getCssVar('--chord-fill-bottom') || '#342656';
+    const chordFillTensionTop = getCssVar('--chord-fill-tension-top') || '#8a2e47';
+    const chordFillTensionBottom = getCssVar('--chord-fill-tension-bottom') || '#4a1a28';
+    const chordStroke = getCssVar('--chord-stroke') || 'rgba(255, 255, 255, 0.35)';
+    const chordStrokeTension = getCssVar('--chord-stroke-tension') || 'rgba(255, 148, 180, 0.7)';
+    const chordText = getCssVar('--chord-text') || '#fefaff';
+    const chordTextTension = getCssVar('--chord-text-tension') || '#ffe6ef';
 
     // Canvas was already cleared above (in device pixels)
 
@@ -572,13 +623,12 @@ export function Grid({
       // ... (rest of the drawing code)
 
 
-      const chordColors = ['#ff6b9d', '#4ecdc4', '#a78bfa', '#ffe66d', '#ff8c42', '#34d399'];
       const blockHeight = 24;
       const blockY = gridTop - 30;
 
       for (let i = 0; i < arrangement.chords.length; i++) {
         const chord = arrangement.chords[i];
-        const chordColor = chordColors[i % chordColors.length];
+        const isDiatonicChord = arrangement ? isChordDiatonic(chord, arrangement) : true;
 
         // Calculate block start and end positions
         const blockStartX = t16ToX(chord.t16, startT16, endT16, gridLeft, gridWidth);
@@ -591,6 +641,17 @@ export function Grid({
         const bStartX = blockStartX + gap / 2;
         const bWidth = Math.max(0, blockWidth - gap);
 
+        // Build the main fill gradient (same for every diatonic chord; special one for tension chords).
+        const gradient = ctx.createLinearGradient(bStartX, blockY, bStartX, blockY + blockHeight);
+        if (isDiatonicChord) {
+          gradient.addColorStop(0, chordFillTop);
+          gradient.addColorStop(1, chordFillBottom);
+        } else {
+          gradient.addColorStop(0, chordFillTensionTop);
+          gradient.addColorStop(1, chordFillTensionBottom);
+        }
+
+        // Path for the rounded "chip".
         ctx.beginPath();
         if ((ctx as any).roundRect) {
           (ctx as any).roundRect(bStartX, blockY, bWidth, blockHeight, radius);
@@ -598,20 +659,40 @@ export function Grid({
           ctx.rect(bStartX, blockY, bWidth, blockHeight);
         }
 
-        ctx.fillStyle = chordColor + '40'; // 25% opacity for better visibility
-
+        // 1) Soft drop shadow to lift the chord bar off the grid.
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+        ctx.shadowBlur = 12;
+        ctx.shadowOffsetY = 4;
+        ctx.fillStyle = gradient;
         ctx.fill();
-        ctx.strokeStyle = chordColor + '80'; // Bright border
-        ctx.lineWidth = 1.5;
+        ctx.restore();
+
+        // 2) Crisp outer stroke.
+        ctx.strokeStyle = isDiatonicChord ? chordStroke : chordStrokeTension;
+        ctx.lineWidth = 1.25;
         ctx.stroke();
 
+        // 3) Top "sheen" highlight (subtle glass reflection).
+        const sheen = ctx.createLinearGradient(0, blockY, 0, blockY + blockHeight);
+        sheen.addColorStop(0, 'rgba(255, 255, 255, 0.18)');
+        sheen.addColorStop(0.45, 'rgba(255, 255, 255, 0.04)');
+        sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.strokeStyle = sheen;
+        ctx.lineWidth = 1;
+        ctx.stroke();
 
-        // Draw chord text centered in block
-        ctx.fillStyle = chordColor;
-        ctx.font = 'bold 13px system-ui';
+        // Draw chord text centered in block.
+        // We keep text neutral (not voice-colored) so the contour colors remain the primary signal.
+        ctx.save();
+        ctx.fillStyle = isDiatonicChord ? chordText : chordTextTension;
+        ctx.font = '700 13px system-ui';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+        ctx.shadowBlur = 6;
         ctx.fillText(chord.name, blockStartX + blockWidth / 2, blockY + blockHeight / 2);
+        ctx.restore();
       }
     }
 

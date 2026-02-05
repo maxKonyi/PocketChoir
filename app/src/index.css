@@ -56,6 +56,19 @@
   /* Light variant for outlines */
   --accent-secondary-glow: rgba(236, 72, 153, 0.4);
 
+  /* -- Chord track styling -- */
+  /* Glassy neutral for diatonic chords (keeps focus on contour colors) */
+  --chord-fill-top: rgba(255, 255, 255, 0.12);
+  --chord-fill-bottom: rgba(255, 255, 255, 0.04);
+  --chord-stroke: rgba(255, 255, 255, 0.18);
+  --chord-text: rgba(255, 255, 255, 0.9);
+
+  /* Glassy warm accent for non-diatonic chords (tension) */
+  --chord-fill-tension-top: rgba(255, 176, 102, 0.26);
+  --chord-fill-tension-bottom: rgba(255, 112, 64, 0.10);
+  --chord-stroke-tension: rgba(255, 196, 132, 0.55);
+  --chord-text-tension: #ffecd1;
+
   /* -- Voice colors (for contour lines) -- */
   --voice-1: #ff6b9d;
   /* Pink/magenta */
