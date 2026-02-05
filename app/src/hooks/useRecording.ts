@@ -39,6 +39,7 @@ export function useRecording() {
   const setRecording = useAppStore((state) => state.setRecording);
   const setPlaying = useAppStore((state) => state.setPlaying);
   const setMicrophoneState = useAppStore((state) => state.setMicrophoneState);
+  const recordingLagMs = useAppStore((state) => state.microphoneState.recordingLagMs);
 
   // Refs for services
   const pitchDetectorRef = useRef<PitchDetector | null>(null);
@@ -150,8 +151,12 @@ export function useRecording() {
         }
       }
 
-      const time = playbackEngine.getCurrentPositionMs();
-      if (time < 0) return;
+      const rawTime = playbackEngine.getCurrentPositionMs();
+      if (rawTime < 0) return;
+
+      const pitchDetectorLatencyMs = pitchDetectorRef.current?.getEstimatedLatencyMs?.() ?? 0;
+
+      const time = Math.max(0, rawTime - (recordingLagMs ?? 0) - pitchDetectorLatencyMs);
 
       const point: PitchPoint = {
         time,
@@ -204,7 +209,7 @@ export function useRecording() {
 
     console.log('Recording started for voice:', currentVoiceId);
     return true;
-  }, [armedVoiceId, arrangement, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying]);
+  }, [armedVoiceId, arrangement, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, recordingLagMs]);
 
   /**
    * Toggle recording state.

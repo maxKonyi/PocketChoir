@@ -68,6 +68,25 @@ export class PitchDetector {
   private pitchTrace: PitchPoint[] = [];
   private recordingStartTime: number = 0;
 
+  getEstimatedLatencyMs(): number {
+    const ctx = AudioService.getContext();
+
+    const fftSize = this.analyser?.fftSize;
+    if (!fftSize) return 0;
+
+    // The analyser buffer represents a window of *past* audio.
+    // A common approximation is that the detected event corresponds to roughly
+    // the center of that window.
+    const bufferCenterMs = (fftSize / ctx.sampleRate) * 1000 * 0.5;
+
+    // We also add median smoothing delay. Median filtering over N frames tends
+    // to behave like ~N/2 frames of group delay.
+    const frameMs = 1000 / 60;
+    const smoothingMs = Math.floor(this.medianSize / 2) * frameMs;
+
+    return bufferCenterMs + smoothingMs;
+  }
+
   /**
    * Initialize the pitch detector with a media stream.
    * @param stream - MediaStream from getUserMedia
