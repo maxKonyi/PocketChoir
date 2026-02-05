@@ -38,6 +38,7 @@ export function useRecording() {
   const setLivePitchTrace = useAppStore((state) => state.setLivePitchTrace);
   const setRecording = useAppStore((state) => state.setRecording);
   const setPlaying = useAppStore((state) => state.setPlaying);
+  const setMicrophoneState = useAppStore((state) => state.setMicrophoneState);
 
   // Refs for services
   const pitchDetectorRef = useRef<PitchDetector | null>(null);
@@ -58,6 +59,9 @@ export function useRecording() {
       // Initialize microphone service (requests permission)
       await MicrophoneService.initialize();
 
+      // Keep the store in sync with the actual mic settings (including lag estimate).
+      setMicrophoneState(MicrophoneService.getState());
+
       // Get the processed media stream (with gain and mono summing)
       const stream = MicrophoneService.getProcessedStream();
       if (stream) {
@@ -74,7 +78,7 @@ export function useRecording() {
       alert('Could not access microphone. Please check permissions.');
       return false;
     }
-  }, []);
+  }, [setMicrophoneState]);
 
   /**
    * Stop recording and save the result.

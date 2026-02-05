@@ -50,6 +50,9 @@ class MicrophoneServiceClass {
   private monitorNode: GainNode | null = null;
   private isMonitoring: boolean = false;
 
+  private recordingLagMs: number = 0;
+  private recordingLagIsManual: boolean = false;
+
   /**
    * Request microphone permission and initialize.
    * @returns Promise that resolves when microphone is ready
@@ -65,6 +68,9 @@ class MicrophoneServiceClass {
           this.selectedDeviceId = 'default';
         }
         this.setupAudioRouting();
+
+        // Keep lag estimate fresh unless the user manually calibrated.
+        this.estimateRecordingLagIfPossible();
         return;
       }
 
@@ -90,6 +96,10 @@ class MicrophoneServiceClass {
 
       // Set up audio routing
       this.setupAudioRouting();
+
+      // Estimate a reasonable default recording lag when possible.
+      // We only apply this if the user hasn't manually calibrated.
+      this.estimateRecordingLagIfPossible();
 
       console.log('MicrophoneService initialized');
     } catch (error) {
@@ -152,6 +162,29 @@ class MicrophoneServiceClass {
 
     // Reconnect audio routing
     this.setupAudioRouting();
+
+    // Changing devices can change latency.
+    this.estimateRecordingLagIfPossible();
+  }
+
+  setRecordingLagMs(lagMs: number, isManual: boolean): void {
+    this.recordingLagMs = Math.max(0, Math.min(500, lagMs));
+    this.recordingLagIsManual = isManual;
+  }
+
+  private estimateRecordingLagIfPossible(): void {
+    if (this.recordingLagIsManual) return;
+    if (!this.stream) return;
+
+    const track = this.stream.getAudioTracks()[0];
+    const settings = track?.getSettings?.();
+    const latencySec = (settings as any)?.latency;
+
+    if (typeof latencySec === 'number' && Number.isFinite(latencySec)) {
+      const estimatedMs = Math.round(latencySec * 1000);
+      // Clamp to a sane range.
+      this.recordingLagMs = Math.max(0, Math.min(200, estimatedMs));
+    }
   }
 
   /**
@@ -360,6 +393,8 @@ class MicrophoneServiceClass {
       inputGain: this.inputGainNode?.gain.value ?? 1.0,
       monitoring: this.isMonitoring,
       isRecording: this.isRecording,
+      recordingLagMs: this.recordingLagMs,
+      recordingLagIsManual: this.recordingLagIsManual,
     };
   }
 

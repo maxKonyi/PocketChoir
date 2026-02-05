@@ -24,6 +24,13 @@ export interface MicrophoneState {
   inputGain: number;        // Input gain/sensitivity (0-2, 1 = normal)
   monitoring: boolean;      // Whether to play mic input back to user
   isRecording: boolean;     // Whether currently recording
+
+  // Recording sync compensation.
+  // If your recorded claps land late during playback, increase this value.
+  // Positive values skip a small amount from the start of the recording so it plays earlier.
+  recordingLagMs: number;
+  // If true, the user explicitly set/calibrated recordingLagMs and we should not overwrite it.
+  recordingLagIsManual: boolean;
 }
 
 /**

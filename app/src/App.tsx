@@ -30,6 +30,8 @@ function App() {
   const transposition = useAppStore((state) => state.transposition);
   const autoTranspositionNotice = useAppStore((state) => state.autoTranspositionNotice);
 
+  const microphoneState = useAppStore((state) => state.microphoneState);
+
   const globalVolume = useAppStore((state) => state.globalVolume);
   const globalReverb = useAppStore((state) => state.globalReverb);
 
@@ -108,6 +110,7 @@ function App() {
           console.log('Loop');
         },
         metronomeEnabled: playback.metronomeEnabled,
+        recordingLagMs: microphoneState.recordingLagMs,
       });
     }
   }, [arrangement, setPosition]);
@@ -116,6 +119,11 @@ function App() {
   useEffect(() => {
     playbackEngine.setConfig({ metronomeEnabled: playback.metronomeEnabled });
   }, [playback.metronomeEnabled]);
+
+  // Keep recorded vocal lag compensation in sync with mic settings.
+  useEffect(() => {
+    playbackEngine.setConfig({ recordingLagMs: microphoneState.recordingLagMs });
+  }, [microphoneState.recordingLagMs]);
 
   /**
    * Handle play/pause state changes.

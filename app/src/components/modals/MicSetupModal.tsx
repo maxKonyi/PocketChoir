@@ -38,6 +38,8 @@ export function MicSetupModal() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [volumeLevel, setVolumeLevel] = useState(0);
+  const [recordingLagMs, setRecordingLagMs] = useState(0);
+  const [isCalibratingLag, setIsCalibratingLag] = useState(false);
 
   // Range detection state
   const vocalRange = useAppStore((state) => state.vocalRange);
@@ -79,6 +81,138 @@ export function MicSetupModal() {
     };
   }, []);
 
+  const handleRecordingLagChange = (valueMs: number) => {
+    const clamped = Math.max(0, Math.min(500, valueMs));
+    setRecordingLagMs(clamped);
+    MicrophoneService.setRecordingLagMs(clamped, true);
+    setMicrophoneState({ recordingLagMs: clamped, recordingLagIsManual: true });
+  };
+
+  const playCalibrationClick = (time: number) => {
+    const ctx = AudioService.getContext();
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+
+    gain.gain.setValueAtTime(0.3, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+
+    osc.connect(gain);
+    gain.connect(AudioService.getDryGain());
+
+    osc.start(time);
+    osc.stop(time + 0.05);
+  };
+
+  const calibrateRecordingLag = async () => {
+    if (isCalibratingLag) return;
+    if (MicrophoneService.getIsRecording()) return;
+
+    setIsCalibratingLag(true);
+    setError(null);
+
+    try {
+      await MicrophoneService.initialize();
+
+      const ctx = AudioService.getContext();
+      // Capture the audio clock time we consider "recording start" for this calibration.
+      // We use this as the reference so our expected click times remain stable even
+      // after async work (decodeAudioData, etc.).
+      const recordStartCtxTime = ctx.currentTime;
+      const tempo = 120;
+      const beatDurationSec = 60 / tempo;
+      const beatsToTest = 6;
+      const leadInSec = 0.6;
+
+      // We schedule clicks on the AudioContext clock for tight timing.
+      const startClickTime = recordStartCtxTime + 0.1;
+
+      const blob: Blob = await new Promise((resolve, reject) => {
+        MicrophoneService.startRecording((b) => resolve(b));
+
+        for (let i = 0; i < beatsToTest; i++) {
+          const t = startClickTime + leadInSec + (i * beatDurationSec);
+          playCalibrationClick(t);
+        }
+
+        const totalSec = leadInSec + (beatsToTest * beatDurationSec) + 0.4;
+        window.setTimeout(() => {
+          try {
+            MicrophoneService.stopRecording();
+          } catch (e) {
+            reject(e);
+          }
+        }, Math.ceil(totalSec * 1000));
+      });
+
+      const buffer = await AudioService.decodeAudioBlob(blob);
+      const data = buffer.getChannelData(0);
+      const sr = buffer.sampleRate;
+
+      // Find overall max so we can ignore empty/quiet windows.
+      let globalMax = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = Math.abs(data[i]);
+        if (v > globalMax) globalMax = v;
+      }
+
+      const lags: number[] = [];
+      for (let i = 0; i < beatsToTest; i++) {
+        // We schedule clicks at (startClickTime + leadInSec + i*beatDurationSec).
+        // The recording starts at "now", so expected positions in the recorded
+        // buffer should include the startClickTime offset.
+        const expectedClickTime = startClickTime + leadInSec + (i * beatDurationSec);
+        const expectedSec = expectedClickTime - recordStartCtxTime;
+        const windowStartSec = Math.max(0, expectedSec - 0.12);
+        const windowEndSec = Math.min(buffer.duration, expectedSec + 0.25);
+
+        const startIdx = Math.floor(windowStartSec * sr);
+        const endIdx = Math.min(data.length - 1, Math.floor(windowEndSec * sr));
+
+        let max = 0;
+        let maxIdx = startIdx;
+        for (let j = startIdx; j <= endIdx; j++) {
+          const v = Math.abs(data[j]);
+          if (v > max) {
+            max = v;
+            maxIdx = j;
+          }
+        }
+
+        // Require a meaningful peak.
+        if (globalMax > 0 && max >= globalMax * 0.1) {
+          const peakSec = maxIdx / sr;
+          const lagSec = peakSec - expectedSec;
+          if (Number.isFinite(lagSec)) {
+            lags.push(lagSec);
+          }
+        }
+      }
+
+      if (lags.length === 0) {
+        setError('Calibration failed. Try clapping louder/closer to the mic.');
+        return;
+      }
+
+      // Use median lag for robustness.
+      lags.sort((a, b) => a - b);
+      const medianLagSec = lags[Math.floor(lags.length / 2)];
+      const lagMs = Math.max(0, Math.min(500, Math.round(medianLagSec * 1000)));
+
+      setRecordingLagMs(lagMs);
+      MicrophoneService.setRecordingLagMs(lagMs, true);
+      setMicrophoneState({ recordingLagMs: lagMs, recordingLagIsManual: true });
+    } catch (e) {
+      console.error('Lag calibration failed:', e);
+      setError('Calibration failed.');
+    } finally {
+      setIsCalibratingLag(false);
+    }
+  };
+
   /**
    * Initialize microphone when modal opens.
    */
@@ -107,6 +241,7 @@ export function MicSetupModal() {
       setSelectedDevice(selected);
       setInputGain(ms.inputGain ?? 1.0);
       setIsMonitoring(ms.monitoring ?? false);
+      setRecordingLagMs(ms.recordingLagMs ?? 0);
 
       setMicrophoneState({
         available: true,
@@ -114,6 +249,8 @@ export function MicSetupModal() {
         selectedDeviceId: selected,
         inputGain: ms.inputGain ?? 1.0,
         monitoring: ms.monitoring ?? false,
+        recordingLagMs: ms.recordingLagMs ?? 0,
+        recordingLagIsManual: ms.recordingLagIsManual ?? false,
       });
     } catch (err) {
       setError('Could not access microphone. Please check permissions.');
@@ -478,6 +615,31 @@ export function MicSetupModal() {
                 `}
               />
             </button>
+          </div>
+
+          {/* Recording sync */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-[var(--text-secondary)]">
+                Recording Sync (ms)
+              </label>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={calibrateRecordingLag}
+                disabled={isCalibratingLag || isInitializing || !microphoneState.available}
+                title="Clap along with the clicks to auto-align recordings"
+              >
+                {isCalibratingLag ? 'Calibrating…' : 'Calibrate Lag'}
+              </Button>
+            </div>
+            <Slider
+              value={recordingLagMs}
+              min={0}
+              max={250}
+              onChange={(e) => handleRecordingLagChange(Number(e.target.value))}
+              showValue
+            />
           </div>
 
           {/* Status indicator + Volume Meter */}

@@ -37,6 +37,8 @@ interface PlaybackConfig {
   onCountIn?: (beat: number, total: number) => void;
   onStart?: () => void;
   metronomeEnabled?: boolean;
+  // Positive values make recordings play earlier (skip initial input latency).
+  recordingLagMs?: number;
 }
 
 /**
@@ -592,7 +594,11 @@ export class PlaybackEngine {
     const computedWhen = this.isPlaying ? this.getAudioTimeForTimelineMs(fromMs) : ctx.currentTime;
     // Never schedule in the past (can cause immediate/late starts depending on browser).
     const when = Math.max(ctx.currentTime, computedWhen);
-    const offset = fromMs / 1000;
+    // Recording lag compensation: recorded audio often starts "late" due to
+    // input + encoding latency. We compensate by skipping forward slightly in
+    // the buffer so the audible content lands on the beat.
+    const lagMs = Math.max(0, this.config.recordingLagMs ?? 0);
+    const offset = Math.max(0, (fromMs + lagMs) / 1000);
 
     // Stop existing if any
     this.stopAudioSource(voiceId);
