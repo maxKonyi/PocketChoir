@@ -729,18 +729,14 @@ export function Grid({
           const isDraggedAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && dragState.originalT16 === node.t16;
 
           if (isDraggedAnchor) {
-            // Halo around the anchor while dragging.
-            const grad = ctx.createRadialGradient(x, y, 0, x, y, anchorRadius * 4);
-            grad.addColorStop(0, '#fff');
-            grad.addColorStop(0.2, voiceColor);
-            grad.addColorStop(1, 'transparent');
-
-            ctx.fillStyle = grad;
-            ctx.globalAlpha = 0.8;
+            // Simple "halo" while dragging: a slightly larger solid circle.
+            ctx.save();
+            ctx.globalAlpha = 0.35;
             ctx.beginPath();
-            ctx.arc(x, y, anchorRadius * 4, 0, Math.PI * 2);
+            ctx.arc(x, y, anchorRadius * 2.2, 0, Math.PI * 2);
+            ctx.fillStyle = voiceColor;
             ctx.fill();
-            ctx.globalAlpha = 1;
+            ctx.restore();
           }
 
           ctx.beginPath();
@@ -1185,12 +1181,22 @@ export function Grid({
         // (No previous note => we returned above.)
 
         // This conversion creates an anchor at hit.t16 that ends the hold started at `prev`.
-        // Any anchors AFTER this new anchor (but before the next real note) are superseded.
+        // Only one anchor is allowed per held segment, and it must be the one closest to the note.
         const nextNoteAfterHit = voice.nodes
           .filter((n) => !n.term && n.t16 > hit.t16)
           .sort((a, b) => a.t16 - b.t16)[0];
 
         const segmentEndT16 = nextNoteAfterHit ? nextNoteAfterHit.t16 : Infinity;
+
+        const existingAnchor = voice.nodes
+          .filter((n) => n.term && n.t16 > prev.t16 && n.t16 < segmentEndT16)
+          .sort((a, b) => a.t16 - b.t16)[0];
+
+        // If an anchor already exists and it's closer (earlier) than this candidate,
+        // do nothing. (Prevents creating "later" anchors that orphan the segment.)
+        if (existingAnchor && existingAnchor.t16 < hit.t16) {
+          return;
+        }
 
         for (const n of voice.nodes) {
           if (!n.term) continue;
@@ -1230,6 +1236,16 @@ export function Grid({
       .filter((n) => !n.term && n.t16 > prev.t16)
       .sort((a, b) => a.t16 - b.t16)[0];
     const segmentEndT16 = nextNote ? nextNote.t16 : Infinity;
+
+    const existingAnchor = voice.nodes
+      .filter((n) => n.term && n.t16 > prev.t16 && n.t16 < segmentEndT16)
+      .sort((a, b) => a.t16 - b.t16)[0];
+
+    // If an anchor already exists and this new one would be later, do nothing.
+    // You can only "move" an anchor closer to the note (earlier), not farther away.
+    if (existingAnchor && snapped.t16 > existingAnchor.t16) {
+      return;
+    }
 
     for (const n of voice.nodes) {
       if (!n.term) continue;

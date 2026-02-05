@@ -8,7 +8,7 @@
 
 import { Mic, Volume2, VolumeX, Headphones, Trash2, Edit3, Music, Layers } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { useAppStore } from '../../stores/appStore';
+import { useAppStore, MAX_VOICES } from '../../stores/appStore';
 import { useRecording } from '../../hooks/useRecording';
 
 /* ------------------------------------------------------------
@@ -126,7 +126,9 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
           disabled={!hasRecording}
           className={`
             p-1 transition-colors
-            ${hasRecording ? 'text-white/40 hover:text-red-400 cursor-pointer' : 'text-white/10 cursor-not-allowed'}
+            ${hasRecording
+              ? 'text-[var(--text-muted)] hover:text-red-400 cursor-pointer'
+              : 'text-[var(--text-disabled)] cursor-not-allowed'}
           `}
           title={hasRecording ? "Clear recording" : ""}
         >
@@ -141,12 +143,12 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
         <div className="flex items-center justify-between gap-1">
           <div className="flex items-center gap-1">
             <div
-              className={`p-0.5 rounded-sm ${vocalMuted || vocalSoloedOut ? 'text-white/20' : 'text-white/80'}`}
+              className={`p-0.5 rounded-sm ${vocalMuted || vocalSoloedOut ? 'text-[var(--text-disabled)]' : 'text-[var(--text-secondary)]'}`}
               title="Vocal Part"
             >
               <Mic size={11} />
             </div>
-            <span className="text-[10px] uppercase tracking-tighter text-white/50 font-bold leading-none">Vox</span>
+            <span className="text-[10px] uppercase tracking-tighter text-[var(--text-muted)] font-bold leading-none">Vox</span>
           </div>
 
           <div className="flex items-center gap-0.5">
@@ -175,12 +177,12 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
         <div className="flex items-center justify-between gap-1">
           <div className="flex items-center gap-1">
             <div
-              className={`p-0.5 rounded-sm ${synthMuted || synthSoloedOut ? 'text-white/20' : 'text-white/80'}`}
+              className={`p-0.5 rounded-sm ${synthMuted || synthSoloedOut ? 'text-[var(--text-disabled)]' : 'text-[var(--text-secondary)]'}`}
               title="Synth Part"
             >
               <Music size={11} />
             </div>
-            <span className="text-[10px] uppercase tracking-tighter text-white/50 font-bold leading-none">Syn</span>
+            <span className="text-[10px] uppercase tracking-tighter text-[var(--text-muted)] font-bold leading-none">Syn</span>
           </div>
 
           <div className="flex items-center gap-0.5">
@@ -221,6 +223,10 @@ export function VoiceSidebar() {
   const setVoiceVocalMuted = useAppStore((state) => state.setVoiceVocalMuted);
   const setVoiceSynthMuted = useAppStore((state) => state.setVoiceSynthMuted);
   const clearAllRecordings = useAppStore((state) => state.clearAllRecordings);
+  const mode = useAppStore((state) => state.mode);
+  const addVoiceTrack = useAppStore((state) => state.addVoiceTrack);
+  const isCreateMode = mode === 'create';
+  const hasReachedVoiceCap = arrangement ? arrangement.voices.length >= MAX_VOICES : true;
 
   if (!arrangement) {
     return null; // Don't show sidebar when no arrangement
@@ -241,10 +247,32 @@ export function VoiceSidebar() {
         "
       >
 
-        {/* Header label */}
-        <div className="text-[10px] text-[var(--text-secondary)] uppercase tracking-wider text-center flex items-center gap-1.5 justify-center opacity-60">
-          <Layers size={11} />
-          <span>Tracks</span>
+        {/* Header label styled to match the brighter top-bar theme dropdown */}
+        <div className="relative flex items-center justify-center text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-[0.25em]">
+          <div className="flex items-center gap-1.25">
+            <Layers size={11} />
+            <span>Tracks</span>
+          </div>
+
+          {isCreateMode && (
+            <button
+              type="button"
+              onClick={() => {
+                if (hasReachedVoiceCap) return;
+                addVoiceTrack();
+              }}
+              disabled={hasReachedVoiceCap}
+              title={hasReachedVoiceCap ? 'Reached track limit' : 'Add a new track'}
+              className={`
+                absolute right-1 top-1/2 -translate-y-1/2 px-2 py-1 transition-colors
+                ${hasReachedVoiceCap
+                  ? 'text-[var(--text-disabled)] cursor-not-allowed'
+                  : 'text-[var(--accent-secondary)] hover:text-white hover:drop-shadow-[0_0_10px_rgba(236,72,153,0.4)]'}
+              `}
+            >
+              <span className="text-base font-black leading-none">+</span>
+            </button>
+          )}
         </div>
 
         {/* Header controls: Global Toggles */}
@@ -305,7 +333,7 @@ export function VoiceSidebar() {
           className="
           px-3 py-1.5 mt-2 mb-1
           text-[9px] font-bold uppercase tracking-widest
-          text-white/30 hover:text-white/60
+          text-[var(--text-muted)] hover:text-[var(--text-primary)]
           bg-white/5 hover:bg-white/10
           rounded-full
           transition-all

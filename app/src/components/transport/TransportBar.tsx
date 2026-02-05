@@ -90,8 +90,8 @@ export function TransportBar() {
         {/* Key Display */}
         {arrangement && (
           <div className="flex flex-col items-center leading-none px-2">
-            <span className="text-[10px] text-white/40 uppercase font-bold tracking-wider">Key</span>
-            <span className="text-sm font-bold text-white shadow-sm tabular-nums text-center min-w-[30px]">{arrangement.tonic}</span>
+            <span className="text-[10px] text-[var(--text-dim)] uppercase font-bold tracking-wider">Key</span>
+            <span className="text-sm font-bold text-[var(--text-primary)] shadow-sm tabular-nums text-center min-w-[30px]">{arrangement.tonic}</span>
           </div>
         )}
 
@@ -100,8 +100,8 @@ export function TransportBar() {
         {/* Tempo Display */}
         {arrangement && (
           <div className="flex flex-col items-center leading-none px-2">
-            <span className="text-[10px] text-white/40 uppercase font-bold tracking-wider">BPM</span>
-            <span className="text-sm font-bold text-white shadow-sm tabular-nums text-center min-w-[30px]">{Math.round(arrangement.tempo)}</span>
+            <span className="text-[10px] text-[var(--text-dim)] uppercase font-bold tracking-wider">BPM</span>
+            <span className="text-sm font-bold text-[var(--text-primary)] shadow-sm tabular-nums text-center min-w-[30px]">{Math.round(arrangement.tempo)}</span>
           </div>
         )}
 
@@ -121,7 +121,7 @@ export function TransportBar() {
                 w-10 h-10 rounded-full flex items-center justify-center transition-all relative
                 ${playback.metronomeEnabled
               ? 'bg-blue-500/80 text-white shadow-lg shadow-blue-500/30'
-              : 'text-white/40 hover:bg-white/10 hover:text-white'
+              : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
             }
             `}
           title="Metronome"
@@ -141,7 +141,7 @@ export function TransportBar() {
         <button
           onClick={handleRestart}
           disabled={!arrangement}
-          className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 text-white/70 transition-all disabled:opacity-20"
+          className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 text-[var(--text-secondary)] transition-all disabled:opacity-20"
           title="Restart"
         >
           <SkipBack size={20} />
@@ -164,7 +164,7 @@ export function TransportBar() {
             w-10 h-10 rounded-full flex items-center justify-center transition-all
             ${playback.loopEnabled
               ? 'bg-[var(--accent-secondary)] text-white shadow-lg shadow-[var(--accent-secondary)]/30'
-              : 'text-white/40 hover:bg-white/10 hover:text-white'
+              : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
             }
             disabled:opacity-20
           `}
@@ -182,7 +182,7 @@ export function TransportBar() {
         {!isSpeedOpen ? (
           <button
             onClick={() => setIsSpeedOpen(true)}
-            className="w-10 h-10 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all font-bold text-xs"
+            className="w-10 h-10 rounded-full flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-all font-bold text-xs"
             title="Playback Speed"
           >
             {playback.tempoMultiplier}x
@@ -199,8 +199,8 @@ export function TransportBar() {
                 className={`
                   px-3 py-1 text-[10px] font-bold rounded-full transition-all
                   ${playback.tempoMultiplier === speed
-                    ? 'bg-white/20 text-white'
-                    : 'text-white/40 hover:text-white/60'
+                    ? 'bg-white/20 text-[var(--text-primary)]'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
                   }
                 `}
               >
@@ -216,13 +216,13 @@ export function TransportBar() {
         <div className="flex items-center gap-1 bg-white/5 rounded-full p-1 border border-white/5">
           <button
             onClick={() => setZoomLevel(Math.max(0.5, display.zoomLevel - 0.25))}
-            className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-all"
           >
             <ZoomOut size={14} />
           </button>
           <button
             onClick={() => setZoomLevel(Math.min(4, display.zoomLevel + 0.25))}
-            className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-all"
           >
             <ZoomIn size={14} />
           </button>

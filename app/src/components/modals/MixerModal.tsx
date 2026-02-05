@@ -57,7 +57,7 @@ export function MixerModal() {
                     </div>
                     <button
                         onClick={() => setMixerOpen(false)}
-                        className="p-2 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition-all"
+                        className="p-2 rounded-full hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all"
                     >
                         <X size={24} />
                     </button>
@@ -113,7 +113,7 @@ export function MixerModal() {
                     <div className="flex flex-col gap-2">
 
                         {/* Legend Header */}
-                        <div className="grid grid-cols-[160px_1fr_1fr] gap-6 px-4 py-2 text-[10px] uppercase font-bold tracking-widest text-white/30 sticky top-0 bg-transparent z-10 scrollbar-gutter-stable">
+                        <div className="grid grid-cols-[160px_1fr_1fr] gap-6 px-4 py-2 text-[10px] uppercase font-bold tracking-widest text-[var(--text-dim)] sticky top-0 bg-transparent z-10 scrollbar-gutter-stable">
                             <div>Track</div>
                             <div>Synth (Guide)</div>
                             <div>Vocal (Recording)</div>
@@ -143,7 +143,7 @@ export function MixerModal() {
                                         />
                                         <div>
                                             <div className="text-sm font-bold text-white mb-0.5">{voice.name}</div>
-                                            <div className="text-[10px] text-white/40">Voice {idx + 1}</div>
+                                            <div className="text-[10px] text-[var(--text-dim)]">Voice {idx + 1}</div>
                                         </div>
                                     </div>
 
@@ -179,18 +179,18 @@ export function MixerModal() {
                                                         onClick={() => setVoiceSynthMuted(voice.id, !vs.synthMuted)}
                                                         className={`
                                         w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold transition-all
-                                        ${vs.synthMuted ? 'bg-red-500 text-white' : 'bg-white/10 text-white/40 hover:bg-white/20'}
+                                        ${vs.synthMuted ? 'bg-red-500 text-white' : 'bg-white/10 text-[var(--text-muted)] hover:bg-white/20 hover:text-[var(--text-primary)]'}
                                     `}
                                                     >M</button>
                                                     <button
                                                         onClick={() => setVoiceSynthSolo(voice.id, !vs.synthSolo)}
                                                         className={`
                                         w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold transition-all
-                                        ${vs.synthSolo ? 'bg-yellow-500 text-black' : 'bg-white/10 text-white/40 hover:bg-white/20'}
+                                        ${vs.synthSolo ? 'bg-yellow-500 text-black' : 'bg-white/10 text-[var(--text-muted)] hover:bg-white/20 hover:text-[var(--text-primary)]'}
                                     `}
                                                     >S</button>
                                                 </div>
-                                                <span className="text-[9px] text-white/30 tabular-nums">Vol {Math.round(vs.synthVolume * 100)} | Pan {vs.synthPan.toFixed(1)}</span>
+                                                <span className="text-[9px] text-[var(--text-dim)] tabular-nums">Vol {Math.round(vs.synthVolume * 100)} | Pan {vs.synthPan.toFixed(1)}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -229,18 +229,18 @@ export function MixerModal() {
                                                         onClick={() => setVoiceVocalMuted(voice.id, !vs.vocalMuted)}
                                                         className={`
                                         w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold transition-all
-                                        ${vs.vocalMuted ? 'bg-red-500 text-white' : 'bg-white/10 text-white/40 hover:bg-white/20'}
+                                        ${vs.vocalMuted ? 'bg-red-500 text-white' : 'bg-white/10 text-[var(--text-muted)] hover:bg-white/20 hover:text-[var(--text-primary)]'}
                                     `}
                                                     >M</button>
                                                     <button
                                                         onClick={() => setVoiceVocalSolo(voice.id, !vs.vocalSolo)}
                                                         className={`
                                         w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold transition-all
-                                        ${vs.vocalSolo ? 'bg-yellow-500 text-black' : 'bg-white/10 text-white/40 hover:bg-white/20'}
+                                        ${vs.vocalSolo ? 'bg-yellow-500 text-black' : 'bg-white/10 text-[var(--text-muted)] hover:bg-white/20 hover:text-[var(--text-primary)]'}
                                     `}
                                                     >S</button>
                                                 </div>
-                                                <span className="text-[9px] text-white/30 tabular-nums">Vol {Math.round(vs.vocalVolume * 100)} | Pan {vs.vocalPan.toFixed(1)}</span>
+                                                <span className="text-[9px] text-[var(--text-dim)] tabular-nums">Vol {Math.round(vs.vocalVolume * 100)} | Pan {vs.vocalPan.toFixed(1)}</span>
                                             </div>
                                         </div>
                                     </div>

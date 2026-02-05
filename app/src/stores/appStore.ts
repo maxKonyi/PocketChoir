@@ -20,6 +20,7 @@ import type {
 } from '../types';
 import type { ThemeName } from '../utils/colors';
 import { getArrangementFrequencyRange, noteNameToFrequency, suggestTranspositionToFitRange } from '../utils/music';
+import { DEFAULT_VOICE_COLORS } from '../utils/colors';
 
 /* ------------------------------------------------------------
    State Types
@@ -64,6 +65,56 @@ interface DisplaySettings {
 }
 
 
+
+/**
+ * Maximum number of voices/tracks supported in the arranger UI.
+ * Keeping this as a shared constant lets the modal and sidebar stay in sync.
+ */
+export const MAX_VOICES = 6;
+
+/**
+ * Return the default stereo pan for a voice index.
+ * Matches the spread used by the SynthVoice factory so the mix feels balanced.
+ */
+const getDefaultPanForIndex = (voiceIndex: number): number => {
+  if (voiceIndex === 1) return -0.8;
+  if (voiceIndex === 2) return 0.8;
+  return 0;
+};
+
+/**
+ * Create a hydrated VoiceState entry for a given voice.
+ */
+const createVoiceState = (voiceId: string, voiceIndex: number): VoiceState => ({
+  voiceId,
+  synthVolume: 0.5,
+  synthMuted: false,
+  synthSolo: false,
+  synthPan: getDefaultPanForIndex(voiceIndex),
+  isArmed: false,
+  hasRecording: false,
+  vocalVolume: 0.8,
+  vocalMuted: false,
+  vocalSolo: false,
+  vocalPan: getDefaultPanForIndex(voiceIndex),
+  vocalReverb: 0.3,
+});
+
+/**
+ * Generate a unique voice ID that does not conflict with existing voices.
+ */
+const generateVoiceId = (existingVoices: Voice[]): string => {
+  const existingIds = new Set(existingVoices.map((voice) => voice.id));
+  let counter = existingVoices.length + 1;
+  let candidate = `v${counter}`;
+
+  while (existingIds.has(candidate)) {
+    counter += 1;
+    candidate = `v${counter}`;
+  }
+
+  return candidate;
+};
 
 /**
  * Complete application state.
@@ -128,6 +179,7 @@ interface AppActions {
   // Arrangement
   setArrangement: (arrangement: Arrangement | null) => void;
   setTransposition: (semitones: number) => void;
+  addVoiceTrack: () => void;
 
   // Auto-transpose helper
   // Calculates a transposition based on the current arrangement + vocal range.
@@ -345,6 +397,36 @@ export const useAppStore = create<AppState & AppActions>()(
 
   setTransposition: (semitones) => set({ transposition: semitones }),
 
+  addVoiceTrack: () => set((state) => {
+    // Guard: must have an arrangement loaded to add a track.
+    if (!state.arrangement) return state;
+    // Respect the global track cap so the UI and synth engine stay in sync.
+    if (state.arrangement.voices.length >= MAX_VOICES) return state;
+
+    const newVoiceIndex = state.arrangement.voices.length;
+    const newVoiceId = generateVoiceId(state.arrangement.voices);
+    const palette = DEFAULT_VOICE_COLORS[newVoiceIndex % DEFAULT_VOICE_COLORS.length];
+
+    // Build the hydrated arrangement voice entry with empty nodes.
+    const newVoice: Voice = {
+      id: newVoiceId,
+      name: `Voice ${newVoiceIndex + 1}`,
+      color: palette.color,
+      nodes: [],
+    };
+
+    const updatedArrangement: Arrangement = {
+      ...state.arrangement,
+      voices: [...state.arrangement.voices, newVoice],
+    };
+
+    return {
+      arrangement: updatedArrangement,
+      voiceStates: [...state.voiceStates, createVoiceState(newVoiceId, newVoiceIndex)],
+      selectedVoiceId: state.mode === 'create' ? newVoiceId : state.selectedVoiceId,
+    };
+  }),
+
   applyAutoTranspositionIfPossible: (announce) => {
     const arrangement = get().arrangement;
     const vocalRange = get().vocalRange;
@@ -426,8 +508,15 @@ export const useAppStore = create<AppState & AppActions>()(
     const updatedVoices = state.arrangement.voices.map((voice) => {
       if (voice.id !== voiceId) return voice;
 
-      // Remove old node, add updated one
-      const filteredNodes = voice.nodes.filter((n) => n.t16 !== oldT16 && n.t16 !== newT16);
+      // Locate the node being updated so we can keep track of any anchor it drives.
+      const originalNode = voice.nodes.find((n) => n.t16 === oldT16);
+      if (!originalNode) {
+        return voice;
+      }
+
+      // Start from the list without the original node (and without any accidental duplicate at newT16).
+      const nodesWithoutTarget = voice.nodes.filter((n) => n.t16 !== oldT16 && n.t16 !== newT16);
+
       const updatedNode = {
         t16: newT16,
         deg,
@@ -435,9 +524,52 @@ export const useAppStore = create<AppState & AppActions>()(
         ...(semi !== undefined ? { semi } : {}),
         ...(term ? { term: true } : {}),
       };
-      const newNodes = [...filteredNodes, updatedNode].sort((a, b) => a.t16 - b.t16);
 
-      return { ...voice, nodes: newNodes };
+      let newNodes = [...nodesWithoutTarget, updatedNode];
+
+      // If we're moving a "real" note (term === false), keep its associated anchor (if any) in sync.
+      if (!term) {
+        // Determine the next real note after the original position.
+        const nextNonTermAfterOriginal = voice.nodes
+          .filter((n) => !n.term && n.t16 > oldT16)
+          .sort((a, b) => a.t16 - b.t16)[0];
+
+        // Find the anchor that belonged to this note (first term between the note and the next note).
+        const attachedAnchor = voice.nodes
+          .filter((n) => n.term && n.t16 > oldT16 && (!nextNonTermAfterOriginal || n.t16 < nextNonTermAfterOriginal.t16))
+          .sort((a, b) => a.t16 - b.t16)[0];
+
+        if (attachedAnchor) {
+          // Remove the old anchor instance before we re-add it in its new position.
+          newNodes = newNodes.filter((n) => n.t16 !== attachedAnchor.t16);
+
+          const holdOffset = attachedAnchor.t16 - oldT16;
+          const desiredMin = newT16 + 1; // Anchor must remain at least one 16th to the right of the parent note.
+          let desiredT16 = newT16 + holdOffset;
+          desiredT16 = Math.max(desiredT16, desiredMin);
+
+          // Prevent the anchor from running into the next note (if one exists) after the move.
+          const nextNonTermAfterNew = newNodes
+            .filter((n) => !n.term && n.t16 > newT16)
+            .sort((a, b) => a.t16 - b.t16)[0];
+          if (nextNonTermAfterNew) {
+            desiredT16 = Math.min(desiredT16, nextNonTermAfterNew.t16 - 1);
+          }
+
+          const updatedAnchor = {
+            t16: desiredT16,
+            deg,
+            octave,
+            ...(semi !== undefined ? { semi } : {}),
+            term: true,
+          };
+
+          newNodes.push(updatedAnchor);
+        }
+      }
+
+      const sortedNodes = newNodes.sort((a, b) => a.t16 - b.t16);
+      return { ...voice, nodes: sortedNodes };
     });
 
     return {
@@ -630,28 +762,9 @@ export const useAppStore = create<AppState & AppActions>()(
 
   // -- Utility --
   initializeVoiceStates: (voices) => {
-    // Keep default panning consistent with the reference synth defaults in SynthVoice.
-    // Index mapping: Soprano=0, Alto=1, Tenor=2, Bass=3 (and extra voices default center).
-    const getDefaultPanForIndex = (voiceIndex: number): number => {
-      if (voiceIndex === 1) return -0.8;
-      if (voiceIndex === 2) return 0.8;
-      return 0;
-    };
-
-    const voiceStates: VoiceState[] = voices.map((voice, index) => ({
-      voiceId: voice.id,
-      synthVolume: 0.5,
-      synthMuted: false,
-      synthSolo: false,
-      synthPan: getDefaultPanForIndex(index),
-      isArmed: false,
-      hasRecording: false,
-      vocalVolume: 0.8,
-      vocalMuted: false,
-      vocalSolo: false,
-      vocalPan: getDefaultPanForIndex(index),
-      vocalReverb: 0.3,
-    }));
+    const voiceStates: VoiceState[] = voices.map((voice, index) =>
+      createVoiceState(voice.id, index)
+    );
     set({ voiceStates, recordings: new Map(), livePitchTrace: [] });
   },
 

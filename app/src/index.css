@@ -35,17 +35,25 @@
   /* -- Text colors -- */
   --text-primary: #ffffff;
   /* Main text */
-  --text-secondary: #a8a3b8;
-  /* Muted/secondary text */
-  --text-muted: #6b6580;
-  /* Very muted text */
+  --text-secondary: #e0d9ff;
+  /* Secondary headings/labels */
+  --text-muted: #b8b0d3;
+  /* Muted supporting text */
+  --text-dim: #8e86a7;
+  /* Dimmed text for dormant states */
+  --text-disabled: #5b536b;
+  /* Disabled/placeholder text */
 
   /* -- Accent colors -- */
   --accent-primary: #8b5cf6;
   /* Primary accent (purple) */
+  --accent-primary-light: #c8b5ff;
+  /* Light variant for outlines */
   --accent-primary-glow: rgba(139, 92, 246, 0.4);
   --accent-secondary: #ec4899;
   /* Secondary accent (pink) */
+  --accent-secondary-light: #ff85c7;
+  /* Light variant for outlines */
   --accent-secondary-glow: rgba(236, 72, 153, 0.4);
 
   /* -- Voice colors (for contour lines) -- */
@@ -165,7 +173,9 @@
   pointer-events: none;
 }
 
-.glass-noise {}
+.glass-noise {
+  position: relative;
+}
 
 
 .glass-noise::before {

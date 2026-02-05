@@ -675,7 +675,7 @@ export function MicSetupModal() {
             <div className="flex gap-4">
               {/* Low Note */}
               <div className="flex-1 space-y-2">
-                <label className="text-xs uppercase font-bold text-white/40">Lowest Note</label>
+                <label className="text-xs uppercase font-bold text-[var(--text-dim)]">Lowest Note</label>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => startDetectingPitch('low')}
@@ -693,7 +693,7 @@ export function MicSetupModal() {
 
               {/* High Note */}
               <div className="flex-1 space-y-2">
-                <label className="text-xs uppercase font-bold text-white/40">Highest Note</label>
+                <label className="text-xs uppercase font-bold text-[var(--text-dim)]">Highest Note</label>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => startDetectingPitch('high')}
@@ -714,7 +714,7 @@ export function MicSetupModal() {
 
         {/* Footer */}
         <div className="p-4 border-t border-[var(--border-color)] flex justify-between items-center">
-          <div className="text-xs text-white/30 italic">
+          <div className="text-xs text-[var(--text-muted)] italic">
             {vocalRange.lowNote ? `Range: ${vocalRange.lowNote} - ${vocalRange.highNote || '?'}` : 'No range set'}
           </div>
           <Button variant="primary" onClick={handleClose}>
