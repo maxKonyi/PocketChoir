@@ -78,6 +78,11 @@ export class PlaybackEngine {
   // starting a note (attack) vs gliding an already-playing note.
   private scheduledSynthIsPlaying: Map<string, boolean> = new Map();
 
+  // Separate state for Create-mode preview notes.
+  // We keep this independent from timeline scheduling so auditioning doesn't
+  // interfere with playback.
+  private previewSynthIsPlaying: Map<string, boolean> = new Map();
+
   // Mute/solo state per voice (separate for synth and vocal)
   private synthVolumes: Map<string, number> = new Map();
   private synthMuted: Set<string> = new Set();
@@ -170,6 +175,9 @@ export class PlaybackEngine {
       // Reset scheduling state for this voice.
       this.nextNodeIndexToSchedule.set(voice.id, 0);
       this.scheduledSynthIsPlaying.set(voice.id, false);
+
+      // Reset preview state for this voice.
+      this.previewSynthIsPlaying.set(voice.id, false);
     });
 
     console.log(`PlaybackEngine initialized with ${arrangement.voices.length} voices`);
@@ -397,6 +405,77 @@ export class PlaybackEngine {
     }
 
     return !this.vocalMuted.has(voiceId);
+  }
+
+  /**
+   * Preview (audition) a single synth note for Create mode.
+   * These helpers are intended for mouse-down / drag / mouse-up interactions.
+   */
+  previewSynthAttack(voiceId: string, deg: number, octaveOffset: number = 0): void {
+    if (!this.arrangement) return;
+    if (!AudioService.isReady()) return;
+    if (this.isPlaying || this.isCountingIn) return;
+    if (!this.isSynthAudible(voiceId)) return;
+
+    const synth = this.synthVoices.get(voiceId);
+    if (!synth) return;
+
+    // Ensure the audio context is running (safe to call inside a user gesture).
+    void AudioService.resume();
+
+    let freq = scaleDegreeToFrequency(
+      deg,
+      this.arrangement.tonic,
+      this.arrangement.scale,
+      4,
+      octaveOffset
+    );
+    freq = freq * Math.pow(2, this.transposition / 12);
+
+    synth.noteOn(freq);
+    this.previewSynthIsPlaying.set(voiceId, true);
+  }
+
+  previewSynthGlide(voiceId: string, deg: number, octaveOffset: number = 0): void {
+    if (!this.arrangement) return;
+    if (!AudioService.isReady()) return;
+    if (this.isPlaying || this.isCountingIn) return;
+    if (!this.isSynthAudible(voiceId)) return;
+
+    const synth = this.synthVoices.get(voiceId);
+    if (!synth) return;
+
+    let freq = scaleDegreeToFrequency(
+      deg,
+      this.arrangement.tonic,
+      this.arrangement.scale,
+      4,
+      octaveOffset
+    );
+    freq = freq * Math.pow(2, this.transposition / 12);
+
+    const wasPlaying = this.previewSynthIsPlaying.get(voiceId) ?? false;
+    if (!wasPlaying) {
+      synth.noteOn(freq);
+      this.previewSynthIsPlaying.set(voiceId, true);
+      return;
+    }
+
+    synth.glideTo(freq);
+  }
+
+  previewSynthRelease(voiceId: string): void {
+    if (!AudioService.isReady()) return;
+    if (this.isPlaying || this.isCountingIn) return;
+
+    const synth = this.synthVoices.get(voiceId);
+    if (!synth) return;
+
+    const wasPlaying = this.previewSynthIsPlaying.get(voiceId) ?? false;
+    if (!wasPlaying) return;
+
+    synth.noteOff();
+    this.previewSynthIsPlaying.set(voiceId, false);
   }
 
   /**

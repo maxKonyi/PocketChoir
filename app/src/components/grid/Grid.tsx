@@ -109,6 +109,23 @@ interface DragState {
   isDragging: boolean;
 }
 
+// The "anchor" range for the Y-axis (pitch) view.
+// We compute this once when an arrangement is loaded, and then keep it stable.
+// This prevents Create mode from "jumping" when you add/move notes.
+interface PitchRangeAnchor {
+  centerSemitone: number;
+  paddedRangeSemitones: number;
+}
+
+// A snapped, "legal" grid point for Create mode.
+// - `t16` is time snapped to the nearest 16th-note.
+// - `deg` + `octave` are snapped to the nearest in-scale pitch.
+interface SnappedGridPoint {
+  t16: number;
+  deg: number;
+  octave: number;
+}
+
 export function Grid({
   arrangement: arrangementProp,
   className = '',
@@ -122,6 +139,26 @@ export function Grid({
 
   // Drag state for node editing
   const [dragState, setDragState] = useState<DragState | null>(null);
+
+  // Hover preview state (stored in a ref so it can update frequently without re-rendering).
+  // The draw loop runs continuously, so it can just read the latest ref value.
+  const hoverPreviewRef = useRef<{ voiceId: string; point: SnappedGridPoint } | null>(null);
+
+  // When you press the mouse down in Create mode, we treat it as an "audition" gesture.
+  // While held, moving the mouse glides the synth pitch; releasing stops the note.
+  const auditionRef = useRef<{ voiceId: string } | null>(null);
+
+  // When placing a NEW node (not dragging an existing one), we commit it on mouse-up.
+  const placingNewNodeRef = useRef<{ voiceId: string; point: SnappedGridPoint } | null>(null);
+
+  // React will still fire an `onClick` after a `mousedown`/`mouseup`.
+  // We use this flag to avoid double-adding nodes (because Create mode now commits on mouse-up).
+  const skipNextClickRef = useRef(false);
+
+  // Stable pitch-range anchor for the current arrangement.
+  // This is what makes zoom behavior stable (only changes when you change zoom manually
+  // or load a different arrangement).
+  const [pitchRangeAnchor, setPitchRangeAnchor] = useState<PitchRangeAnchor | null>(null);
 
   // Get arrangement from store to ensure we always have latest (for create mode updates)
   const arrangementFromStore = useAppStore((state) => state.arrangement);
@@ -142,6 +179,93 @@ export function Grid({
   const transposition = useAppStore((state) => state.transposition);
 
   /**
+   * Find the closest in-scale ("legal") semitone to a raw semitone.
+   * The semitone values here are relative to the arrangement tonic (0 = tonic).
+   */
+  const snapSemitoneToScale = useCallback((rawSemitone: number, scaleType: string): number => {
+    const pattern = SCALE_PATTERNS[scaleType] || SCALE_PATTERNS['major'];
+
+    // We search a small octave window around the raw semitone.
+    // This is enough to find the nearest scale tone without heavy computation.
+    const baseOctave = Math.floor(rawSemitone / 12);
+    let best = 0;
+    let bestDiff = Infinity;
+
+    for (let octave = baseOctave - 1; octave <= baseOctave + 1; octave++) {
+      for (const semiInOctave of pattern) {
+        const candidate = octave * 12 + semiInOctave;
+        const diff = Math.abs(candidate - rawSemitone);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          best = candidate;
+        }
+      }
+    }
+
+    return best;
+  }, []);
+
+  /**
+   * Convert a snapped semitone into (deg, octaveOffset) for storage in the arrangement.
+   */
+  const semitoneToDegreeAndOctave = useCallback((semitone: number, scaleType: string): { deg: number; octave: number } => {
+    const pattern = SCALE_PATTERNS[scaleType] || SCALE_PATTERNS['major'];
+
+    const octave = Math.floor(semitone / 12);
+    const semitoneInOctave = ((semitone % 12) + 12) % 12;
+    const index = pattern.indexOf(semitoneInOctave);
+
+    // If something went wrong (shouldn't happen because we snapped using the same pattern),
+    // fall back to degree 1.
+    const deg = index >= 0 ? index + 1 : 1;
+
+    return { deg, octave };
+  }, []);
+
+  /**
+   * Compute a stable pitch-range anchor from the arrangement content.
+   *
+   * NOTE: We intentionally do NOT recompute this on every node edit.
+   * We only recompute when the arrangement ID changes.
+   */
+  const computePitchRangeAnchor = useCallback((arr: Arrangement): PitchRangeAnchor => {
+    let minSemi = Infinity;
+    let maxSemi = -Infinity;
+
+    for (const voice of arr.voices) {
+      for (const node of voice.nodes) {
+        const semitone = degreeToSemitoneOffset(node.deg, node.octave || 0, arr.scale);
+        minSemi = Math.min(minSemi, semitone);
+        maxSemi = Math.max(maxSemi, semitone);
+      }
+    }
+
+    // If no nodes exist yet, use a reasonable default range.
+    if (minSemi === Infinity || maxSemi === -Infinity) {
+      minSemi = -5;
+      maxSemi = 19;
+    }
+
+    const centerSemitone = (minSemi + maxSemi) / 2;
+    const baseRange = maxSemi - minSemi;
+    const basePadding = 5;
+    const paddedRangeSemitones = baseRange + basePadding * 2;
+
+    return { centerSemitone, paddedRangeSemitones };
+  }, []);
+
+  // Initialize / refresh the stable pitch anchor when a new arrangement is loaded.
+  // We key off `arrangement.id` so Create-mode edits (which update nodes) don't cause jumps.
+  useEffect(() => {
+    if (!arrangement) {
+      setPitchRangeAnchor(null);
+      return;
+    }
+
+    setPitchRangeAnchor(computePitchRangeAnchor(arrangement));
+  }, [arrangement?.id, computePitchRangeAnchor]);
+
+  /**
    * Calculate the pitch range for the arrangement in semitones.
    * Returns min/max semitones relative to the tonic, plus frequency range.
    * Uses zoomLevel to adjust the visible range (higher zoom = fewer semitones visible).
@@ -149,40 +273,18 @@ export function Grid({
   const getPitchRange = useCallback(() => {
     if (!arrangement) return { minSemitone: -5, maxSemitone: 19, minFreq: 130, maxFreq: 520, effectiveTonicMidi: 60 };
 
-    let minSemi = Infinity;
-    let maxSemi = -Infinity;
-
-    for (const voice of arrangement.voices) {
-      for (const node of voice.nodes) {
-        // Convert each node's degree+octave to semitones
-        const semitone = degreeToSemitoneOffset(node.deg, node.octave || 0, arrangement.scale);
-        minSemi = Math.min(minSemi, semitone);
-        maxSemi = Math.max(maxSemi, semitone);
-      }
-    }
-
-    // If no nodes found, use default range (about 2 octaves centered on tonic)
-    if (minSemi === Infinity || maxSemi === -Infinity) {
-      minSemi = -5;  // 5 semitones below tonic
-      maxSemi = 19;  // Octave + 7 semitones above tonic
-    }
-
-    // Calculate center and base range
-    const center = (minSemi + maxSemi) / 2;
-    const baseRange = maxSemi - minSemi;
-
-    // Add base padding (5 semitones)
-    const basePadding = 5;
-    const paddedRange = baseRange + basePadding * 2;
+    // Use the stable pitch anchor if available.
+    // Fallback to computing it directly (should be rare; mainly first render).
+    const anchor = pitchRangeAnchor ?? computePitchRangeAnchor(arrangement);
 
     // Apply zoom: zoomLevel 1 = fit all, higher = zoomed in (fewer semitones)
     // zoomLevel 2 = half the range, zoomLevel 0.5 = double the range
     const zoomFactor = Math.max(0.25, display.zoomLevel); // Prevent extreme zoom out
-    const zoomedRange = paddedRange / zoomFactor;
+    const zoomedRange = anchor.paddedRangeSemitones / zoomFactor;
 
-    // Calculate final min/max centered on the arrangement
-    const finalMin = Math.floor(center - zoomedRange / 2);
-    const finalMax = Math.ceil(center + zoomedRange / 2);
+    // Calculate final min/max centered on the arrangement anchor
+    const finalMin = Math.floor(anchor.centerSemitone - zoomedRange / 2);
+    const finalMax = Math.ceil(anchor.centerSemitone + zoomedRange / 2);
 
     // Calculate frequency range (using MIDI-based calculation)
     // Get the MIDI pitch of the arrangement's tonic at base octave 4
@@ -196,7 +298,48 @@ export function Grid({
     const maxFreq = midiToFrequency(effectiveTonicMidi + finalMax);
 
     return { minSemitone: finalMin, maxSemitone: finalMax, minFreq, maxFreq, effectiveTonicMidi };
-  }, [arrangement, display.zoomLevel]);
+  }, [arrangement, display.zoomLevel, pitchRangeAnchor, computePitchRangeAnchor, transposition]);
+
+  /**
+   * Given a mouse event, compute the nearest legal grid point for Create mode.
+   * Returns null if the mouse is outside the grid.
+   */
+  const getSnappedPointFromMouseEvent = useCallback((e: React.MouseEvent<HTMLCanvasElement>): SnappedGridPoint | null => {
+    if (!arrangement) return null;
+
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
+
+    const gridLeft = padding.left;
+    const gridTop = padding.top;
+    const gridWidth = width - padding.left - padding.right;
+    const gridHeight = height - padding.top - padding.bottom;
+
+    if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) return null;
+
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const { minSemitone, maxSemitone } = getPitchRange();
+
+    const relativeX = (x - gridLeft) / gridWidth;
+    const rawT16 = relativeX * totalT16;
+    const t16 = Math.max(0, Math.min(totalT16, Math.round(rawT16)));
+
+    const relativeY = (y - gridTop) / gridHeight;
+    const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
+    const snappedSemitone = snapSemitoneToScale(rawSemitone, arrangement.scale);
+    const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
+
+    return { t16, deg, octave };
+  }, [arrangement, getPitchRange, snapSemitoneToScale, semitoneToDegreeAndOctave]);
 
   /**
    * Main drawing function.
@@ -514,6 +657,36 @@ export function Grid({
         ctx.fillText(String(node.deg), x, y + 0.5);
       }
 
+      // Create mode hover preview ("phantom" node).
+      // This helps you see the exact snapped point BEFORE you commit a node.
+      if (mode === 'create' && hoverPreviewRef.current?.voiceId === voice.id && !onlyChords) {
+        const preview = hoverPreviewRef.current.point;
+        const px = t16ToX(preview.t16, startT16, endT16, gridLeft, gridWidth);
+        const py = degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+        ctx.save();
+        ctx.globalAlpha = 0.35;
+
+        // Draw the preview node as a semi-transparent version of a normal node.
+        ctx.beginPath();
+        ctx.arc(px, py, nodeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = voiceColor;
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Degree number inside the phantom node.
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.font = 'bold 12px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(preview.deg), px, py + 0.5);
+
+        ctx.restore();
+      }
+
       ctx.restore();
     }
     ctx.restore();
@@ -786,92 +959,32 @@ export function Grid({
    * Handle canvas click for placing/removing nodes in create mode.
    */
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Only handle clicks in create mode
-    if (mode !== 'create' || !arrangement) return;
-
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-
-    // Get click position relative to canvas
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // Calculate grid dimensions (same as in draw function)
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
-
-    const gridLeft = padding.left;
-    const gridTop = padding.top;
-    const gridWidth = width - padding.left - padding.right;
-    const gridHeight = height - padding.top - padding.bottom;
-
-    // Check if click is within grid area
-    if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) {
+    // In Create mode, we now commit placement on mouse-up (not on click),
+    // so we skip the click handler to avoid double-adding nodes.
+    if (skipNextClickRef.current) {
+      skipNextClickRef.current = false;
       return;
     }
 
-    // Calculate time range
-    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-    const startT16 = 0;
-    const endT16 = totalT16;
+    // Only handle clicks in create mode
+    if (mode !== 'create' || !arrangement) return;
 
-    // Get pitch range (in semitones)
-    const { minSemitone, maxSemitone } = getPitchRange();
+    // Legacy behavior: allow Shift+Click removal.
+    // (Placement is handled via mouse down/move/up so you can audition first.)
+    if (!e.shiftKey) return;
 
-    // Convert click to t16 (snap to nearest 16th note)
-    const relativeX = (x - gridLeft) / gridWidth;
-    const rawT16 = startT16 + relativeX * (endT16 - startT16);
-    const t16 = Math.round(rawT16); // Snap to nearest 16th
+    const snapped = getSnappedPointFromMouseEvent(e);
+    if (!snapped) return;
 
-    // Convert click to semitone (relative to tonic)
-    const relativeY = (y - gridTop) / gridHeight;
-    const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
-    const semitone = Math.round(rawSemitone);
-
-    // Convert semitone back to scale degree + octave for storage
-    // Using major scale mapping: semitones [0,2,4,5,7,9,11] = degrees [1,2,3,4,5,6,7]
-    const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
-    const octaveOffset = Math.floor(semitone / 12);
-    const semitoneInOctave = ((semitone % 12) + 12) % 12;
-
-    // Find the closest scale degree
-    let closestDeg = 1;
-    let minDiff = 12;
-    for (let i = 0; i < MAJOR_SCALE.length; i++) {
-      const diff = Math.abs(MAJOR_SCALE[i] - semitoneInOctave);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestDeg = i + 1;
-      }
-    }
-
-    // Determine voice to edit - use selected voice or first voice
     const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
     if (!voiceId) return;
 
-    // Auto-select voice if none selected
-    if (!selectedVoiceId) {
-      setSelectedVoiceId(voiceId);
-    }
-
-    // Check if there's already a node near this position
     const voice = arrangement.voices.find((v) => v.id === voiceId);
-    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - t16) < 2);
+    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - snapped.t16) < 2);
+    if (!existingNode) return;
 
-    if (existingNode && e.shiftKey) {
-      // Shift+click removes node
-      removeNode(voiceId, existingNode.t16);
-    } else {
-      // Regular click adds/updates node
-      const finalDeg = closestDeg;
-      const octave = octaveOffset;
-
-      addNode(voiceId, t16, finalDeg, octave);
-    }
-  }, [mode, arrangement, selectedVoiceId, addNode, removeNode, setSelectedVoiceId, getPitchRange]);
+    removeNode(voiceId, existingNode.t16);
+  }, [mode, arrangement, selectedVoiceId, removeNode, getSnappedPointFromMouseEvent]);
 
   /**
    * Handle double-click to toggle termination status of a node.
@@ -932,108 +1045,120 @@ export function Grid({
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (mode !== 'create' || !arrangement) return;
 
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
+    // If this is the second click of a double-click, don't start auditioning/placing.
+    // The `onDoubleClick` handler will take care of the interaction.
+    if (e.detail > 1) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    // We will handle Create mode placement via mouse down/move/up.
+    // Prevent the older `onClick` handler from also firing.
+    skipNextClickRef.current = true;
 
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
-    const gridLeft = padding.left;
-    const gridTop = padding.top;
-    const gridWidth = width - padding.left - padding.right;
-    const gridHeight = height - padding.top - padding.bottom;
+    const snapped = getSnappedPointFromMouseEvent(e);
+    if (!snapped) return;
 
-    if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) return;
-
-    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-    const relativeX = (x - gridLeft) / gridWidth;
-    const t16 = Math.round(relativeX * totalT16);
-
+    // Determine voice to edit - use selected voice or first voice.
     const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
     if (!voiceId) return;
 
-    // Check if clicking on an existing node
+    // Auto-select voice if none selected.
+    if (!selectedVoiceId) {
+      setSelectedVoiceId(voiceId);
+    }
+
+    // Update hover preview immediately (so the phantom node appears on press).
+    hoverPreviewRef.current = { voiceId, point: snapped };
+
+    // Check if clicking on an existing node (by time proximity).
     const voice = arrangement.voices.find((v) => v.id === voiceId);
-    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - t16) < 3);
+    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - snapped.t16) < 3);
+
+    // Shift+press removes a node immediately.
+    if (existingNode && e.shiftKey) {
+      removeNode(voiceId, existingNode.t16);
+      placingNewNodeRef.current = null;
+      auditionRef.current = null;
+      playbackEngine.previewSynthRelease(voiceId);
+      return;
+    }
+
+    // Start the synth preview note (rings while the mouse is held down).
+    auditionRef.current = { voiceId };
+    playbackEngine.previewSynthAttack(voiceId, snapped.deg, snapped.octave);
 
     if (existingNode) {
-      // Start dragging this node
+      // Start dragging this existing node.
       setDragState({ voiceId, originalT16: existingNode.t16, isDragging: true });
+      placingNewNodeRef.current = null;
+      return;
     }
-  }, [mode, arrangement, selectedVoiceId]);
+
+    // Otherwise, we're placing a new node (commit happens on mouse-up).
+    placingNewNodeRef.current = { voiceId, point: snapped };
+  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, removeNode, setSelectedVoiceId]);
 
   /**
    * Handle mouse move for dragging nodes.
    */
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragState?.isDragging || mode !== 'create' || !arrangement) return;
+    if (mode !== 'create' || !arrangement) return;
 
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
-    const gridLeft = padding.left;
-    const gridTop = padding.top;
-    const gridWidth = width - padding.left - padding.right;
-    const gridHeight = height - padding.top - padding.bottom;
-
-    // Calculate new position
-    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-    const { minSemitone, maxSemitone } = getPitchRange();
-
-    const relativeX = Math.max(0, Math.min(1, (x - gridLeft) / gridWidth));
-    const relativeY = Math.max(0, Math.min(1, (y - gridTop) / gridHeight));
-
-    const newT16 = Math.round(relativeX * totalT16);
-    const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
-    const semitone = Math.round(rawSemitone);
-
-    // Convert semitone to scale degree
-    const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
-    const octaveOffset = Math.floor(semitone / 12);
-    const semitoneInOctave = ((semitone % 12) + 12) % 12;
-
-    let closestDeg = 1;
-    let minDiff = 12;
-    for (let i = 0; i < MAJOR_SCALE.length; i++) {
-      const diff = Math.abs(MAJOR_SCALE[i] - semitoneInOctave);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestDeg = i + 1;
-      }
+    const snapped = getSnappedPointFromMouseEvent(e);
+    if (!snapped) {
+      hoverPreviewRef.current = null;
+      return;
     }
 
-    // Get the original node to preserve term status
-    const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
-    const originalNode = voice?.nodes.find((n) => n.t16 === dragState.originalT16);
+    // Determine voice to preview - use selected voice or first voice.
+    const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
+    if (!voiceId) return;
 
-    // Update the node position
-    updateNode(dragState.voiceId, dragState.originalT16, newT16, closestDeg, octaveOffset, originalNode?.term);
+    // Update hover preview (phantom node).
+    hoverPreviewRef.current = { voiceId, point: snapped };
 
-    // Update drag state with new position
-    setDragState({ ...dragState, originalT16: newT16 });
-  }, [dragState, mode, arrangement, getPitchRange, updateNode]);
+    // If the mouse is held down, glide the preview synth pitch.
+    if (auditionRef.current?.voiceId === voiceId) {
+      playbackEngine.previewSynthGlide(voiceId, snapped.deg, snapped.octave);
+    }
+
+    // If we're dragging an existing node, update it to the snapped position.
+    if (dragState?.isDragging) {
+      const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
+      const originalNode = voice?.nodes.find((n) => n.t16 === dragState.originalT16);
+
+      updateNode(dragState.voiceId, dragState.originalT16, snapped.t16, snapped.deg, snapped.octave, originalNode?.term);
+      setDragState({ ...dragState, originalT16: snapped.t16 });
+      return;
+    }
+
+    // If we're placing a NEW node, keep updating its target position until mouse-up commits.
+    if (placingNewNodeRef.current?.voiceId === voiceId) {
+      placingNewNodeRef.current = { voiceId, point: snapped };
+    }
+  }, [dragState, mode, arrangement, getSnappedPointFromMouseEvent, updateNode, selectedVoiceId]);
 
   /**
    * Handle mouse up to end drag.
    */
   const handleMouseUp = useCallback(() => {
+    // Commit a new node placement (if we were placing one).
+    const placing = placingNewNodeRef.current;
+    if (placing && mode === 'create') {
+      addNode(placing.voiceId, placing.point.t16, placing.point.deg, placing.point.octave);
+    }
+
+    placingNewNodeRef.current = null;
+
     if (dragState?.isDragging) {
       setDragState(null);
     }
-  }, [dragState]);
+
+    // Stop any audition note.
+    const audition = auditionRef.current;
+    if (audition) {
+      playbackEngine.previewSynthRelease(audition.voiceId);
+      auditionRef.current = null;
+    }
+  }, [dragState, mode, addNode]);
 
   return (
     <div
@@ -1048,7 +1173,10 @@ export function Grid({
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onMouseLeave={() => {
+          hoverPreviewRef.current = null;
+          handleMouseUp();
+        }}
       />
     </div>
   );

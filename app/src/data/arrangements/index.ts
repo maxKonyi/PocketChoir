@@ -7,6 +7,32 @@
 
 import type { Arrangement } from '../../types';
 
+// Auto-load any exported arrangement JSON files that you place in:
+//   app/src/data/arrangements/imported/*.json
+//
+// Vite will automatically include these files during development/build.
+// When you add/remove files in this folder while running the dev server,
+// the library list will update after a refresh.
+const importedArrangementModules = import.meta.glob('./imported/*.json', { eager: true });
+
+const importedArrangements: Arrangement[] = Object.entries(importedArrangementModules)
+  .map(([filePath, mod]) => {
+    const arrangement = (mod as { default?: Arrangement }).default;
+
+    // If the file isn't valid JSON for an Arrangement, skip it.
+    if (!arrangement) return null;
+
+    // If an exported file forgot to include an id, derive one from the filename.
+    if (!arrangement.id) {
+      const fileName = filePath.split('/').pop() || 'imported_arrangement';
+      const derivedId = `imported_${fileName.replace(/\.json$/i, '')}`;
+      return { ...arrangement, id: derivedId };
+    }
+
+    return arrangement;
+  })
+  .filter((a): a is Arrangement => Boolean(a));
+
 /**
  * Simple two-voice warmup - parallel thirds.
  * Good for beginners to practice basic harmony.
@@ -306,6 +332,7 @@ export const sixPartStressTest: Arrangement = {
  * All sample arrangements exported as an array.
  */
 export const sampleArrangements: Arrangement[] = [
+  ...importedArrangements,
   sixPartStressTest,
   twoPartWarmup,
   threePartChords,
