@@ -107,6 +107,15 @@ export class SynthVoice {
   }
 
   /**
+   * Set the envelope release time (in seconds).
+   * Smaller values make note-off sound tighter and reduce clicks.
+   */
+  setReleaseTime(seconds: number): void {
+    const clamped = Math.max(0.001, Math.min(2, seconds));
+    (this.synth.envelope as any).release = clamped;
+  }
+
+  /**
    * Start playing a note at the given frequency.
    * @param frequency - Frequency in Hz
    * @param startTime - Optional start time (audio context time)

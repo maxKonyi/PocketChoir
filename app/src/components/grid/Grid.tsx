@@ -27,6 +27,19 @@ interface GridProps {
   onlyChords?: boolean;
 }
 
+/**
+ * Convert a chromatic semitone offset (relative to tonic) to Y position.
+ */
+function semitoneOffsetToY(
+  semitoneOffset: number,
+  minSemitone: number,
+  maxSemitone: number,
+  gridTop: number,
+  gridHeight: number
+): number {
+  return semitoneToY(semitoneOffset, minSemitone, maxSemitone, gridTop, gridHeight);
+}
+
 
 
 /* ------------------------------------------------------------
@@ -124,7 +137,12 @@ interface SnappedGridPoint {
   t16: number;
   deg: number;
   octave: number;
+  semi?: number;
 }
+
+// Keep the grid margins consistent between drawing and mouse hit-testing.
+// If these differ, the "ghost" preview and click zones will feel offset.
+const GRID_MARGIN = { top: 40, right: 20, bottom: 40, left: 50 };
 
 export function Grid({
   arrangement: arrangementProp,
@@ -206,6 +224,54 @@ export function Grid({
   }, []);
 
   /**
+   * Find the closest existing node to the mouse (pixel-based hit testing).
+   * This avoids the old behavior where you had to be "3 sixteenths away" from another node.
+   */
+  const getNodeHitAtMouseEvent = useCallback((
+    e: React.MouseEvent<HTMLCanvasElement>,
+    voiceId: string,
+    startT16: number,
+    endT16: number,
+    gridLeft: number,
+    gridTop: number,
+    gridWidth: number,
+    gridHeight: number,
+    minSemitone: number,
+    maxSemitone: number
+  ) => {
+    if (!arrangement) return null;
+
+    const container = containerRef.current;
+    if (!container) return null;
+
+    const rect = container.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const voice = arrangement.voices.find((v) => v.id === voiceId);
+    if (!voice) return null;
+
+    const hitRadius = 14;
+
+    for (const node of voice.nodes) {
+      if (node.term) continue;
+
+      const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
+      const y = node.semi !== undefined
+        ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+        : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+      const dx = mouseX - x;
+      const dy = mouseY - y;
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        return node;
+      }
+    }
+
+    return null;
+  }, [arrangement]);
+
+  /**
    * Convert a snapped semitone into (deg, octaveOffset) for storage in the arrangement.
    */
   const semitoneToDegreeAndOctave = useCallback((semitone: number, scaleType: string): { deg: number; octave: number } => {
@@ -234,7 +300,9 @@ export function Grid({
 
     for (const voice of arr.voices) {
       for (const node of voice.nodes) {
-        const semitone = degreeToSemitoneOffset(node.deg, node.octave || 0, arr.scale);
+        const semitone = node.semi !== undefined
+          ? node.semi
+          : degreeToSemitoneOffset(node.deg, node.octave || 0, arr.scale);
         minSemi = Math.min(minSemi, semitone);
         maxSemi = Math.max(maxSemi, semitone);
       }
@@ -306,23 +374,22 @@ export function Grid({
    */
   const getSnappedPointFromMouseEvent = useCallback((e: React.MouseEvent<HTMLCanvasElement>): SnappedGridPoint | null => {
     if (!arrangement) return null;
-
-    const canvas = canvasRef.current;
     const container = containerRef.current;
-    if (!canvas || !container) return null;
 
-    const rect = canvas.getBoundingClientRect();
+    // Use the container rect so mouse math matches the exact same box used in draw().
+    if (!container) return null;
+
+    const rect = container.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
+    const width = rect.width;
+    const height = rect.height;
 
-    const gridLeft = padding.left;
-    const gridTop = padding.top;
-    const gridWidth = width - padding.left - padding.right;
-    const gridHeight = height - padding.top - padding.bottom;
+    const gridLeft = GRID_MARGIN.left;
+    const gridTop = GRID_MARGIN.top;
+    const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
+    const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
 
     if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) return null;
 
@@ -335,6 +402,13 @@ export function Grid({
 
     const relativeY = (y - gridTop) / gridHeight;
     const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
+
+    // Ctrl = allow chromatic (non-diatonic) notes.
+    if (e.ctrlKey) {
+      const chromaticSemitone = Math.round(rawSemitone);
+      return { t16, deg: 1, octave: 0, semi: chromaticSemitone };
+    }
+
     const snappedSemitone = snapSemitoneToScale(rawSemitone, arrangement.scale);
     const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
 
@@ -353,6 +427,9 @@ export function Grid({
     if (!ctx) return;
 
     // Handle high DPI displays
+    // IMPORTANT: We must reset the transform each frame.
+    // If we call `ctx.scale(dpr, dpr)` repeatedly without resetting, the scale accumulates,
+    // which makes drawings (and mouse hit-testing) feel offset.
     const dpr = window.devicePixelRatio || 1;
     const rect = container.getBoundingClientRect();
 
@@ -360,17 +437,22 @@ export function Grid({
     canvas.height = rect.height * dpr;
     canvas.style.width = `${rect.width}px`;
     canvas.style.height = `${rect.height}px`;
-    ctx.scale(dpr, dpr);
+
+    // Clear in device pixels with identity transform.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw in CSS pixels with a single DPR transform.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const width = rect.width;
     const height = rect.height;
 
     // Grid area (with margins for labels)
-    const margin = { top: 40, right: 20, bottom: 40, left: 50 };
-    const gridLeft = margin.left;
-    const gridTop = margin.top;
-    const gridWidth = width - margin.left - margin.right;
-    const gridHeight = height - margin.top - margin.bottom;
+    const gridLeft = GRID_MARGIN.left;
+    const gridTop = GRID_MARGIN.top;
+    const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
+    const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
 
     // Get colors from CSS variables
 
@@ -381,8 +463,7 @@ export function Grid({
     const playheadColor = getCssVar('--playhead-color') || '#ffffff';
     const textColor = getCssVar('--text-secondary') || '#a8a3b8';
 
-    // Clear canvas
-    ctx.clearRect(0, 0, width, height);
+    // Canvas was already cleared above (in device pixels)
 
 
     if (!arrangement) {
@@ -630,7 +711,9 @@ export function Grid({
         if (node.term) continue; // Skip termination nodes
 
         const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
-        const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+        const y = node.semi !== undefined
+          ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+          : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
         // Draw node glow - only if not muted
         if (display.glowIntensity > 0 && !isSynthMuted) {
@@ -654,7 +737,7 @@ export function Grid({
         ctx.font = 'bold 12px system-ui';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(node.deg), x, y + 0.5);
+        ctx.fillText(node.semi !== undefined ? semitoneToLabel(node.semi) : String(node.deg), x, y + 0.5);
       }
 
       // Create mode hover preview ("phantom" node).
@@ -662,7 +745,9 @@ export function Grid({
       if (mode === 'create' && hoverPreviewRef.current?.voiceId === voice.id && !onlyChords) {
         const preview = hoverPreviewRef.current.point;
         const px = t16ToX(preview.t16, startT16, endT16, gridLeft, gridWidth);
-        const py = degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+        const py = preview.semi !== undefined
+          ? semitoneOffsetToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+          : degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
         ctx.save();
         ctx.globalAlpha = 0.35;
@@ -682,7 +767,7 @@ export function Grid({
         ctx.font = 'bold 12px system-ui';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(preview.deg), px, py + 0.5);
+        ctx.fillText(preview.semi !== undefined ? semitoneToLabel(preview.semi) : String(preview.deg), px, py + 0.5);
 
         ctx.restore();
       }
@@ -737,52 +822,60 @@ export function Grid({
 
     for (let i = 0; i < voice.nodes.length; i++) {
       const node = voice.nodes[i];
+
+      // Termination node ends the current phrase.
+      if (node.term) {
+        if (inPhrase) {
+          // Draw a horizontal hold segment to the termination time.
+          const termX = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
+          ctx.lineTo(termX, lastY);
+          ctx.stroke();
+          ctx.beginPath();
+          inPhrase = false;
+        }
+        continue;
+      }
+
       const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
-      const y = degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
+      const y = node.semi !== undefined
+        ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+        : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
 
       if (!inPhrase) {
         ctx.moveTo(x, y);
         inPhrase = true;
+        lastX = x;
+        lastY = y;
+        continue;
+      }
+
+      // Draw curved connection from previous node to this one
+      const nodeRadius = 12;
+      const bendWidth = Math.min(40, (x - lastX) * 0.8);
+      const bendStartX = x - bendWidth;
+
+      // Draw a straight horizontal line to the start of the bend
+      ctx.lineTo(bendStartX, lastY);
+
+      if (Math.abs(y - lastY) < 1) {
+        // Same pitch, just draw a straight line
+        ctx.lineTo(x, y);
       } else {
-        // Draw curved connection from previous node to this one
-        const nodeRadius = 12;
-        const bendWidth = Math.min(40, (x - lastX) * 0.8);
-        const bendStartX = x - bendWidth;
+        // Pitch changes: enter from bottom if moving up, top if moving down
+        const isMovingUp = y < lastY;
+        const entryY = isMovingUp ? y + nodeRadius : y - nodeRadius;
 
-        // Draw a straight horizontal line to the start of the bend
-        ctx.lineTo(bendStartX, lastY);
+        const cp1x = bendStartX + bendWidth * 0.5;
+        const cp1y = lastY;
+        const cp2x = x;
+        const cp2y = lastY;
 
-        if (Math.abs(y - lastY) < 1) {
-          // Same pitch, just draw a straight line
-          ctx.lineTo(x, y);
-        } else {
-          // Pitch changes: enter from bottom if moving up, top if moving down
-          const isMovingUp = y < lastY;
-          const entryY = isMovingUp ? y + nodeRadius : y - nodeRadius;
-
-          // Curve to the entry point at the top/bottom of the circle
-          // cp1 maintains horizontal exit from the previous segment
-          // cp2 ensures vertical entry into the circle
-          const cp1x = bendStartX + bendWidth * 0.5;
-          const cp1y = lastY;
-          const cp2x = x;
-          const cp2y = lastY;
-
-          ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, entryY);
-          // Final vertical segment to the center
-          ctx.lineTo(x, y);
-        }
+        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, entryY);
+        ctx.lineTo(x, y);
       }
 
       lastX = x;
       lastY = y;
-
-      // Check if this is a termination node
-      if (node.term) {
-        ctx.stroke();
-        ctx.beginPath();
-        inPhrase = false;
-      }
     }
 
     if (inPhrase) {
@@ -979,12 +1072,28 @@ export function Grid({
     const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
     if (!voiceId) return;
 
-    const voice = arrangement.voices.find((v) => v.id === voiceId);
-    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - snapped.t16) < 2);
-    if (!existingNode) return;
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const startT16 = 0;
+    const endT16 = totalT16;
 
-    removeNode(voiceId, existingNode.t16);
-  }, [mode, arrangement, selectedVoiceId, removeNode, getSnappedPointFromMouseEvent]);
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const width = rect.width;
+    const height = rect.height;
+
+    const gridLeft = GRID_MARGIN.left;
+    const gridTop = GRID_MARGIN.top;
+    const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
+    const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+
+    const { minSemitone, maxSemitone } = getPitchRange();
+
+    const hit = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
+    if (!hit) return;
+
+    removeNode(voiceId, hit.t16);
+  }, [mode, arrangement, selectedVoiceId, removeNode, getSnappedPointFromMouseEvent, getPitchRange, getNodeHitAtMouseEvent]);
 
   /**
    * Handle double-click to toggle termination status of a node.
@@ -993,51 +1102,52 @@ export function Grid({
     // Only handle double-clicks in create mode
     if (mode !== 'create' || !arrangement) return;
 
-    const canvas = canvasRef.current;
     const container = containerRef.current;
-    if (!canvas || !container) return;
+    if (!container) return;
 
-    // Get click position relative to canvas
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // Calculate grid dimensions
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    const padding = { top: 40, right: 20, bottom: 20, left: 60 };
-
-    const gridLeft = padding.left;
-    const gridTop = padding.top;
-    const gridWidth = width - padding.left - padding.right;
-    const gridHeight = height - padding.top - padding.bottom;
-
-    // Check if click is within grid area
-    if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) {
-      return;
-    }
-
-    // Calculate time from click
-    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-    const startT16 = 0;
-    const endT16 = totalT16;
-    const relativeX = (x - gridLeft) / gridWidth;
-    const rawT16 = startT16 + relativeX * (endT16 - startT16);
-    const t16 = Math.round(rawT16);
-
-    // Find voice to edit
     const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
     if (!voiceId) return;
 
-    // Find existing node near this position
-    const voice = arrangement.voices.find((v) => v.id === voiceId);
-    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - t16) < 4);
+    const rect = container.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
 
-    if (existingNode) {
-      // Toggle termination status using updateNode
-      updateNode(voiceId, existingNode.t16, existingNode.t16, existingNode.deg, existingNode.octave || 0, !existingNode.term);
+    const gridLeft = GRID_MARGIN.left;
+    const gridTop = GRID_MARGIN.top;
+    const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
+    const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const startT16 = 0;
+    const endT16 = totalT16;
+    const { minSemitone, maxSemitone } = getPitchRange();
+
+    const hit = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
+    if (hit) {
+      // Double-clicking an existing node toggles termination.
+      updateNode(voiceId, hit.t16, hit.t16, hit.deg, hit.octave || 0, !hit.term, hit.semi);
+      return;
     }
-  }, [mode, arrangement, selectedVoiceId, updateNode]);
+
+    // Double-clicking an empty grid point creates a termination (hold end) node.
+    // We copy the pitch from the most recent node before that time.
+    const snapped = getSnappedPointFromMouseEvent(e);
+    if (!snapped) return;
+
+    const voice = arrangement.voices.find((v) => v.id === voiceId);
+    if (!voice) return;
+
+    const previousNodes = voice.nodes
+      .filter((n) => !n.term && n.t16 <= snapped.t16)
+      .sort((a, b) => a.t16 - b.t16);
+
+    const prev = previousNodes.length > 0 ? previousNodes[previousNodes.length - 1] : null;
+    if (!prev) return;
+
+    // Use updateNode to "insert" a term node at this time.
+    // We pass deg/octave/semi of the previous note so the contour line holds visually.
+    updateNode(voiceId, snapped.t16, snapped.t16, prev.deg, prev.octave || 0, true, prev.semi);
+  }, [mode, arrangement, selectedVoiceId, updateNode, getPitchRange, getNodeHitAtMouseEvent]);
 
   /**
    * Handle mouse down for starting node drag in create mode.
@@ -1068,9 +1178,25 @@ export function Grid({
     // Update hover preview immediately (so the phantom node appears on press).
     hoverPreviewRef.current = { voiceId, point: snapped };
 
-    // Check if clicking on an existing node (by time proximity).
-    const voice = arrangement.voices.find((v) => v.id === voiceId);
-    const existingNode = voice?.nodes.find((n) => Math.abs(n.t16 - snapped.t16) < 3);
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const startT16 = 0;
+    const endT16 = totalT16;
+
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const width = rect.width;
+    const height = rect.height;
+
+    const gridLeft = GRID_MARGIN.left;
+    const gridTop = GRID_MARGIN.top;
+    const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
+    const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+
+    const { minSemitone, maxSemitone } = getPitchRange();
+
+    // Check if clicking on an existing node (pixel-distance hit test).
+    const existingNode = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
 
     // Shift+press removes a node immediately.
     if (existingNode && e.shiftKey) {
@@ -1083,7 +1209,7 @@ export function Grid({
 
     // Start the synth preview note (rings while the mouse is held down).
     auditionRef.current = { voiceId };
-    playbackEngine.previewSynthAttack(voiceId, snapped.deg, snapped.octave);
+    playbackEngine.previewSynthAttack(voiceId, snapped.deg, snapped.octave, snapped.semi);
 
     if (existingNode) {
       // Start dragging this existing node.
@@ -1094,7 +1220,7 @@ export function Grid({
 
     // Otherwise, we're placing a new node (commit happens on mouse-up).
     placingNewNodeRef.current = { voiceId, point: snapped };
-  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, removeNode, setSelectedVoiceId]);
+  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, removeNode, setSelectedVoiceId, getPitchRange, getNodeHitAtMouseEvent]);
 
   /**
    * Handle mouse move for dragging nodes.
@@ -1117,7 +1243,7 @@ export function Grid({
 
     // If the mouse is held down, glide the preview synth pitch.
     if (auditionRef.current?.voiceId === voiceId) {
-      playbackEngine.previewSynthGlide(voiceId, snapped.deg, snapped.octave);
+      playbackEngine.previewSynthGlide(voiceId, snapped.deg, snapped.octave, snapped.semi);
     }
 
     // If we're dragging an existing node, update it to the snapped position.
@@ -1125,7 +1251,7 @@ export function Grid({
       const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
       const originalNode = voice?.nodes.find((n) => n.t16 === dragState.originalT16);
 
-      updateNode(dragState.voiceId, dragState.originalT16, snapped.t16, snapped.deg, snapped.octave, originalNode?.term);
+      updateNode(dragState.voiceId, dragState.originalT16, snapped.t16, snapped.deg, snapped.octave, originalNode?.term, snapped.semi);
       setDragState({ ...dragState, originalT16: snapped.t16 });
       return;
     }
@@ -1143,7 +1269,7 @@ export function Grid({
     // Commit a new node placement (if we were placing one).
     const placing = placingNewNodeRef.current;
     if (placing && mode === 'create') {
-      addNode(placing.voiceId, placing.point.t16, placing.point.deg, placing.point.octave);
+      addNode(placing.voiceId, placing.point.t16, placing.point.deg, placing.point.octave, placing.point.semi);
     }
 
     placingNewNodeRef.current = null;

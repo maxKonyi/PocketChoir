@@ -135,9 +135,9 @@ interface AppActions {
   applyAutoTranspositionIfPossible: (announce: boolean) => void;
 
   // Create mode - node editing
-  addNode: (voiceId: string, t16: number, deg: number, octave?: number) => void;
+  addNode: (voiceId: string, t16: number, deg: number, octave?: number, semi?: number) => void;
   removeNode: (voiceId: string, t16: number) => void;
-  updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number, term?: boolean) => void;
+  updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number, term?: boolean, semi?: number) => void;
   setSelectedVoiceId: (voiceId: string | null) => void;
 
   // Voice controls
@@ -384,7 +384,7 @@ export const useAppStore = create<AppState & AppActions>()(
   },
 
   // -- Create Mode - Node Editing --
-  addNode: (voiceId, t16, deg, octave = 0) => set((state) => {
+  addNode: (voiceId, t16, deg, octave = 0, semi) => set((state) => {
     if (!state.arrangement) return state;
 
     // Find and update the voice
@@ -393,7 +393,7 @@ export const useAppStore = create<AppState & AppActions>()(
 
       // Remove any existing node at this t16, then add new one
       const filteredNodes = voice.nodes.filter((n) => n.t16 !== t16);
-      const newNode = { t16, deg, octave };
+      const newNode = { t16, deg, octave, ...(semi !== undefined ? { semi } : {}) };
       const newNodes = [...filteredNodes, newNode].sort((a, b) => a.t16 - b.t16);
 
       return { ...voice, nodes: newNodes };
@@ -420,7 +420,7 @@ export const useAppStore = create<AppState & AppActions>()(
     };
   }),
 
-  updateNode: (voiceId, oldT16, newT16, deg, octave = 0, term = false) => set((state) => {
+  updateNode: (voiceId, oldT16, newT16, deg, octave = 0, term = false, semi) => set((state) => {
     if (!state.arrangement) return state;
 
     const updatedVoices = state.arrangement.voices.map((voice) => {
@@ -428,7 +428,13 @@ export const useAppStore = create<AppState & AppActions>()(
 
       // Remove old node, add updated one
       const filteredNodes = voice.nodes.filter((n) => n.t16 !== oldT16 && n.t16 !== newT16);
-      const updatedNode = { t16: newT16, deg, octave, ...(term ? { term: true } : {}) };
+      const updatedNode = {
+        t16: newT16,
+        deg,
+        octave,
+        ...(semi !== undefined ? { semi } : {}),
+        ...(term ? { term: true } : {}),
+      };
       const newNodes = [...filteredNodes, updatedNode].sort((a, b) => a.t16 - b.t16);
 
       return { ...voice, nodes: newNodes };

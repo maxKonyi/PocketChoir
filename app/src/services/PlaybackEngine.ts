@@ -9,7 +9,7 @@ import * as Tone from 'tone';
 import { AudioService } from './AudioService';
 import { SynthVoice, createSynthVoice } from './SynthVoice';
 import type { Arrangement, Voice, Node, TimeSignature } from '../types';
-import { scaleDegreeToFrequency } from '../utils/music';
+import { midiToFrequency, noteNameToMidi, scaleDegreeToFrequency } from '../utils/music';
 import { t16ToMs, sixteenthDurationMs, arrangementTotalSixteenths } from '../utils/timing';
 import { MicrophoneService } from './MicrophoneService';
 
@@ -51,6 +51,10 @@ export class PlaybackEngine {
   // Synth voices (one per arrangement voice)
   private synthVoices: Map<string, SynthVoice> = new Map();
 
+  // Separate synth voices used only for Create-mode preview/auditioning.
+  // This avoids fighting the normal playback scheduler.
+  private previewSynthVoices: Map<string, SynthVoice> = new Map();
+
   // Recorded audio
   private audioBuffers: Map<string, AudioBuffer> = new Map();
   private activeAudioSources: Map<string, AudioBufferSourceNode> = new Map();
@@ -82,6 +86,14 @@ export class PlaybackEngine {
   // We keep this independent from timeline scheduling so auditioning doesn't
   // interfere with playback.
   private previewSynthIsPlaying: Map<string, boolean> = new Map();
+
+  // Create-mode preview behavior tuning.
+  private readonly previewMinDurationMs: number = 90;
+  private readonly previewReleaseMs: number = 35;
+
+  // When you preview while playback is running, we temporarily override the synth.
+  // On release, we restore the synth to whatever pitch the playhead is currently on.
+  private previewOverrideUntilMs: Map<string, number> = new Map();
 
   // Mute/solo state per voice (separate for synth and vocal)
   private synthVolumes: Map<string, number> = new Map();
@@ -154,6 +166,15 @@ export class PlaybackEngine {
       }
       this.synthVoices.set(voice.id, synth);
 
+      const previewSynth = createSynthVoice(`${voice.id}__preview`, index);
+      if (AudioService.isReady()) {
+        previewSynth.initialize();
+      }
+
+      // Make preview note-offs short and clean (reduce clicks).
+      previewSynth.setReleaseTime(this.previewReleaseMs / 1000);
+      this.previewSynthVoices.set(voice.id, previewSynth);
+
       const gain = ctx.createGain();
 
       // Recorded vocal routing:
@@ -178,9 +199,78 @@ export class PlaybackEngine {
 
       // Reset preview state for this voice.
       this.previewSynthIsPlaying.set(voice.id, false);
+      this.previewOverrideUntilMs.set(voice.id, 0);
     });
 
     console.log(`PlaybackEngine initialized with ${arrangement.voices.length} voices`);
+  }
+
+  /**
+   * Update the arrangement data WITHOUT recreating audio nodes.
+   *
+   * This is important in Create mode: editing nodes produces a new arrangement
+   * object, and we want playback to reflect those edits without restarting.
+   */
+  updateArrangement(arrangement: Arrangement): void {
+    // Update the data reference.
+    this.arrangement = arrangement;
+    this.baseTempo = arrangement.tempo;
+    this.timeSig = arrangement.timeSig;
+    this.loopEndT16 = arrangementTotalSixteenths(arrangement.bars, this.timeSig);
+
+    // Ensure loop end is valid.
+    if (this.loopEndT16 <= this.loopStartT16) {
+      this.loopStartT16 = 0;
+      this.loopEndT16 = this.loopEndT16;
+    }
+
+    // If we are currently playing, refresh scheduling markers from the current playhead.
+    // IMPORTANT: Do NOT call `primeSynthSchedulingFromPosition()` here.
+    // That method schedules "held" notes at `this.startTime` (playback start) and can
+    // reset indices in a way that replays from the beginning, which feels like the
+    // playhead jumped backwards.
+    if (this.isPlaying) {
+      const fromT16 = this.getCurrentPositionT16();
+
+      for (const voice of arrangement.voices) {
+        const synth = this.synthVoices.get(voice.id);
+        if (!synth) continue;
+
+        const nodeIndex = this.findNodeAtOrAfter(voice.nodes, fromT16);
+        const nextIndex = nodeIndex < 0 ? voice.nodes.length : nodeIndex;
+        this.nextNodeIndexToSchedule.set(voice.id, nextIndex);
+
+        // If a preview is currently overriding this voice, don't fight it.
+        const isPreviewing = this.previewSynthIsPlaying.get(voice.id) ?? false;
+        if (isPreviewing) continue;
+
+        // Ensure the synth is in a sensible state at the playhead.
+        // Find the most recent node at or before the playhead.
+        let activeNode: Node | null = null;
+        for (const node of voice.nodes) {
+          if (node.t16 <= fromT16) activeNode = node;
+          else break;
+        }
+
+        if (!activeNode || activeNode.term || !this.isSynthAudible(voice.id)) {
+          synth.noteOff();
+          this.scheduledSynthIsPlaying.set(voice.id, false);
+          continue;
+        }
+
+        const freq = this.getNodeFrequency(voice, activeNode);
+        if (synth.getIsPlaying()) {
+          synth.glideTo(freq);
+          this.scheduledSynthIsPlaying.set(voice.id, true);
+        } else {
+          synth.noteOn(freq);
+          this.scheduledSynthIsPlaying.set(voice.id, true);
+        }
+      }
+
+      // Now schedule upcoming events from the current playhead.
+      this.scheduleAheadFromCurrentPosition();
+    }
   }
 
   /**
@@ -281,6 +371,12 @@ export class PlaybackEngine {
       if (synth) {
         synth.setPan(clamped);
       }
+
+      // Keep preview synth panning consistent.
+      const previewSynth = this.previewSynthVoices.get(voiceId);
+      if (previewSynth) {
+        previewSynth.setPan(clamped);
+      }
       return;
     }
 
@@ -327,6 +423,11 @@ export class PlaybackEngine {
       const synth = this.synthVoices.get(voiceId);
       if (synth) {
         synth.setVolume(targetVolume);
+      }
+
+      const previewSynth = this.previewSynthVoices.get(voiceId);
+      if (previewSynth) {
+        previewSynth.setVolume(targetVolume);
       }
     }
 
@@ -381,11 +482,9 @@ export class PlaybackEngine {
    * Check if a synth should be audible (considering synth mute/solo).
    */
   private isSynthAudible(voiceId: string): boolean {
-    // Solo is global across SYN + VOX tracks.
-    // If ANY solo is active anywhere, only SYN tracks that are soloed are audible.
-    const isAnySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
-
-    if (isAnySoloActive) {
+    // Synth solo is scoped to synth tracks.
+    // If ANY synth solo is active, only synth tracks that are soloed are audible.
+    if (this.synthSolo.size > 0) {
       return this.synthSolo.has(voiceId);
     }
 
@@ -396,11 +495,9 @@ export class PlaybackEngine {
    * Check if a recording should be audible (considering vocal mute/solo).
    */
   private isVocalAudible(voiceId: string): boolean {
-    // Solo is global across SYN + VOX tracks.
-    // If ANY solo is active anywhere, only VOX tracks that are soloed are audible.
-    const isAnySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
-
-    if (isAnySoloActive) {
+    // Vocal solo is scoped to vocal tracks.
+    // If ANY vocal solo is active, only vocal tracks that are soloed are audible.
+    if (this.vocalSolo.size > 0) {
       return this.vocalSolo.has(voiceId);
     }
 
@@ -408,74 +505,171 @@ export class PlaybackEngine {
   }
 
   /**
-   * Preview (audition) a single synth note for Create mode.
-   * These helpers are intended for mouse-down / drag / mouse-up interactions.
+   * Compute a frequency for a (deg/octave) OR a chromatic semitone override.
    */
-  previewSynthAttack(voiceId: string, deg: number, octaveOffset: number = 0): void {
+  private getPreviewFrequency(deg: number, octaveOffset: number, semi?: number): number {
+    if (!this.arrangement) return 440;
+
+    // If `semi` is provided, it is an absolute chromatic semitone offset from tonic.
+    if (semi !== undefined) {
+      const tonicMidi = noteNameToMidi(`${this.arrangement.tonic}4`) || 60;
+      const effectiveTonicMidi = tonicMidi + (this.transposition || 0);
+      return midiToFrequency(effectiveTonicMidi + semi);
+    }
+
+    let freq = scaleDegreeToFrequency(
+      deg,
+      this.arrangement.tonic,
+      this.arrangement.scale,
+      4,
+      octaveOffset
+    );
+    freq = freq * Math.pow(2, this.transposition / 12);
+    return freq;
+  }
+
+  /**
+   * Restore the synth voice to whatever note should currently be sounding
+   * at the playhead (if playback is running).
+   */
+  private restoreVoiceToPlayhead(voiceId: string): void {
     if (!this.arrangement) return;
-    if (!AudioService.isReady()) return;
-    if (this.isPlaying || this.isCountingIn) return;
-    if (!this.isSynthAudible(voiceId)) return;
 
     const synth = this.synthVoices.get(voiceId);
     if (!synth) return;
+
+    // If playback isn't running, restoring just means silence.
+    if (!this.isPlaying) {
+      synth.noteOff();
+      return;
+    }
+
+    const voice = this.arrangement.voices.find(v => v.id === voiceId);
+    if (!voice) {
+      synth.noteOff();
+      return;
+    }
+
+    const t16 = this.getCurrentPositionT16();
+
+    // Find the most recent node at or before the playhead.
+    // If it's a termination node, the correct state is silence.
+    let activeNode: Node | null = null;
+    for (const node of voice.nodes) {
+      if (node.t16 <= t16) activeNode = node;
+      else break;
+    }
+
+    if (!activeNode || activeNode.term) {
+      synth.noteOff();
+      return;
+    }
+
+    const freq = this.getPreviewFrequency(activeNode.deg, activeNode.octave || 0, activeNode.semi);
+
+    // If already playing, glide; otherwise attack.
+    if (synth.getIsPlaying()) {
+      synth.glideTo(freq);
+    } else {
+      synth.noteOn(freq);
+    }
+  }
+
+  /**
+   * Preview (audition) a single synth note for Create mode.
+   * These helpers are intended for mouse-down / drag / mouse-up interactions.
+   */
+  previewSynthAttack(voiceId: string, deg: number, octaveOffset: number = 0, semi?: number): void {
+    if (!this.arrangement) return;
+    if (!AudioService.isReady()) return;
+    if (this.isCountingIn) return;
+    if (!this.isSynthAudible(voiceId)) return;
+
+    const previewSynth = this.previewSynthVoices.get(voiceId);
+    if (!previewSynth) return;
+
+    // While previewing during playback, mute the scheduled playback synth for this voice.
+    // This makes preview feel like a true temporary override.
+    if (this.isPlaying) {
+      const synth = this.synthVoices.get(voiceId);
+      synth?.setVolume(0);
+    }
 
     // Ensure the audio context is running (safe to call inside a user gesture).
     void AudioService.resume();
 
-    let freq = scaleDegreeToFrequency(
-      deg,
-      this.arrangement.tonic,
-      this.arrangement.scale,
-      4,
-      octaveOffset
-    );
-    freq = freq * Math.pow(2, this.transposition / 12);
+    const freq = this.getPreviewFrequency(deg, octaveOffset, semi);
+    previewSynth.noteOn(freq);
 
-    synth.noteOn(freq);
+    const nowMs = window.performance.now();
     this.previewSynthIsPlaying.set(voiceId, true);
+    this.previewOverrideUntilMs.set(voiceId, nowMs + this.previewMinDurationMs);
   }
 
-  previewSynthGlide(voiceId: string, deg: number, octaveOffset: number = 0): void {
+  previewSynthGlide(voiceId: string, deg: number, octaveOffset: number = 0, semi?: number): void {
     if (!this.arrangement) return;
     if (!AudioService.isReady()) return;
-    if (this.isPlaying || this.isCountingIn) return;
+    if (this.isCountingIn) return;
     if (!this.isSynthAudible(voiceId)) return;
 
-    const synth = this.synthVoices.get(voiceId);
-    if (!synth) return;
+    const previewSynth = this.previewSynthVoices.get(voiceId);
+    if (!previewSynth) return;
 
-    let freq = scaleDegreeToFrequency(
-      deg,
-      this.arrangement.tonic,
-      this.arrangement.scale,
-      4,
-      octaveOffset
-    );
-    freq = freq * Math.pow(2, this.transposition / 12);
+    // While previewing during playback, mute the scheduled playback synth for this voice.
+    if (this.isPlaying) {
+      const synth = this.synthVoices.get(voiceId);
+      synth?.setVolume(0);
+    }
+
+    const freq = this.getPreviewFrequency(deg, octaveOffset, semi);
 
     const wasPlaying = this.previewSynthIsPlaying.get(voiceId) ?? false;
     if (!wasPlaying) {
-      synth.noteOn(freq);
+      previewSynth.noteOn(freq);
+      const nowMs = window.performance.now();
       this.previewSynthIsPlaying.set(voiceId, true);
+      this.previewOverrideUntilMs.set(voiceId, nowMs + this.previewMinDurationMs);
       return;
     }
 
-    synth.glideTo(freq);
+    previewSynth.glideTo(freq);
   }
 
   previewSynthRelease(voiceId: string): void {
     if (!AudioService.isReady()) return;
-    if (this.isPlaying || this.isCountingIn) return;
+    if (this.isCountingIn) return;
 
-    const synth = this.synthVoices.get(voiceId);
-    if (!synth) return;
+    const previewSynth = this.previewSynthVoices.get(voiceId);
+    if (!previewSynth) return;
 
     const wasPlaying = this.previewSynthIsPlaying.get(voiceId) ?? false;
     if (!wasPlaying) return;
 
-    synth.noteOff();
-    this.previewSynthIsPlaying.set(voiceId, false);
+    const nowMs = window.performance.now();
+    const untilMs = this.previewOverrideUntilMs.get(voiceId) ?? 0;
+
+    const doRelease = () => {
+      // Trigger release now; the preview synth has a short envelope release time.
+      previewSynth.noteOff();
+      this.previewSynthIsPlaying.set(voiceId, false);
+      this.previewOverrideUntilMs.set(voiceId, 0);
+
+      // Restore the playback synth volume (in case we muted it while previewing).
+      // This also re-applies mute/solo rules.
+      this.updateVoiceVolume(voiceId, 'synth');
+
+      // If playback is running, restore the voice to the playhead pitch.
+      // This makes previewing feel like a temporary override.
+      this.restoreVoiceToPlayhead(voiceId);
+    };
+
+    if (nowMs < untilMs) {
+      // Ensure a minimum audible note length.
+      window.setTimeout(doRelease, Math.max(0, untilMs - nowMs));
+      return;
+    }
+
+    doRelease();
   }
 
   /**
@@ -487,6 +681,11 @@ export class PlaybackEngine {
       console.warn('No arrangement loaded');
       return;
     }
+
+    // Safety: ensure synth volumes are restored before starting playback.
+    // Preview auditioning can temporarily set a synth voice volume to 0.
+    // If mouse-up is missed for any reason, this prevents "silent" playback.
+    this.updateAllVoiceVolumes();
 
     // Make sure audio context is running
     await AudioService.resume();
@@ -988,7 +1187,14 @@ export class PlaybackEngine {
   private getNodeFrequency(_voice: Voice, node: Node): number {
     if (!this.arrangement) return 440;
 
-    // Get base frequency from scale degree
+    // If the node provides a chromatic semitone offset, use it directly.
+    if (node.semi !== undefined) {
+      const tonicMidi = noteNameToMidi(`${this.arrangement.tonic}4`) || 60;
+      const effectiveTonicMidi = tonicMidi + (this.transposition || 0);
+      return midiToFrequency(effectiveTonicMidi + node.semi);
+    }
+
+    // Otherwise use scale-degree mapping.
     let freq = scaleDegreeToFrequency(
       node.deg,
       this.arrangement.tonic,
@@ -997,11 +1203,8 @@ export class PlaybackEngine {
       node.octave || 0
     );
 
-    // Apply transposition
-    if (this.transposition !== 0) {
-      freq *= Math.pow(2, this.transposition / 12);
-    }
-
+    // Apply transposition as a frequency ratio.
+    freq = freq * Math.pow(2, this.transposition / 12);
     return freq;
   }
 
@@ -1020,6 +1223,11 @@ export class PlaybackEngine {
       synth.dispose();
     }
     this.synthVoices.clear();
+
+    for (const synth of this.previewSynthVoices.values()) {
+      synth.dispose();
+    }
+    this.previewSynthVoices.clear();
   }
 
   /**

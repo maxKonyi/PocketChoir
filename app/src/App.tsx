@@ -109,11 +109,18 @@ function App() {
         onLoop: () => {
           console.log('Loop');
         },
-        metronomeEnabled: playback.metronomeEnabled,
-        recordingLagMs: microphoneState.recordingLagMs,
       });
     }
-  }, [arrangement, setPosition]);
+  }, [arrangement?.id, setPosition]);
+
+  // Keep the playback engine's arrangement data in sync while editing.
+  // This allows Create-mode edits (node placements) to be heard during playback
+  // without re-initializing the engine (which would restart playback).
+  useEffect(() => {
+    if (!arrangement) return;
+    if (!AudioService.isReady()) return;
+    playbackEngine.updateArrangement(arrangement);
+  }, [arrangement]);
 
   // Keep the playback engine metronome setting in sync with the transport toggle.
   useEffect(() => {
@@ -163,7 +170,7 @@ function App() {
     };
 
     handlePlayback();
-  }, [playback.isPlaying, playback.isRecording, countIn.enabled, countIn.bars, arrangement, setPosition]);
+  }, [playback.isPlaying, playback.isRecording, countIn.enabled, countIn.bars, arrangement?.id, setPosition]);
 
   /**
    * Update playback engine settings when they change.
