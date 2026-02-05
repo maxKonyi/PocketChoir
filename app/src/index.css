@@ -35,13 +35,13 @@
   /* -- Text colors -- */
   --text-primary: #ffffff;
   /* Main text */
-  --text-secondary: #e0d9ff;
-  /* Secondary headings/labels */
-  --text-muted: #b8b0d3;
+  --text-secondary: #e7eaf2;
+  /* Secondary headings/labels (neutral grey) */
+  --text-muted: #c3c7d4;
   /* Muted supporting text */
-  --text-dim: #8e86a7;
+  --text-dim: #9398a7;
   /* Dimmed text for dormant states */
-  --text-disabled: #5b536b;
+  --text-disabled: #5f6473;
   /* Disabled/placeholder text */
 
   /* -- Accent colors -- */
