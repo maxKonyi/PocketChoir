@@ -9,7 +9,7 @@
    - Playhead
    ============================================================ */
 
-import { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Arrangement, Voice, PitchPoint } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
@@ -120,6 +120,7 @@ interface DragState {
   voiceId: string;
   originalT16: number;
   isDragging: boolean;
+  anchorParentT16?: number;
 }
 
 // The "anchor" range for the Y-axis (pitch) view.
@@ -177,6 +178,7 @@ export function Grid({
   // This is what makes zoom behavior stable (only changes when you change zoom manually
   // or load a different arrangement).
   const [pitchRangeAnchor, setPitchRangeAnchor] = useState<PitchRangeAnchor | null>(null);
+  const [isHoveringAnchor, setIsHoveringAnchor] = useState(false);
 
   // Get arrangement from store to ensure we always have latest (for create mode updates)
   const arrangementFromStore = useAppStore((state) => state.arrangement);
@@ -254,7 +256,7 @@ export function Grid({
     const hitRadius = 14;
 
     for (const node of voice.nodes) {
-      if (node.term) continue;
+      const r = node.term ? 9 : hitRadius;
 
       const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
       const y = node.semi !== undefined
@@ -263,7 +265,7 @@ export function Grid({
 
       const dx = mouseX - x;
       const dy = mouseY - y;
-      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+      if (dx * dx + dy * dy <= r * r) {
         return node;
       }
     }
@@ -707,9 +709,10 @@ export function Grid({
       // Draw nodes - larger circles with scale degree numbers (like mockup)
       const nodeRadius = 12; // Larger nodes to fit numbers
 
-      for (const node of voice.nodes) {
-        if (node.term) continue; // Skip termination nodes
+      // Anchors (termination points) are drawn smaller and filled (no stroke).
+      const anchorRadius = nodeRadius * 0.5;
 
+      for (const node of voice.nodes) {
         const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
         const y = node.semi !== undefined
           ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
@@ -721,7 +724,35 @@ export function Grid({
           ctx.shadowBlur = 8 * display.glowIntensity;
         }
 
-        // Draw node circle with opaque fill (mockup style)
+        if (node.term) {
+          // Anchor: small filled circle, no stroke, same color as the line.
+          const isDraggedAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && dragState.originalT16 === node.t16;
+
+          if (isDraggedAnchor) {
+            // Halo around the anchor while dragging.
+            const grad = ctx.createRadialGradient(x, y, 0, x, y, anchorRadius * 4);
+            grad.addColorStop(0, '#fff');
+            grad.addColorStop(0.2, voiceColor);
+            grad.addColorStop(1, 'transparent');
+
+            ctx.fillStyle = grad;
+            ctx.globalAlpha = 0.8;
+            ctx.beginPath();
+            ctx.arc(x, y, anchorRadius * 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+
+          ctx.beginPath();
+          ctx.arc(x, y, anchorRadius, 0, Math.PI * 2);
+          ctx.fillStyle = voiceColor;
+          ctx.fill();
+
+          ctx.shadowBlur = 0;
+          continue;
+        }
+
+        // Regular node circle with opaque fill (mockup style)
         ctx.beginPath();
         ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
         ctx.fillStyle = voiceColor; // Fully opaque fill
@@ -742,7 +773,9 @@ export function Grid({
 
       // Create mode hover preview ("phantom" node).
       // This helps you see the exact snapped point BEFORE you commit a node.
-      if (mode === 'create' && hoverPreviewRef.current?.voiceId === voice.id && !onlyChords) {
+      const isDraggingAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && !!voice.nodes.find(n => n.term && n.t16 === dragState.originalT16);
+
+      if (mode === 'create' && hoverPreviewRef.current?.voiceId === voice.id && !onlyChords && !isDraggingAnchor) {
         const preview = hoverPreviewRef.current.point;
         const px = t16ToX(preview.t16, startT16, endT16, gridLeft, gridWidth);
         const py = preview.semi !== undefined
@@ -879,7 +912,18 @@ export function Grid({
     }
 
     if (inPhrase) {
-      ctx.stroke();
+      // If playback is running and there is no terminating anchor,
+      // show a dashed line indicating the note holds to the end of the loop.
+      if (playbackEngine.getIsPlaying()) {
+        const endX = t16ToX(endT16, startT16, endT16, gridLeft, gridWidth);
+        ctx.save();
+        ctx.setLineDash([6, 6]);
+        ctx.lineTo(endX, lastY);
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        ctx.stroke();
+      }
     }
   }
 
@@ -1124,8 +1168,43 @@ export function Grid({
 
     const hit = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
     if (hit) {
-      // Double-clicking an existing node toggles termination.
-      updateNode(voiceId, hit.t16, hit.t16, hit.deg, hit.octave || 0, !hit.term, hit.semi);
+      // Double-clicking a node toggles anchor state.
+      // When turning INTO an anchor, it must inherit the pitch of the previous note.
+      if (!hit.term) {
+        const voice = arrangement.voices.find((v) => v.id === voiceId);
+        if (!voice) return;
+
+        const previousNodes = voice.nodes
+          .filter((n) => !n.term && n.t16 < hit.t16)
+          .sort((a, b) => a.t16 - b.t16);
+
+        const prev = previousNodes.length > 0 ? previousNodes[previousNodes.length - 1] : null;
+        if (!prev) return;
+
+        // Enforce: first note of a phrase can never be an anchor.
+        // (No previous note => we returned above.)
+
+        // This conversion creates an anchor at hit.t16 that ends the hold started at `prev`.
+        // Any anchors AFTER this new anchor (but before the next real note) are superseded.
+        const nextNoteAfterHit = voice.nodes
+          .filter((n) => !n.term && n.t16 > hit.t16)
+          .sort((a, b) => a.t16 - b.t16)[0];
+
+        const segmentEndT16 = nextNoteAfterHit ? nextNoteAfterHit.t16 : Infinity;
+
+        for (const n of voice.nodes) {
+          if (!n.term) continue;
+          if (n.t16 <= hit.t16) continue;
+          if (n.t16 >= segmentEndT16) continue;
+          removeNode(voiceId, n.t16);
+        }
+
+        updateNode(voiceId, hit.t16, hit.t16, prev.deg, prev.octave || 0, true, prev.semi);
+        return;
+      }
+
+      // Turning an anchor back into a normal node: keep its stored pitch.
+      updateNode(voiceId, hit.t16, hit.t16, hit.deg, hit.octave || 0, false, hit.semi);
       return;
     }
 
@@ -1144,10 +1223,28 @@ export function Grid({
     const prev = previousNodes.length > 0 ? previousNodes[previousNodes.length - 1] : null;
     if (!prev) return;
 
+    // Remove any later anchors between this parent note and the next note.
+    // This ensures there is only one "end of hold" anchor for a held segment,
+    // and inserting a closer anchor deletes the older one.
+    const nextNote = voice.nodes
+      .filter((n) => !n.term && n.t16 > prev.t16)
+      .sort((a, b) => a.t16 - b.t16)[0];
+    const segmentEndT16 = nextNote ? nextNote.t16 : Infinity;
+
+    for (const n of voice.nodes) {
+      if (!n.term) continue;
+      if (n.t16 <= prev.t16) continue;
+      if (n.t16 >= segmentEndT16) continue;
+      // Keep only the earliest anchor in the segment.
+      // If we're creating a new anchor at snapped.t16, any anchor AFTER it is superseded.
+      if (n.t16 <= snapped.t16) continue;
+      removeNode(voiceId, n.t16);
+    }
+
     // Use updateNode to "insert" a term node at this time.
     // We pass deg/octave/semi of the previous note so the contour line holds visually.
     updateNode(voiceId, snapped.t16, snapped.t16, prev.deg, prev.octave || 0, true, prev.semi);
-  }, [mode, arrangement, selectedVoiceId, updateNode, getPitchRange, getNodeHitAtMouseEvent]);
+  }, [mode, arrangement, selectedVoiceId, updateNode, removeNode, getPitchRange, getNodeHitAtMouseEvent, getSnappedPointFromMouseEvent]);
 
   /**
    * Handle mouse down for starting node drag in create mode.
@@ -1209,11 +1306,30 @@ export function Grid({
 
     // Start the synth preview note (rings while the mouse is held down).
     auditionRef.current = { voiceId };
-    playbackEngine.previewSynthAttack(voiceId, snapped.deg, snapped.octave, snapped.semi);
+    if (existingNode?.term) {
+      playbackEngine.previewSynthAttack(voiceId, existingNode.deg, existingNode.octave || 0, existingNode.semi);
+    } else {
+      playbackEngine.previewSynthAttack(voiceId, snapped.deg, snapped.octave, snapped.semi);
+    }
 
     if (existingNode) {
       // Start dragging this existing node.
-      setDragState({ voiceId, originalT16: existingNode.t16, isDragging: true });
+      if (existingNode.term) {
+        const voice = arrangement.voices.find((v) => v.id === voiceId);
+        const parent = voice?.nodes
+          .filter((n) => !n.term && n.t16 < existingNode.t16)
+          .sort((a, b) => a.t16 - b.t16)
+          .pop();
+
+        // If there is no previous note, this anchor is invalid; don't allow dragging it.
+        if (!parent) {
+          return;
+        }
+
+        setDragState({ voiceId, originalT16: existingNode.t16, isDragging: true, anchorParentT16: parent.t16 });
+      } else {
+        setDragState({ voiceId, originalT16: existingNode.t16, isDragging: true });
+      }
       placingNewNodeRef.current = null;
       return;
     }
@@ -1231,6 +1347,7 @@ export function Grid({
     const snapped = getSnappedPointFromMouseEvent(e);
     if (!snapped) {
       hoverPreviewRef.current = null;
+      setIsHoveringAnchor(false);
       return;
     }
 
@@ -1238,12 +1355,55 @@ export function Grid({
     const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
     if (!voiceId) return;
 
-    // Update hover preview (phantom node).
-    hoverPreviewRef.current = { voiceId, point: snapped };
+    // If we're dragging an anchor, suppress phantom placement previews.
+    if (dragState?.isDragging) {
+      const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
+      const originalNode = voice?.nodes.find((n) => n.t16 === dragState.originalT16);
+      if (originalNode?.term) {
+        hoverPreviewRef.current = null;
+      }
+    }
+
+    if (!dragState?.isDragging) {
+      const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+      const startT16 = 0;
+      const endT16 = totalT16;
+
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const width = rect.width;
+        const height = rect.height;
+
+        const gridLeft = GRID_MARGIN.left;
+        const gridTop = GRID_MARGIN.top;
+        const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
+        const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+
+        const { minSemitone, maxSemitone } = getPitchRange();
+        const hit = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
+        setIsHoveringAnchor(!!hit?.term);
+      }
+    }
+
+    // Update hover preview (phantom node) only when not dragging an anchor.
+    if (!dragState?.isDragging) {
+      hoverPreviewRef.current = { voiceId, point: snapped };
+    }
 
     // If the mouse is held down, glide the preview synth pitch.
     if (auditionRef.current?.voiceId === voiceId) {
-      playbackEngine.previewSynthGlide(voiceId, snapped.deg, snapped.octave, snapped.semi);
+      // If we are dragging an anchor, preview pitch should not change vertically.
+      if (dragState?.isDragging) {
+        const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
+        const originalNode = voice?.nodes.find((n) => n.t16 === dragState.originalT16);
+        if (originalNode?.term) {
+          playbackEngine.previewSynthGlide(voiceId, originalNode.deg, originalNode.octave || 0, originalNode.semi);
+        } else {
+          playbackEngine.previewSynthGlide(voiceId, snapped.deg, snapped.octave, snapped.semi);
+        }
+      } else {
+        playbackEngine.previewSynthGlide(voiceId, snapped.deg, snapped.octave, snapped.semi);
+      }
     }
 
     // If we're dragging an existing node, update it to the snapped position.
@@ -1251,16 +1411,36 @@ export function Grid({
       const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
       const originalNode = voice?.nodes.find((n) => n.t16 === dragState.originalT16);
 
+      if (originalNode?.term) {
+        // Anchors can move in time only (no pitch changes).
+        const parentT16 = dragState.anchorParentT16;
+
+        // Anchor must stay to the right of its parent note by at least one 16th.
+        const minT16 = parentT16 !== undefined ? parentT16 + 1 : snapped.t16;
+        const clampedT16 = Math.max(snapped.t16, minT16);
+
+        // Do not allow the anchor to move onto an existing non-anchor note.
+        const wouldCollideWithNote = voice?.nodes.some((n) => !n.term && n.t16 === clampedT16) ?? false;
+        if (wouldCollideWithNote) {
+          return;
+        }
+
+        updateNode(dragState.voiceId, dragState.originalT16, clampedT16, originalNode.deg, originalNode.octave || 0, true, originalNode.semi);
+        setDragState({ ...dragState, originalT16: clampedT16 });
+        return;
+      }
+
       updateNode(dragState.voiceId, dragState.originalT16, snapped.t16, snapped.deg, snapped.octave, originalNode?.term, snapped.semi);
       setDragState({ ...dragState, originalT16: snapped.t16 });
       return;
     }
 
     // If we're placing a NEW node, keep updating its target position until mouse-up commits.
-    if (placingNewNodeRef.current?.voiceId === voiceId) {
+    // (But do NOT do this while dragging an anchor.)
+    if (!dragState?.isDragging && placingNewNodeRef.current?.voiceId === voiceId) {
       placingNewNodeRef.current = { voiceId, point: snapped };
     }
-  }, [dragState, mode, arrangement, getSnappedPointFromMouseEvent, updateNode, selectedVoiceId]);
+  }, [dragState, mode, arrangement, getSnappedPointFromMouseEvent, updateNode, selectedVoiceId, getPitchRange, getNodeHitAtMouseEvent]);
 
   /**
    * Handle mouse up to end drag.
@@ -1269,7 +1449,13 @@ export function Grid({
     // Commit a new node placement (if we were placing one).
     const placing = placingNewNodeRef.current;
     if (placing && mode === 'create') {
-      addNode(placing.voiceId, placing.point.t16, placing.point.deg, placing.point.octave, placing.point.semi);
+      const voice = arrangement?.voices.find((v) => v.id === placing.voiceId);
+      const existingAnchorAtT = voice?.nodes.find((n) => n.t16 === placing.point.t16 && n.term);
+
+      // If there's an anchor at this time, you must convert/delete it first.
+      if (!existingAnchorAtT) {
+        addNode(placing.voiceId, placing.point.t16, placing.point.deg, placing.point.octave, placing.point.semi);
+      }
     }
 
     placingNewNodeRef.current = null;
@@ -1284,7 +1470,7 @@ export function Grid({
       playbackEngine.previewSynthRelease(audition.voiceId);
       auditionRef.current = null;
     }
-  }, [dragState, mode, addNode]);
+  }, [dragState, mode, addNode, arrangement]);
 
   return (
     <div
@@ -1293,7 +1479,7 @@ export function Grid({
     >
       <canvas
         ref={canvasRef}
-        className={`absolute inset-0 w-full h-full ${mode === 'create' ? (dragState?.isDragging ? 'cursor-grabbing' : 'cursor-crosshair') : ''}`}
+        className={`absolute inset-0 w-full h-full ${mode === 'create' ? (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringAnchor ? 'cursor-grab' : 'cursor-crosshair')) : ''}`}
         onClick={handleCanvasClick}
         onDoubleClick={handleCanvasDoubleClick}
         onMouseDown={handleMouseDown}
