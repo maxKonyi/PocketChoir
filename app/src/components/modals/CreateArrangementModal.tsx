@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { X, Plus, Trash2, Music } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
-import type { Arrangement, Chord, ScaleType } from '../../types';
+import type { Arrangement, ScaleType } from '../../types';
 
 /* ------------------------------------------------------------
    Constants
@@ -121,31 +121,15 @@ export function CreateArrangementModal() {
         color: v.color,
         nodes: [], // Start with no nodes - user will add them
       })),
-      chords: generateDefaultChords(bars, timeSigNum),
+      // Start with no chord blocks in Create mode.
+      // The Grid will show an "Enable Chord Track" prompt that can populate defaults.
+      chords: [],
     };
 
     // Set the arrangement and close modal
     setArrangement(arrangement);
     setCreateModalOpen(false);
   };
-
-  /**
-   * Generate default chord placeholders for the arrangement.
-   */
-  function generateDefaultChords(numBars: number, beatsPerBar: number): Chord[] {
-    const chords: Chord[] = [];
-    const sixteenthsPerBar = beatsPerBar * 4;
-    
-    for (let bar = 0; bar < numBars; bar++) {
-      chords.push({
-        t16: bar * sixteenthsPerBar,
-        duration16: sixteenthsPerBar,
-        name: tonic, // Default to tonic chord
-      });
-    }
-    
-    return chords;
-  }
 
   /**
    * Cancel and close modal.

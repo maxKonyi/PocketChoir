@@ -10,6 +10,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
   Arrangement,
+  Chord,
   Voice,
   PlaybackState,
   MicrophoneState,
@@ -181,6 +182,11 @@ interface AppActions {
   setTransposition: (semitones: number) => void;
   addVoiceTrack: () => void;
 
+  // Helpers (Chord Track)
+  getTotalT16: (arrangement: Arrangement) => number;
+  createDefaultChordTrack: (arrangement: Arrangement) => Chord[];
+  normalizeChordTrack: (chords: Chord[], totalT16: number) => Chord[];
+
   // Auto-transpose helper
   // Calculates a transposition based on the current arrangement + vocal range.
   // If `announce` is true, it also sets a short-lived UI notice.
@@ -191,6 +197,13 @@ interface AppActions {
   removeNode: (voiceId: string, t16: number) => void;
   updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number, term?: boolean, semi?: number) => void;
   setSelectedVoiceId: (voiceId: string | null) => void;
+
+  // Create mode - chord track editing
+  enableChordTrack: () => void;
+  setChordName: (chordIndex: number, name: string) => void;
+  splitChordAt: (t16: number) => void;
+  resizeChordBoundary: (leftChordIndex: number, newBoundaryT16: number) => void;
+  deleteChord: (chordIndex: number) => void;
 
   // Voice controls
   setVoiceSynthVolume: (voiceId: string, volume: number) => void;
@@ -365,6 +378,81 @@ export const useAppStore = create<AppState & AppActions>()(
     (set, get) => ({
       ...initialState,
 
+  // -- Helpers (Chord Track) --
+
+  /**
+   * Total length of the arrangement timeline in 16th-note steps.
+   * Example: 4 bars of 4/4 = 4 * (4 beats) * (4 sixteenths per beat) = 64.
+   */
+  getTotalT16: (arrangement: Arrangement): number => {
+    return arrangement.bars * arrangement.timeSig.numerator * 4;
+  },
+
+  /**
+   * Create one chord per bar as the default chord track.
+   * We use "C" as the starter label (user can rename).
+   */
+  createDefaultChordTrack: (arrangement: Arrangement): Chord[] => {
+    const barLength16 = arrangement.timeSig.numerator * 4;
+    const chords: Chord[] = [];
+    for (let bar = 0; bar < arrangement.bars; bar++) {
+      chords.push({
+        t16: bar * barLength16,
+        duration16: barLength16,
+        name: 'C',
+      });
+    }
+    return chords;
+  },
+
+  /**
+   * Normalize a chord list so it always covers the full timeline with no gaps.
+   * This is the core rule for the chord editor.
+   */
+  normalizeChordTrack: (chords: Chord[], totalT16: number): Chord[] => {
+    const sorted = [...chords]
+      .filter((c) => c.duration16 > 0)
+      .sort((a, b) => a.t16 - b.t16);
+
+    if (sorted.length === 0) return [];
+
+    // Rebuild as a contiguous set of segments starting at 0.
+    const normalized: Chord[] = [];
+    let cursor = 0;
+
+    for (let i = 0; i < sorted.length; i++) {
+      const chord = sorted[i];
+      const dur = Math.max(1, Math.round(chord.duration16));
+      normalized.push({
+        ...chord,
+        t16: cursor,
+        duration16: dur,
+      });
+      cursor += dur;
+    }
+
+    // Force the last chord to end exactly at totalT16.
+    const last = normalized[normalized.length - 1];
+    const overshoot = cursor - totalT16;
+    if (overshoot !== 0) {
+      last.duration16 = Math.max(1, last.duration16 - overshoot);
+    }
+
+    // If we still don't hit totalT16 (because durations were tiny), pad the last chord.
+    const end = last.t16 + last.duration16;
+    if (end < totalT16) {
+      last.duration16 += totalT16 - end;
+    }
+
+    // If we still overshoot, clamp again.
+    const end2 = last.t16 + last.duration16;
+    if (end2 > totalT16) {
+      last.duration16 = Math.max(1, last.duration16 - (end2 - totalT16));
+    }
+
+    return normalized;
+  },
+
   // -- Arrangement --
   setArrangement: (arrangement) => {
     // Clear recordings and armed voice when changing arrangement
@@ -376,9 +464,21 @@ export const useAppStore = create<AppState & AppActions>()(
       armedVoiceId: null,
     });
     if (arrangement) {
+      // Ensure any chord track we load covers the full timeline with no gaps.
+      // (This is especially important for imported JSON arrangements.)
+      const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+      const normalizedChords = arrangement.chords && arrangement.chords.length > 0
+        ? get().normalizeChordTrack(arrangement.chords, totalT16)
+        : arrangement.chords;
+
+      if (normalizedChords) {
+        arrangement = { ...arrangement, chords: normalizedChords };
+        set({ arrangement });
+      }
+
       get().initializeVoiceStates(arrangement.voices);
       // Set loop end to arrangement length and reset position
-      const totalSixteenths = arrangement.bars * 16; // Assuming 4/4
+      const totalSixteenths = arrangement.bars * arrangement.timeSig.numerator * 4;
       set((state) => ({
         playback: {
           ...state.playback,
@@ -578,6 +678,214 @@ export const useAppStore = create<AppState & AppActions>()(
   }),
 
   setSelectedVoiceId: (voiceId) => set({ selectedVoiceId: voiceId }),
+
+  // -- Create Mode - Chord Track Editing --
+
+  /**
+   * Enable chord track by generating a default set of one chord per bar.
+   */
+  enableChordTrack: () => set((state) => {
+    if (!state.arrangement) return state;
+    const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+    const defaults = get().createDefaultChordTrack(state.arrangement);
+    return {
+      arrangement: {
+        ...state.arrangement,
+        chords: get().normalizeChordTrack(defaults, totalT16),
+      },
+    };
+  }),
+
+  /**
+   * Rename a chord label.
+   */
+  setChordName: (chordIndex, name) => set((state) => {
+    if (!state.arrangement) return state;
+    const chords = state.arrangement.chords || [];
+    if (chordIndex < 0 || chordIndex >= chords.length) return state;
+
+    const updated = chords.map((c, idx) => idx === chordIndex ? { ...c, name } : c);
+    return {
+      arrangement: {
+        ...state.arrangement,
+        chords: updated,
+      },
+    };
+  }),
+
+  /**
+   * Split a chord at a given time, creating a new chord segment to the right.
+   * The new segment uses the default name "C".
+   */
+  splitChordAt: (t16) => set((state) => {
+    if (!state.arrangement) return state;
+    const chords = state.arrangement.chords || [];
+    if (chords.length === 0) return state;
+
+    const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+    const snappedT16 = Math.round(t16);
+
+    // Minimum length of any chord segment (in 16ths).
+    const minDur16 = 1;
+
+    // Helper: insert a new chord by stealing `minDur16` from a donor chord.
+    const insertChordAtIndex = (insertIndex: number, donorIndex: number) => {
+      const donor = chords[donorIndex];
+      if (!donor || donor.duration16 <= minDur16) return null;
+
+      const updatedDonor: Chord = { ...donor, duration16: donor.duration16 - minDur16 };
+      const newChord: Chord = { t16: 0, duration16: minDur16, name: 'C' };
+
+      const next = [...chords];
+      next[donorIndex] = updatedDonor;
+      next.splice(insertIndex, 0, newChord);
+      return next;
+    };
+
+    // If you Shift+click right at the very start/end, we still want to create a chord.
+    // We do this by inserting a 1/16th chord at the edge.
+    if (snappedT16 <= 0) {
+      const next = insertChordAtIndex(0, 0);
+      if (!next) return state;
+      return {
+        arrangement: {
+          ...state.arrangement,
+          chords: get().normalizeChordTrack(next, totalT16),
+        },
+      };
+    }
+
+    if (snappedT16 >= totalT16) {
+      const next = insertChordAtIndex(chords.length, chords.length - 1);
+      if (!next) return state;
+      return {
+        arrangement: {
+          ...state.arrangement,
+          chords: get().normalizeChordTrack(next, totalT16),
+        },
+      };
+    }
+
+    // Clamp for the "split inside a chord" case.
+    const clampedT16 = Math.max(1, Math.min(totalT16 - 1, snappedT16));
+
+    const idx = chords.findIndex((c) => clampedT16 > c.t16 && clampedT16 < c.t16 + c.duration16);
+    if (idx === -1) {
+      // If you click exactly on a boundary, insert a small chord segment at that boundary.
+      // Example: boundary between chord i-1 and i is represented by chords[i].t16.
+      const boundaryRightIndex = chords.findIndex((c) => c.t16 === clampedT16);
+      if (boundaryRightIndex === -1) return state;
+
+      const next = insertChordAtIndex(boundaryRightIndex, boundaryRightIndex);
+      if (!next) return state;
+
+      return {
+        arrangement: {
+          ...state.arrangement,
+          chords: get().normalizeChordTrack(next, totalT16),
+        },
+      };
+    }
+
+    const chord = chords[idx];
+    const leftDur = clampedT16 - chord.t16;
+    const rightDur = (chord.t16 + chord.duration16) - clampedT16;
+    if (leftDur < 1 || rightDur < 1) return state;
+
+    const left: Chord = { ...chord, duration16: leftDur };
+    const right: Chord = { ...chord, t16: clampedT16, duration16: rightDur, name: 'C' };
+
+    const next = [...chords.slice(0, idx), left, right, ...chords.slice(idx + 1)];
+    return {
+      arrangement: {
+        ...state.arrangement,
+        chords: get().normalizeChordTrack(next, totalT16),
+      },
+    };
+  }),
+
+  /**
+   * Resize the boundary between two neighboring chords.
+   * `leftChordIndex` is the index of the chord on the left side of the boundary.
+   */
+  resizeChordBoundary: (leftChordIndex, newBoundaryT16) => set((state) => {
+    if (!state.arrangement) return state;
+    const chords = state.arrangement.chords || [];
+    if (leftChordIndex < 0 || leftChordIndex >= chords.length - 1) return state;
+
+    const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+
+    const left = chords[leftChordIndex];
+    const right = chords[leftChordIndex + 1];
+    const leftStart = left.t16;
+    const rightEnd = right.t16 + right.duration16;
+
+    // Minimum length of any chord segment (in 16ths).
+    const minDur16 = 1;
+
+    const minBoundary = leftStart + minDur16;
+    const maxBoundary = rightEnd - minDur16;
+    const boundary = Math.max(minBoundary, Math.min(maxBoundary, Math.round(newBoundaryT16)));
+
+    const updatedLeft: Chord = { ...left, duration16: boundary - leftStart };
+    const updatedRight: Chord = { ...right, t16: boundary, duration16: rightEnd - boundary };
+
+    const next = chords.map((c, idx) => {
+      if (idx === leftChordIndex) return updatedLeft;
+      if (idx === leftChordIndex + 1) return updatedRight;
+      return c;
+    });
+
+    return {
+      arrangement: {
+        ...state.arrangement,
+        chords: get().normalizeChordTrack(next, totalT16),
+      },
+    };
+  }),
+
+  /**
+   * Delete a chord segment.
+   * The neighbor chord expands to cover the deleted time so there are no gaps.
+   */
+  deleteChord: (chordIndex) => set((state) => {
+    if (!state.arrangement) return state;
+    const chords = state.arrangement.chords || [];
+    if (chordIndex < 0 || chordIndex >= chords.length) return state;
+
+    const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+
+    // If there is only one chord, deleting it disables the chord track.
+    if (chords.length === 1) {
+      return {
+        arrangement: {
+          ...state.arrangement,
+          chords: [],
+        },
+      };
+    }
+
+    const target = chords[chordIndex];
+    const remaining = chords.filter((_, idx) => idx !== chordIndex);
+
+    if (chordIndex > 0) {
+      // Expand the previous chord.
+      const prevIndex = chordIndex - 1;
+      const prev = remaining[prevIndex];
+      remaining[prevIndex] = { ...prev, duration16: prev.duration16 + target.duration16 };
+    } else {
+      // Expand the new first chord and shift it to start at 0.
+      const first = remaining[0];
+      remaining[0] = { ...first, t16: 0, duration16: first.duration16 + target.duration16 };
+    }
+
+    return {
+      arrangement: {
+        ...state.arrangement,
+        chords: get().normalizeChordTrack(remaining, totalT16),
+      },
+    };
+  }),
 
   // -- Voice Controls --
   setVoiceSynthVolume: (voiceId, volume) => set((state) => ({

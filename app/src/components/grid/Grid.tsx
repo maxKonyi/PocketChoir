@@ -241,6 +241,86 @@ export function Grid({
   const updateNode = useAppStore((state) => state.updateNode);
   const transposition = useAppStore((state) => state.transposition);
 
+  // Chord-track editor actions (Create mode)
+  const enableChordTrack = useAppStore((state) => state.enableChordTrack);
+  const setChordName = useAppStore((state) => state.setChordName);
+  const splitChordAt = useAppStore((state) => state.splitChordAt);
+  const resizeChordBoundary = useAppStore((state) => state.resizeChordBoundary);
+  const deleteChord = useAppStore((state) => state.deleteChord);
+
+  // Which chord label is currently being edited (inline rename).
+  const [editingChordIndex, setEditingChordIndex] = useState<number | null>(null);
+  const [editingChordName, setEditingChordName] = useState<string>('');
+
+  // DOM ref for the chord lane overlay (used for boundary-drag hit testing).
+  const chordLaneRef = useRef<HTMLDivElement | null>(null);
+
+  // Temporary drag state for resizing a boundary between two chord blocks.
+  const chordBoundaryDragRef = useRef<{ leftChordIndex: number } | null>(null);
+
+  // If the arrangement changes (or chord list is replaced), cancel any inline rename.
+  useEffect(() => {
+    setEditingChordIndex(null);
+    setEditingChordName('');
+  }, [arrangement?.id]);
+
+  /**
+   * Stop editing (commit changes back into the store).
+   */
+  const commitChordNameEdit = useCallback(() => {
+    if (!arrangement) return;
+    if (editingChordIndex === null) return;
+
+    const nextName = editingChordName.trim() || 'C';
+    setChordName(editingChordIndex, nextName);
+    setEditingChordIndex(null);
+  }, [arrangement, editingChordIndex, editingChordName, setChordName]);
+
+  /**
+   * Convert a mouse X position inside the chord lane into a snapped `t16` value.
+   */
+  const chordLaneMouseXToT16 = useCallback((clientX: number): number | null => {
+    if (!arrangement) return null;
+    const lane = chordLaneRef.current;
+    if (!lane) return null;
+
+    const rect = lane.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    return Math.round(pct * totalT16);
+  }, [arrangement]);
+
+  /**
+   * Install global mouse listeners while dragging a chord boundary.
+   * This keeps the resize working even if your mouse leaves the chord lane.
+   */
+  useEffect(() => {
+    const handleMove = (e: MouseEvent) => {
+      if (mode !== 'create') return;
+      if (!arrangement) return;
+      const drag = chordBoundaryDragRef.current;
+      if (!drag) return;
+
+      const t16 = chordLaneMouseXToT16(e.clientX);
+      if (t16 === null) return;
+      resizeChordBoundary(drag.leftChordIndex, t16);
+    };
+
+    const handleUp = () => {
+      if (chordBoundaryDragRef.current) {
+        chordBoundaryDragRef.current = null;
+      }
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [mode, arrangement, chordLaneMouseXToT16, resizeChordBoundary]);
+
   /**
    * Find the closest in-scale ("legal") semitone to a raw semitone.
    * The semitone values here are relative to the arrangement tonic (0 = tonic).
@@ -611,7 +691,7 @@ export function Grid({
       ctx.font = '12px system-ui';
       ctx.textAlign = 'center';
       for (let bar = 0; bar <= arrangement.bars; bar++) {
-        const t16 = bar * 16;
+        const t16 = bar * arrangement.timeSig.numerator * 4;
         const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
         ctx.fillText(`${bar + 1}`, x, gridTop - 10);
       }
@@ -619,7 +699,9 @@ export function Grid({
     }
 
     // Draw chord track
-    if (!hideChords && display.showChordTrack && arrangement.chords) {
+    // In Create mode we render interactive chord blocks as HTML overlay elements,
+    // so we skip the canvas chord drawing to avoid double-rendering.
+    if (!hideChords && mode !== 'create' && display.showChordTrack && arrangement.chords) {
       // ... (rest of the drawing code)
 
 
@@ -1574,6 +1656,179 @@ export function Grid({
       ref={containerRef}
       className={`relative w-full h-full ${className}`}
     >
+      {/*
+        Chord Track Editor (Create mode)
+
+        We render chord blocks as HTML on top of the canvas so you can:
+        - click to enable
+        - drag resize handles
+        - rename chord labels with a text input
+        - delete chords
+
+        The canvas is still used to render chords in Play mode.
+      */}
+      {!hideChords && mode === 'create' && display.showChordTrack && arrangement && (
+        <div
+          className="absolute inset-0 z-30 pointer-events-none"
+          style={{}}
+        >
+          <div
+            ref={chordLaneRef}
+            className="absolute pointer-events-auto"
+            style={{
+              left: GRID_MARGIN.left,
+              right: GRID_MARGIN.right,
+              top: GRID_MARGIN.top - 30,
+              height: 24,
+            }}
+            onMouseDown={(e) => {
+              // Prevent chord interactions from starting node placement on the canvas.
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              // Prevent chord interactions from starting node placement on the canvas.
+              e.stopPropagation();
+
+              // Shift+click anywhere on the chord lane splits the chord at that time.
+              // This is the primary "add a chord" gesture.
+              if (!e.shiftKey) return;
+              if (!arrangement?.chords || arrangement.chords.length === 0) return;
+
+              const t16 = chordLaneMouseXToT16(e.clientX);
+              if (t16 === null) return;
+              splitChordAt(t16);
+            }}
+          >
+            {/* Enable prompt */}
+            {(arrangement.chords?.length ?? 0) === 0 ? (
+              <button
+                type="button"
+                className="w-full h-full rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs font-semibold"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  enableChordTrack();
+                }}
+              >
+                Enable Chord Track
+              </button>
+            ) : (
+              <>
+                {/* Chord blocks */}
+                {arrangement.chords!.map((chord, idx) => {
+                  const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+                  const leftPct = (chord.t16 / totalT16) * 100;
+                  const widthPct = (chord.duration16 / totalT16) * 100;
+                  const isEditing = editingChordIndex === idx;
+                  const isDiatonicChord = isChordDiatonic(chord, arrangement);
+
+                  return (
+                    <div
+                      key={`${chord.t16}-${idx}`}
+                      className="absolute top-0 h-full rounded-lg border border-white/10"
+                      style={{
+                        left: `${leftPct}%`,
+                        width: `${widthPct}%`,
+                        background: isDiatonicChord
+                          ? `linear-gradient(to bottom, var(--chord-fill-top), var(--chord-fill-bottom))`
+                          : `linear-gradient(to bottom, var(--chord-fill-tension-top), var(--chord-fill-tension-bottom))`,
+                        borderColor: isDiatonicChord ? 'var(--chord-stroke)' : 'var(--chord-stroke-tension)',
+                      }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        setEditingChordIndex(idx);
+                        setEditingChordName(chord.name);
+                      }}
+                      onClick={(e) => {
+                        // Shift+click splits a chord at the clicked position (adds a new chord segment).
+                        // This is the main "add a chord" gesture.
+                        if (!e.shiftKey) return;
+                        e.stopPropagation();
+
+                        const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const pct = Math.max(0, Math.min(1, x / rect.width));
+                        const splitT16 = chord.t16 + Math.round(chord.duration16 * pct);
+                        splitChordAt(splitT16);
+                      }}
+                    >
+                      {/* Label */}
+                      <div className="absolute inset-0 flex items-center justify-center px-2">
+                        {isEditing ? (
+                          <input
+                            value={editingChordName}
+                            autoFocus
+                            className={`w-full bg-transparent text-center text-xs font-bold outline-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
+                            onChange={(e) => setEditingChordName(e.target.value)}
+                            onBlur={() => commitChordNameEdit()}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                commitChordNameEdit();
+                              }
+                              if (e.key === 'Escape') {
+                                setEditingChordIndex(null);
+                              }
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        ) : (
+                          <span
+                            className={`text-xs font-bold select-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
+                            style={{ textShadow: '0 2px 6px rgba(0,0,0,0.35)' }}
+                            title="Double-click to rename. Shift+click to split."
+                          >
+                            {chord.name}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Delete button */}
+                      <button
+                        type="button"
+                        className="absolute right-1 top-1 text-[10px] font-black text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                        title="Delete chord"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteChord(idx);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+
+                {/* Boundary resize handles (between chords) */}
+                {arrangement.chords!.slice(0, -1).map((chord, idx) => {
+                  const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+                  const boundaryT16 = chord.t16 + chord.duration16;
+                  const boundaryPct = (boundaryT16 / totalT16) * 100;
+                  return (
+                    <div
+                      key={`boundary-${idx}-${boundaryT16}`}
+                      className="absolute top-0 h-full"
+                      style={{
+                        left: `calc(${boundaryPct}% - 6px)`,
+                        width: 12,
+                        cursor: 'col-resize',
+                      }}
+                      title="Drag to resize chord boundary"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        chordBoundaryDragRef.current = { leftChordIndex: idx };
+                      }}
+                    >
+                      {/* Visible handle line */}
+                      <div className="mx-auto h-full w-px bg-white/20" />
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <canvas
         ref={canvasRef}
         className={`absolute inset-0 w-full h-full ${mode === 'create' ? (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringAnchor ? 'cursor-grab' : 'cursor-crosshair')) : ''}`}
