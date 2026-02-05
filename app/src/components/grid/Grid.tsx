@@ -252,6 +252,9 @@ export function Grid({
   const [editingChordIndex, setEditingChordIndex] = useState<number | null>(null);
   const [editingChordName, setEditingChordName] = useState<string>('');
 
+  // Hover-based split marker (Create mode chord editing)
+  const [hoverSplitT16, setHoverSplitT16] = useState<number | null>(null);
+
   // DOM ref for the chord lane overlay (used for boundary-drag hit testing).
   const chordLaneRef = useRef<HTMLDivElement | null>(null);
 
@@ -262,6 +265,7 @@ export function Grid({
   useEffect(() => {
     setEditingChordIndex(null);
     setEditingChordName('');
+    setHoverSplitT16(null);
   }, [arrangement?.id]);
 
   /**
@@ -1660,61 +1664,116 @@ export function Grid({
         Chord Track Editor (Create mode)
 
         We render chord blocks as HTML on top of the canvas so you can:
-        - click to enable
+        - enable the chord track
         - drag resize handles
         - rename chord labels with a text input
         - delete chords
+        - add chords by hovering near the top of the chord lane and clicking the split marker
 
         The canvas is still used to render chords in Play mode.
       */}
       {!hideChords && mode === 'create' && display.showChordTrack && arrangement && (
-        <div
-          className="absolute inset-0 z-30 pointer-events-none"
-          style={{}}
-        >
+        <div className="absolute inset-0 z-30 pointer-events-none">
           <div
             ref={chordLaneRef}
             className="absolute pointer-events-auto"
             style={{
               left: GRID_MARGIN.left,
               right: GRID_MARGIN.right,
-              top: GRID_MARGIN.top - 30,
-              height: 24,
+              top: GRID_MARGIN.top - 42,
+              height: 48,
             }}
             onMouseDown={(e) => {
-              // Prevent chord interactions from starting node placement on the canvas.
               e.stopPropagation();
+            }}
+            onMouseLeave={() => {
+              setHoverSplitT16(null);
+            }}
+            onMouseMove={(e) => {
+              if (!arrangement.chords || arrangement.chords.length === 0) {
+                setHoverSplitT16(null);
+                return;
+              }
+              if (editingChordIndex !== null) {
+                setHoverSplitT16(null);
+                return;
+              }
+              if (chordBoundaryDragRef.current) {
+                setHoverSplitT16(null);
+                return;
+              }
+
+              const rect = chordLaneRef.current?.getBoundingClientRect();
+              if (!rect) {
+                setHoverSplitT16(null);
+                return;
+              }
+
+              // Only show the split marker when you hover near the top of the chord lane.
+              const visualTopOffsetPx = 12;
+              const yFromVisualTop = (e.clientY - rect.top) - visualTopOffsetPx;
+              const inTopHoverZone = yFromVisualTop >= -6 && yFromVisualTop <= 6;
+              if (!inTopHoverZone) {
+                setHoverSplitT16(null);
+                return;
+              }
+
+              setHoverSplitT16(chordLaneMouseXToT16(e.clientX));
             }}
             onClick={(e) => {
-              // Prevent chord interactions from starting node placement on the canvas.
               e.stopPropagation();
-
-              // Shift+click anywhere on the chord lane splits the chord at that time.
-              // This is the primary "add a chord" gesture.
-              if (!e.shiftKey) return;
-              if (!arrangement?.chords || arrangement.chords.length === 0) return;
-
-              const t16 = chordLaneMouseXToT16(e.clientX);
-              if (t16 === null) return;
-              splitChordAt(t16);
+              if (!arrangement.chords || arrangement.chords.length === 0) return;
+              if (editingChordIndex !== null) return;
+              if (chordBoundaryDragRef.current) return;
+              if (hoverSplitT16 === null) return;
+              splitChordAt(hoverSplitT16);
             }}
           >
-            {/* Enable prompt */}
-            {(arrangement.chords?.length ?? 0) === 0 ? (
-              <button
-                type="button"
-                className="w-full h-full rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs font-semibold"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  enableChordTrack();
-                }}
-              >
-                Enable Chord Track
-              </button>
-            ) : (
-              <>
-                {/* Chord blocks */}
-                {arrangement.chords!.map((chord, idx) => {
+            <div
+              className="absolute"
+              style={{
+                left: 0,
+                right: 0,
+                top: 12,
+                height: 24,
+              }}
+            >
+              {(arrangement.chords?.length ?? 0) === 0 ? (
+                <button
+                  type="button"
+                  className="w-full h-full rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs font-semibold"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    enableChordTrack();
+                  }}
+                >
+                  Enable Chord Track
+                </button>
+              ) : (
+                <>
+                  {/* Hover split marker */}
+                  {hoverSplitT16 !== null && (() => {
+                    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+                    const leftPct = (hoverSplitT16 / totalT16) * 100;
+                    return (
+                      <div
+                        className="absolute top-0 h-full"
+                        style={{
+                          left: `${leftPct}%`,
+                          transform: 'translateX(-50%)',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        <div className="absolute left-1/2 top-0 -translate-x-1/2 w-px h-full bg-white/25" />
+                        <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full border border-white/20 bg-white/10 text-[var(--text-primary)] text-[10px] font-black flex items-center justify-center">
+                          +
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Chord blocks */}
+                  {arrangement.chords!.map((chord, idx) => {
                   const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
                   const leftPct = (chord.t16 / totalT16) * 100;
                   const widthPct = (chord.duration16 / totalT16) * 100;
@@ -1733,61 +1792,50 @@ export function Grid({
                           : `linear-gradient(to bottom, var(--chord-fill-tension-top), var(--chord-fill-tension-bottom))`,
                         borderColor: isDiatonicChord ? 'var(--chord-stroke)' : 'var(--chord-stroke-tension)',
                       }}
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
+                      onDoubleClick={(evt) => {
+                        evt.stopPropagation();
                         setEditingChordIndex(idx);
                         setEditingChordName(chord.name);
                       }}
-                      onClick={(e) => {
-                        // Shift+click splits a chord at the clicked position (adds a new chord segment).
-                        // This is the main "add a chord" gesture.
-                        if (!e.shiftKey) return;
-                        e.stopPropagation();
-
-                        const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                        const x = e.clientX - rect.left;
-                        const pct = Math.max(0, Math.min(1, x / rect.width));
-                        const splitT16 = chord.t16 + Math.round(chord.duration16 * pct);
-                        splitChordAt(splitT16);
+                      onClick={(evt) => {
+                        evt.stopPropagation();
                       }}
                     >
-                      {/* Label */}
                       <div className="absolute inset-0 flex items-center justify-center px-2">
                         {isEditing ? (
                           <input
                             value={editingChordName}
                             autoFocus
                             className={`w-full bg-transparent text-center text-xs font-bold outline-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
-                            onChange={(e) => setEditingChordName(e.target.value)}
+                            onChange={(evt) => setEditingChordName(evt.target.value)}
                             onBlur={() => commitChordNameEdit()}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
+                            onKeyDown={(evt) => {
+                              if (evt.key === 'Enter') {
                                 commitChordNameEdit();
                               }
-                              if (e.key === 'Escape') {
+                              if (evt.key === 'Escape') {
                                 setEditingChordIndex(null);
                               }
                             }}
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(evt) => evt.stopPropagation()}
                           />
                         ) : (
                           <span
                             className={`text-xs font-bold select-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
                             style={{ textShadow: '0 2px 6px rgba(0,0,0,0.35)' }}
-                            title="Double-click to rename. Shift+click to split."
+                            title="Double-click to rename. Hover near the top and click to split."
                           >
                             {chord.name}
                           </span>
                         )}
                       </div>
 
-                      {/* Delete button */}
                       <button
                         type="button"
                         className="absolute right-1 top-1 text-[10px] font-black text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                         title="Delete chord"
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onClick={(evt) => {
+                          evt.stopPropagation();
                           deleteChord(idx);
                         }}
                       >
@@ -1812,19 +1860,22 @@ export function Grid({
                         cursor: 'col-resize',
                       }}
                       title="Drag to resize chord boundary"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
+                      onMouseDown={(evt) => {
+                        evt.preventDefault();
+                        evt.stopPropagation();
                         chordBoundaryDragRef.current = { leftChordIndex: idx };
                       }}
+                      onClick={(evt) => {
+                        evt.stopPropagation();
+                      }}
                     >
-                      {/* Visible handle line */}
                       <div className="mx-auto h-full w-px bg-white/20" />
                     </div>
                   );
                 })}
-              </>
-            )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
