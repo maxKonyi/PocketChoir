@@ -107,7 +107,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
             <Mic size={11} className={isRecording ? 'text-white animate-pulse' : 'text-white'} />
           )}
 
-          <span className="text-[9px] font-bold uppercase tracking-wider truncate text-white">
+          <span className="text-[9px] font-bold uppercase tracking-wider truncate text-white overflow-hidden text-ellipsis whitespace-nowrap">
             {voiceName}
           </span>
 
@@ -237,7 +237,7 @@ export function VoiceSidebar() {
           flex flex-col gap-2.5 p-3 pb-4 pointer-events-auto
           glass-pane glass-sidebar glass-noise rounded-[2.5rem]
           shadow-2xl border border-white/10
-          shrink-0
+          shrink-0 w-[168px]
         "
       >
 
