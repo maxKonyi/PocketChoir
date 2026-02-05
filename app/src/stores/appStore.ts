@@ -3,9 +3,11 @@
    
    Central state management using Zustand.
    Contains all application state: arrangement, playback, recording, etc.
+   User settings are persisted to localStorage.
    ============================================================ */
 
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type {
   Arrangement,
   Voice,
@@ -288,11 +290,28 @@ const initialState: AppState = {
 };
 
 /* ------------------------------------------------------------
-   Store Creation
+   Store Creation with Persistence
    ------------------------------------------------------------ */
 
-export const useAppStore = create<AppState & AppActions>((set, get) => ({
-  ...initialState,
+// Storage key for localStorage
+const STORAGE_KEY = 'harmony-singing-settings';
+
+// State that should be persisted (user settings only)
+type PersistedState = Pick<AppState,
+  | 'voiceStates'      // Mixer: per-voice volume, pan, mute, solo, reverb
+  | 'globalVolume'     // Mixer: global volume
+  | 'globalReverb'     // Mixer: global reverb
+  | 'microphoneState'  // Mic: device, gain, monitoring, lag compensation
+  | 'countIn'          // Count-in settings
+  | 'vocalRange'       // Vocal range for auto-transposition
+  | 'display'          // Display/styling settings
+  | 'theme'            // Theme preference
+>;
+
+export const useAppStore = create<AppState & AppActions>()(
+  persist(
+    (set, get) => ({
+      ...initialState,
 
   // -- Arrangement --
   setArrangement: (arrangement) => {
@@ -631,7 +650,23 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   },
 
   reset: () => set(initialState),
-}));
+    }),
+    {
+      name: STORAGE_KEY,
+      // Only persist user settings, not transient state
+      partialize: (state): PersistedState => ({
+        voiceStates: state.voiceStates,
+        globalVolume: state.globalVolume,
+        globalReverb: state.globalReverb,
+        microphoneState: state.microphoneState,
+        countIn: state.countIn,
+        vocalRange: state.vocalRange,
+        display: state.display,
+        theme: state.theme,
+      }),
+    }
+  )
+);
 
 /* ------------------------------------------------------------
    Selector Hooks (for convenience)
