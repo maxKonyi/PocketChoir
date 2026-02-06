@@ -1693,6 +1693,19 @@ export function Grid({
               top: GRID_MARGIN.top - 42,
               height: 48,
             }}
+            onClickCapture={(e) => {
+              // If the split marker is visible, any click inside the chord lane should
+              // trigger the split (even if the user clicked on a chord block).
+              if (!arrangement?.chords || arrangement.chords.length === 0) return;
+              if (editingChordIndex !== null) return;
+              if (chordBoundaryDragRef.current) return;
+              if (hoverSplitT16 === null) return;
+              if (e.shiftKey) return;
+
+              e.preventDefault();
+              e.stopPropagation();
+              splitChordAt(hoverSplitT16);
+            }}
             onMouseDown={(e) => {
               e.stopPropagation();
             }}
@@ -1719,10 +1732,11 @@ export function Grid({
                 return;
               }
 
-              // Only show the split marker when you hover near the top of the chord lane.
+              // Only show the split marker when you hover very near the top of the chord lane.
+              // This keeps most of the chord block body free for rename + boundary dragging.
               const visualTopOffsetPx = 12;
               const yFromVisualTop = (e.clientY - rect.top) - visualTopOffsetPx;
-              const inTopHoverZone = yFromVisualTop >= -6 && yFromVisualTop <= 6;
+              const inTopHoverZone = yFromVisualTop >= -6 && yFromVisualTop <= 2;
               if (!inTopHoverZone) {
                 setHoverSplitT16(null);
                 return;
@@ -1732,11 +1746,6 @@ export function Grid({
             }}
             onClick={(e) => {
               e.stopPropagation();
-              if (!arrangement.chords || arrangement.chords.length === 0) return;
-              if (editingChordIndex !== null) return;
-              if (chordBoundaryDragRef.current) return;
-              if (hoverSplitT16 === null) return;
-              splitChordAt(hoverSplitT16);
             }}
           >
             <div
@@ -1775,7 +1784,7 @@ export function Grid({
                         }}
                       >
                         <div className="absolute left-1/2 top-0 -translate-x-1/2 w-px h-full bg-white/25" />
-                        <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full border border-white/20 bg-white/10 text-[var(--text-primary)] text-[10px] font-black flex items-center justify-center">
+                        <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full border border-white/20 bg-white/10 text-[var(--text-primary)] text-[12px] font-black flex items-center justify-center cursor-pointer">
                           +
                         </div>
                       </div>
