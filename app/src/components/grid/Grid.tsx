@@ -446,7 +446,7 @@ export function Grid({
 
     const centerSemitone = (minSemi + maxSemi) / 2;
     const baseRange = maxSemi - minSemi;
-    const basePadding = 5;
+    const basePadding = 10;
     const paddedRangeSemitones = baseRange + basePadding * 2;
 
     return { centerSemitone, paddedRangeSemitones };
