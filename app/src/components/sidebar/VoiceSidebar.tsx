@@ -84,12 +84,12 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
           }}
           className={`
             flex-1 flex items-center gap-1.5 px-2 py-1
-            rounded-full transition-all duration-200
+            rounded-full transition-all duration-200 cursor-pointer
             ${isRecording
               ? 'ring-2 ring-white shadow-[0_0_15px_rgba(239,68,68,0.5)] scale-[1.02]'
               : (isArmed || isSelectedForEdit)
                 ? 'ring-1 ring-white/50 brightness-110'
-                : 'hover:brightness-110'
+                : 'hover:brightness-110 hover:shadow-[0_0_10px_-3px_rgba(255,255,255,0.1)]'
             }
           `}
           style={{
@@ -100,6 +100,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
             opacity: vocalMuted && synthMuted ? 0.5 : 1
           }}
           title={mode === 'create' ? 'Select for editing' : 'Record'}
+          aria-label={`${voiceName} - ${mode === 'create' ? 'Select for editing' : 'Record'}`}
         >
           {mode === 'create' ? (
             <Edit3 size={11} className="text-white" />
@@ -130,7 +131,8 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
               ? 'text-[var(--text-muted)] hover:text-red-400 cursor-pointer'
               : 'text-[var(--text-disabled)] cursor-not-allowed'}
           `}
-          title={hasRecording ? "Clear recording" : ""}
+          title={hasRecording ? "Clear recording" : "No recording"}
+          aria-label={`Clear ${voiceName} recording`}
         >
           <Trash2 size={11} />
         </button>
@@ -283,11 +285,12 @@ export function VoiceSidebar() {
               const anyUnmuted = voiceStates.some(v => !v.vocalMuted);
               voiceStates.forEach(v => setVoiceVocalMuted(v.voiceId, anyUnmuted));
             }}
+            aria-label="Toggle all vocals"
             className={`
-               flex-1 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all
+               flex-1 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all cursor-pointer
                border border-white/5 shadow-sm
                ${voiceStates.every(v => v.vocalMuted)
-                ? 'bg-red-500/20 text-red-200 border-red-500/30'
+                ? 'bg-red-500/20 text-red-200 border-red-500/30 hover:bg-red-500/30'
                 : 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary-light)] border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/30'
               }
              `}
@@ -301,11 +304,12 @@ export function VoiceSidebar() {
               const anyUnmuted = voiceStates.some(v => !v.synthMuted);
               voiceStates.forEach(v => setVoiceSynthMuted(v.voiceId, anyUnmuted));
             }}
+            aria-label="Toggle all synths"
             className={`
-               flex-1 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all
+               flex-1 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all cursor-pointer
                border border-white/5 shadow-sm
                ${voiceStates.every(v => v.synthMuted)
-                ? 'bg-red-500/20 text-red-200 border-red-500/30'
+                ? 'bg-red-500/20 text-red-200 border-red-500/30 hover:bg-red-500/30'
                 : 'bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary-light)] border-[var(--accent-secondary)]/30 hover:bg-[var(--accent-secondary)]/30'
               }
              `}
@@ -330,15 +334,17 @@ export function VoiceSidebar() {
         {/* Clear all button */}
         <button
           onClick={clearAllRecordings}
+          aria-label="Clear all recordings"
           className="
-          px-3 py-1.5 mt-2 mb-1
-          text-[9px] font-bold uppercase tracking-widest
-          text-[var(--text-muted)] hover:text-[var(--text-primary)]
-          bg-white/5 hover:bg-white/10
-          rounded-full
-          transition-all
-          shrink-0
-        "
+            px-3 py-1.5 mt-2 mb-1
+            text-[9px] font-bold uppercase tracking-widest
+            text-[var(--text-muted)] hover:text-[var(--text-primary)]
+            bg-white/5 hover:bg-white/10
+            hover:shadow-[0_0_10px_-3px_rgba(255,255,255,0.08)]
+            rounded-full
+            transition-all duration-200 cursor-pointer
+            shrink-0
+          "
         >
           Clear All
         </button>

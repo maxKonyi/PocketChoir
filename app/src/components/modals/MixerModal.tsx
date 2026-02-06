@@ -36,7 +36,7 @@ export function MixerModal() {
     if (!isMixerOpen || !arrangement) return null;
 
     return (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-8 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-8 bg-black/40 backdrop-blur-md animate-[fadeInUp_0.2s_ease-out]" role="dialog" aria-modal="true" aria-label="Mixer">
             <div className="
         w-[900px] max-w-full max-h-[85vh] flex flex-col
         glass-pane glass-high rounded-3xl

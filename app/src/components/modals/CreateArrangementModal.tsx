@@ -140,19 +140,25 @@ export function CreateArrangementModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center animate-[fadeInUp_0.2s_ease-out]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create Arrangement"
+    >
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/40 backdrop-blur-md"
         onClick={handleCancel}
       />
 
       {/* Modal */}
       <div className="
         relative z-10 w-full max-w-lg
-        bg-[var(--panel-bg)] rounded-xl
+        bg-[var(--bg-secondary)]/95 backdrop-blur-xl rounded-2xl
         border border-[var(--border-color)]
-        shadow-2xl
+        shadow-[0_20px_60px_rgba(0,0,0,0.5)]
+        animate-[fadeInUp_0.3s_ease-out]
       ">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">

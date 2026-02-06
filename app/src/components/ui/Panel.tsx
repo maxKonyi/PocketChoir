@@ -33,7 +33,9 @@ const variantStyles: Record<PanelVariant, string> = {
     backdrop-blur-[var(--panel-blur)]
   `,
   solid: `
-    bg-[var(--bg-secondary)]
+    bg-[var(--bg-secondary)]/95
+    backdrop-blur-xl
+    shadow-[0_20px_60px_rgba(0,0,0,0.5)]
   `,
   transparent: `
     bg-transparent

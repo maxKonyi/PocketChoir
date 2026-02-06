@@ -115,12 +115,15 @@ export function LibraryModal() {
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md animate-[fadeInUp_0.2s_ease-out]"
       onClick={handleClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Select Arrangement"
     >
       <Panel 
         variant="solid"
-        className="w-full max-w-2xl max-h-[80vh] m-4 flex flex-col"
+        className="w-full max-w-2xl max-h-[80vh] m-4 flex flex-col animate-[fadeInUp_0.3s_ease-out]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

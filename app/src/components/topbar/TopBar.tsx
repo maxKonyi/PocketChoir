@@ -99,12 +99,17 @@ export function TopBar() {
       h-14 px-6
       glass-pane glass-med rounded-2xl
       flex items-center justify-between
-      z-30 shadow-2xl
+      z-30 shadow-2xl shimmer
     ">
 
-      {/* Left section - App title */}
-      <div className="flex items-center gap-4">
-        <span className="text-lg font-bold text-[var(--accent-primary)]">
+      {/* Left section - App title with gradient text */}
+      <div className="flex items-center gap-3">
+        <span className="
+          text-lg font-bold tracking-wide
+          bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-secondary)]
+          bg-clip-text text-transparent
+          drop-shadow-[0_0_12px_var(--accent-primary-glow)]
+        ">
           ♫ Harmony
         </span>
       </div>
@@ -113,33 +118,37 @@ export function TopBar() {
       <div className="absolute left-1/2 -translate-x-1/2">
         <button
           onClick={() => setLibraryOpen(true)}
+          aria-label="Open Library"
           className="
-            flex items-center gap-2 px-4 py-2
+            flex items-center gap-2.5 px-5 py-2
             bg-[var(--button-bg)] text-[var(--text-primary)]
-            rounded-full text-base font-medium
-            hover:bg-[var(--button-bg-hover)] transition-all
-            border border-[var(--border-color)]
-            shadow-sm hover:shadow-md
+            rounded-full text-sm font-medium
+            hover:bg-[var(--button-bg-hover)] transition-all duration-200
+            border border-[var(--border-color)] hover:border-[var(--border-color-strong)]
+            shadow-sm hover:shadow-[0_0_20px_-5px_var(--accent-primary-glow)]
+            cursor-pointer group
           "
           title="Open Library"
         >
-          <Library size={16} />
-          <span className="max-w-[300px] truncate">
+          <Library size={15} className="text-[var(--accent-primary)] group-hover:scale-110 transition-transform duration-200" />
+          <span className="max-w-[280px] truncate">
             {arrangement?.title || 'Choose Arrangement...'}
           </span>
         </button>
       </div>
 
       {/* Right section - Settings buttons and mode toggle */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         {/* Mixer */}
         <button
           onClick={() => setMixerOpen(true)}
+          aria-label="Open Mixer"
           className="
-            p-2 rounded-lg
-            bg-[var(--button-bg)] text-[var(--text-secondary)]
-            hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
-            transition-colors
+            p-2.5 rounded-xl
+            text-[var(--text-secondary)]
+            hover:bg-white/10 hover:text-[var(--text-primary)]
+            hover:shadow-[0_0_15px_-3px_rgba(255,255,255,0.1)]
+            transition-all duration-200 cursor-pointer
           "
           title="Mixer"
         >
@@ -149,11 +158,13 @@ export function TopBar() {
         {/* Mic Setup */}
         <button
           onClick={() => setMicSetupOpen(true)}
+          aria-label="Microphone Setup"
           className="
-            p-2 rounded-lg
-            bg-[var(--button-bg)] text-[var(--text-secondary)]
-            hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
-            transition-colors
+            p-2.5 rounded-xl
+            text-[var(--text-secondary)]
+            hover:bg-white/10 hover:text-[var(--text-primary)]
+            hover:shadow-[0_0_15px_-3px_rgba(255,255,255,0.1)]
+            transition-all duration-200 cursor-pointer
           "
           title="Microphone Setup"
         >
@@ -163,28 +174,38 @@ export function TopBar() {
         {/* Display Settings */}
         <button
           onClick={() => setDisplaySettingsOpen(true)}
+          aria-label="Display Settings"
           className="
-            p-2 rounded-lg
-            bg-[var(--button-bg)] text-[var(--text-secondary)]
-            hover:bg-[var(--button-bg-hover)] hover:text-[var(--text-primary)]
-            transition-colors
+            p-2.5 rounded-xl
+            text-[var(--text-secondary)]
+            hover:bg-white/10 hover:text-[var(--text-primary)]
+            hover:shadow-[0_0_15px_-3px_rgba(255,255,255,0.1)]
+            transition-all duration-200 cursor-pointer
           "
           title="Display Settings"
         >
           <Eye size={16} />
         </button>
 
+        {/* Subtle divider */}
+        <div className="w-px h-5 bg-white/10 mx-1" />
+
         {/* Theme selector */}
-        <div className="flex items-center gap-1 px-2 py-1 bg-[var(--button-bg)] rounded-lg">
-          <Palette size={14} className="text-[var(--text-muted)]" />
+        <div className="
+          flex items-center gap-1.5 px-2.5 py-1.5
+          bg-white/5 rounded-xl border border-white/5
+          hover:bg-white/8 transition-all duration-200
+        ">
+          <Palette size={13} className="text-[var(--accent-primary)] opacity-70" />
           <select
             value={theme}
             onChange={(e) => handleThemeChange(e.target.value as ThemeName)}
             className="
-              bg-transparent text-[var(--text-secondary)] text-sm
+              bg-transparent text-[var(--text-secondary)] text-xs font-medium
               cursor-pointer outline-none
             "
             title="Change Theme"
+            aria-label="Change Theme"
           >
             {THEME_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -198,11 +219,14 @@ export function TopBar() {
         {mode === 'create' && arrangement && (
           <button
             onClick={handleExportArrangement}
+            aria-label="Export Arrangement"
             className="
-              p-2 rounded-lg
-              bg-[var(--accent-secondary)] text-white
-              hover:brightness-110
-              transition-all
+              p-2.5 rounded-xl
+              bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary-light)]
+              border border-[var(--accent-secondary)]/20
+              hover:bg-[var(--accent-secondary)]/30 hover:border-[var(--accent-secondary)]/40
+              hover:shadow-[0_0_20px_-5px_var(--accent-secondary-glow)]
+              transition-all duration-200 cursor-pointer
             "
             title="Export Arrangement as JSON"
           >
@@ -210,18 +234,19 @@ export function TopBar() {
           </button>
         )}
 
-        {/* Divider */}
-        <div className="w-px h-6 bg-[var(--border-color)] mx-1" />
+        {/* Subtle divider */}
+        <div className="w-px h-5 bg-white/10 mx-1" />
 
-        {/* Mode toggle */}
-        <div className="flex items-center gap-1 bg-[var(--button-bg)] rounded-lg p-0.5">
+        {/* Mode toggle - pill style */}
+        <div className="flex items-center gap-0.5 bg-white/5 rounded-xl p-1 border border-white/5">
           <button
             onClick={() => setMode('play')}
+            aria-label="Play Mode"
             className={`
-              px-3 py-1 rounded-md text-xs font-semibold uppercase tracking-wide transition-all
+              px-3.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all duration-200 cursor-pointer
               ${mode === 'play'
-                ? 'bg-[var(--accent-primary)] text-white shadow-sm'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                ? 'bg-[var(--accent-primary)] text-white shadow-[0_0_15px_-3px_var(--accent-primary-glow)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/5'
               }
             `}
           >
@@ -232,11 +257,12 @@ export function TopBar() {
               setMode('create');
               setCreateModalOpen(true);
             }}
+            aria-label="Create Mode"
             className={`
-              px-3 py-1 rounded-md text-xs font-semibold uppercase tracking-wide transition-all
+              px-3.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all duration-200 cursor-pointer
               ${mode === 'create'
-                ? 'bg-[var(--accent-primary)] text-white shadow-sm'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                ? 'bg-[var(--accent-primary)] text-white shadow-[0_0_15px_-3px_var(--accent-primary-glow)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/5'
               }
             `}
             title="Create new arrangement"

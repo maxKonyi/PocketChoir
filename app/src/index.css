@@ -104,8 +104,10 @@
   --grid-line-subdivision: transparent;
 
   /* 16th note lines */
+  --grid-pitch-line-tonic: rgba(255, 255, 255, 0.35);
+  /* Horizontal note-row line for scale degree 1 (tonic) */
   --grid-pitch-line: rgba(255, 255, 255, 0.05);
-  /* Horizontal pitch lines */
+  /* Horizontal note-row lines for other degrees */
   --playhead-color: #ffffff;
   --playhead-glow: rgba(255, 255, 255, 0.3);
 
@@ -159,30 +161,47 @@
 }
 
 .glass-pane {
+  /* -- Base glass: semi-transparent fill with soft outer glow -- */
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 12px 40px 0 rgba(0, 0, 0, 0.45),          /* depth shadow */
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),   /* inner top highlight */
+    inset 0 -1px 0 0 rgba(255, 255, 255, 0.03),  /* inner bottom subtle edge */
+    0 0 80px -20px rgba(var(--accent-rgb, 139, 92, 246), 0.06); /* ambient accent glow */
   overflow: hidden;
 }
 
 
 
 .glass-pane::before {
+  /* -- Liquid gradient overlay: diagonal light refraction effect -- */
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, transparent 50%, transparent 100%);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, transparent 40%),
+    linear-gradient(225deg, rgba(255, 255, 255, 0.04) 0%, transparent 30%),
+    radial-gradient(ellipse at 20% 50%, rgba(255, 255, 255, 0.06) 0%, transparent 60%);
   pointer-events: none;
 }
 
 .glass-pane::after {
+  /* -- Top edge highlight: simulates light catching the glass rim -- */
   content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.3), transparent);
+  background: linear-gradient(
+    to right,
+    transparent 5%,
+    rgba(255, 255, 255, 0.15) 20%,
+    rgba(255, 255, 255, 0.35) 50%,
+    rgba(255, 255, 255, 0.15) 80%,
+    transparent 95%
+  );
   pointer-events: none;
 }
 
@@ -192,69 +211,170 @@
 
 
 .glass-noise::before {
+  /* -- Noise texture: adds subtle grain for realism -- */
   content: "";
   position: absolute;
   inset: 0;
-  opacity: 0.03;
+  opacity: 0.025;
   pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }
 
 
 .glass-sidebar {
-  backdrop-filter: blur(60px) saturate(170%);
-  -webkit-backdrop-filter: blur(60px) saturate(170%);
-  background: rgba(255, 255, 255, 0.07);
+  /* -- Sidebar glass: heavy blur for deep frosted look -- */
+  backdrop-filter: blur(60px) saturate(180%) brightness(1.05);
+  -webkit-backdrop-filter: blur(60px) saturate(180%) brightness(1.05);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
 }
 
 .glass-low {
-  backdrop-filter: blur(var(--panel-blur-low)) saturate(120%);
-  -webkit-backdrop-filter: blur(var(--panel-blur-low)) saturate(120%);
+  /* -- Light glass: minimal blur for subtle depth -- */
+  backdrop-filter: blur(var(--panel-blur-low)) saturate(130%) brightness(1.02);
+  -webkit-backdrop-filter: blur(var(--panel-blur-low)) saturate(130%) brightness(1.02);
 }
 
 .glass-med {
-  backdrop-filter: blur(var(--panel-blur-med)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--panel-blur-med)) saturate(150%);
-  background: rgba(255, 255, 255, 0.05);
+  /* -- Medium glass: balanced blur for top bar and transport -- */
+  backdrop-filter: blur(20px) saturate(160%) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(160%) brightness(1.04);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
 }
 
 .glass-high {
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
-  background: rgba(255, 255, 255, 0.08);
-  /* Rougher/more opaque */
+  /* -- Heavy glass: strong blur for modals and overlays -- */
+  backdrop-filter: blur(40px) saturate(190%) brightness(1.06);
+  -webkit-backdrop-filter: blur(40px) saturate(190%) brightness(1.06);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.10) 0%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
 }
 
 
 .shimmer {
-  position: relative;
+  /* -- Note: does NOT set position, so it won't override absolute/fixed parents -- */
   overflow: hidden;
 }
 
 .shimmer::after {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: linear-gradient(45deg,
-      transparent 0%,
-      rgba(255, 255, 255, 0.03) 30%,
-      rgba(255, 255, 255, 0.07) 50%,
-      rgba(255, 255, 255, 0.03) 70%,
-      transparent 100%);
-  transform: rotate(45deg);
-  animation: shimmer 6s infinite;
+  content: none;
+  display: none;
 }
 
 @keyframes shimmer {
   0% {
-    transform: translateX(-100%) rotate(45deg);
+    transform: translateX(-120%) rotate(45deg);
+    opacity: 0;
   }
-
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
   100% {
-    transform: translateX(100%) rotate(45deg);
+    transform: translateX(120%) rotate(45deg);
+    opacity: 0;
+  }
+}
+
+/* ============================================================
+   LIQUID GLASS EDGE GLOW
+   Animated border glow that travels around glass panels
+   ============================================================ */
+@keyframes edgeGlow {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* ============================================================
+   GLASS BUTTON HOVER
+   Subtle glow effect for interactive glass elements
+   ============================================================ */
+.glass-btn {
+  position: relative;
+  transition: all 200ms ease;
+  cursor: pointer;
+}
+
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 20px -5px rgba(255, 255, 255, 0.1);
+}
+
+.glass-btn:active {
+  background: rgba(255, 255, 255, 0.16);
+  transform: scale(0.97);
+}
+
+/* ============================================================
+   LIQUID GLASS DISTORTION
+   Uses the SVG filter defined in App.tsx for organic warping.
+   Apply to any element that should have a subtle liquid look.
+   ============================================================ */
+.glass-liquid {
+  filter: url(#liquid-glass);
+}
+
+/* ============================================================
+   COUNT-IN ANIMATION
+   Dramatic scale-in for the recording count-in numbers
+   ============================================================ */
+@keyframes countIn {
+  0% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(0.95);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ============================================================
+   FADE-IN-UP ANIMATION
+   Smooth entrance for welcome card and modal-like elements
+   ============================================================ */
+@keyframes fadeInUp {
+  0% {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ============================================================
+   SUBTLE FLOAT ANIMATION
+   Gentle up-and-down hover for decorative elements
+   ============================================================ */
+@keyframes subtleFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
   }
 }
 
@@ -327,6 +447,7 @@
   --grid-line-bar: rgba(0, 0, 0, 0.15);
   --grid-line-beat: rgba(0, 0, 0, 0.08);
   --grid-line-subdivision: rgba(0, 0, 0, 0.04);
+  --grid-pitch-line-tonic: rgba(0,  0, 0, 0.22);
   --grid-pitch-line: rgba(0, 0, 0, 0.05);
   --playhead-color: #1e293b;
   --playhead-glow: rgba(0, 0, 0, 0.2);
@@ -422,6 +543,8 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb, 139, 92, 246), 0.2);
+  border-radius: inherit;
 }
 
 /* -- Selection styling -- */

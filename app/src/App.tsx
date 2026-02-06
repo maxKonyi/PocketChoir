@@ -12,6 +12,7 @@ import { TransportBar } from './components/transport';
 import { Grid } from './components/grid/Grid';
 import { LibraryModal, MixerModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
 import { BackgroundVideo } from './components/ui/BackgroundVideo';
+import { DevControls } from './components/dev/DevControls';
 import { useAppStore } from './stores/appStore';
 import { AudioService } from './services/AudioService';
 import { playbackEngine } from './services/PlaybackEngine';
@@ -347,6 +348,30 @@ function App() {
       className="h-screen w-screen overflow-hidden relative"
       onClick={initializeAudio}
     >
+      {/* Hidden SVG filter used by .glass-liquid CSS class for distortion */}
+      <svg className="absolute w-0 h-0" aria-hidden="true">
+        <defs>
+          <filter id="liquid-glass">
+            {/* Turbulence creates organic, wavy distortion */}
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.015"
+              numOctaves="3"
+              seed="2"
+              result="noise"
+            />
+            {/* Displacement map warps the image using the noise */}
+            <feDisplacementMap
+              in="SourceGraphic"
+              in2="noise"
+              scale="6"
+              xChannelSelector="R"
+              yChannelSelector="G"
+            />
+          </filter>
+        </defs>
+      </svg>
+
       <BackgroundVideo />
 
       {/* Main grid visualization - background layer (masked lines/voices) */}
@@ -365,6 +390,7 @@ function App() {
       <TopBar />
       <VoiceSidebar />
       <TransportBar />
+      <DevControls />
 
       {/* Modals */}
       <LibraryModal />
@@ -376,17 +402,33 @@ function App() {
 
       {/* Auto-transposition message (shows after picking an arrangement or closing mic setup) */}
       {autoTranspositionNotice && (
-        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
-          <div className="px-4 py-2 rounded-lg bg-green-500/20 text-green-200 text-sm border border-green-500/30 shadow-lg backdrop-blur-sm">
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none animate-[fadeInUp_0.3s_ease-out]">
+          <div className="
+            px-5 py-2.5 rounded-full
+            bg-green-500/15 text-green-200 text-xs font-medium
+            border border-green-500/20
+            shadow-[0_8px_30px_rgba(0,0,0,0.3),0_0_20px_-5px_rgba(34,197,94,0.15)]
+            backdrop-blur-md
+          ">
             {autoTranspositionNotice}
           </div>
         </div>
       )}
 
-      {/* Count-in overlay */}
+      {/* Count-in overlay - dramatic scale-in with glass backdrop */}
       {countInDisplay !== null && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
-          <div className="text-9xl font-bold text-white animate-pulse drop-shadow-[0_0_30px_rgba(255,255,255,0.8)]">
+          {/* Subtle darkened backdrop */}
+          <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]" />
+          {/* Number with scale-in animation */}
+          <div
+            className="
+              relative text-[12rem] font-black text-white
+              drop-shadow-[0_0_60px_rgba(255,255,255,0.6)]
+              animate-[countIn_0.4s_ease-out]
+            "
+            style={{ textShadow: '0 0 80px rgba(var(--accent-rgb, 139, 92, 246), 0.5)' }}
+          >
             {countInDisplay}
           </div>
         </div>
@@ -395,24 +437,34 @@ function App() {
       {/* Welcome message when no arrangement is loaded */}
       {!arrangement && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="text-center p-8 pointer-events-auto">
-            <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-4">
+          <div className="
+            text-center p-10 pointer-events-auto
+            glass-pane glass-high rounded-3xl
+            max-w-md
+            animate-[fadeInUp_0.6s_ease-out]
+          ">
+            <h1 className="
+              text-4xl font-black mb-3 tracking-tight
+              bg-gradient-to-r from-[var(--accent-primary)] via-white to-[var(--accent-secondary)]
+              bg-clip-text text-transparent
+              drop-shadow-[0_0_20px_var(--accent-primary-glow)]
+            ">
               Harmony Singing
             </h1>
-            <p className="text-[var(--text-secondary)] mb-6">
+            <p className="text-[var(--text-secondary)] mb-8 text-sm leading-relaxed">
               Learn to sing harmony by recording yourself over guided arrangements
             </p>
             <button
               onClick={() => useAppStore.getState().setLibraryOpen(true)}
+              aria-label="Choose an Arrangement"
               className="
-                px-6 py-3 
-                bg-[var(--accent-primary)] 
-                text-white 
-                rounded-[var(--radius-lg)]
-                font-medium
-                hover:brightness-110
-                transition-all
-                shadow-[0_0_20px_var(--accent-primary-glow)]
+                px-7 py-3
+                bg-[var(--accent-primary)] text-white
+                rounded-full font-semibold text-sm
+                hover:brightness-110 hover:scale-105
+                active:scale-95
+                transition-all duration-200 cursor-pointer
+                shadow-[0_0_30px_var(--accent-primary-glow),0_4px_15px_rgba(0,0,0,0.3)]
               "
             >
               Choose an Arrangement

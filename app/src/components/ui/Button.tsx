@@ -28,7 +28,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const baseStyles = `
   inline-flex items-center justify-center
-  font-medium
+  font-medium cursor-pointer
   transition-all duration-[var(--transition-fast)]
   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]
   disabled:opacity-50 disabled:cursor-not-allowed

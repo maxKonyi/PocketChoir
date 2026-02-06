@@ -588,6 +588,7 @@ export function Grid({
     const barLineColor = getCssVar('--grid-line-bar') || 'rgba(255, 255, 255, 0.15)';
     const beatLineColor = getCssVar('--grid-line-beat') || 'rgba(255, 255, 255, 0.08)';
     const subdivLineColor = getCssVar('--grid-line-subdivision') || 'rgba(255, 255, 255, 0.04)';
+    const pitchLineTonicColor = getCssVar('--grid-pitch-line-tonic') || 'rgba(255, 255, 255, 0.35)';
     const pitchLineColor = getCssVar('--grid-pitch-line') || 'rgba(255, 255, 255, 0.05)';
     const playheadColor = getCssVar('--playhead-color') || '#ffffff';
     const textColor = getCssVar('--text-secondary') || '#a8a3b8';
@@ -641,7 +642,7 @@ export function Grid({
 
         // Make tonic (1) and octave brighter for orientation
         if (semi % 12 === 0) {
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; // Brighter tonic
+          ctx.strokeStyle = pitchLineTonicColor;
           ctx.lineWidth = 1.5;
         } else {
           // Standard diatonic lines
