@@ -14,6 +14,7 @@ import type { Arrangement, Voice, PitchPoint, Chord } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
+import { darkenColor } from '../../utils/colors';
 import { playbackEngine } from '../../services/PlaybackEngine';
 
 /* ------------------------------------------------------------
@@ -837,14 +838,26 @@ export function Grid({
       ctx.restore();
     }
 
-    // 3. Draw contour lines for each voice
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    // 3. Draw contours + nodes + playhead (these are part of the "main grid layer")
+    // IMPORTANT: When `onlyChords=true`, this component is being used as a dedicated chord-track overlay
+    // that sits on top of the main (masked) grid.
+    // In that mode, we must NOT draw contours/nodes/playhead, otherwise they won't receive the fade mask.
+    if (!onlyChords) {
+      // 3A. Draw contour lines for each voice
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
 
-    for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
-      const voice = arrangement.voices[voiceIndex];
-      const voiceState = voiceStates.find(v => v.voiceId === voice.id);
+      // Node sizes are shared across voices.
+      // We draw *all* contour lines first, then draw *all* nodes afterwards.
+      // This guarantees nodes always sit on top (a contour line from another voice can never cross over a node).
+      const nodeRadius = 12;
+      const anchorRadius = nodeRadius * 0.5;
+
+      // Pass A: Contour lines only (including glow)
+      for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
+        const voice = arrangement.voices[voiceIndex];
+        const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
       // Contour lines follow the SYN (synth) mute/solo state.
       // Solo is global across all tracks, but SYN coloring is based on SYN solo.
@@ -873,12 +886,25 @@ export function Grid({
       ctx.strokeStyle = voiceColor;
       ctx.lineWidth = 3;
       drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
+        ctx.restore();
+      }
 
-      // Draw nodes - larger circles with scale degree numbers (like mockup)
-      const nodeRadius = 12; // Larger nodes to fit numbers
+      // Pass B: Nodes on top (for every voice)
+      for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
+        const voice = arrangement.voices[voiceIndex];
+        const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
-      // Anchors (termination points) are drawn smaller and filled (no stroke).
-      const anchorRadius = nodeRadius * 0.5;
+      // Contour nodes follow the SYN (synth) mute/solo state.
+      const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
+      const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
+
+      const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+      const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
+
+      const nodeStrokeColor = voiceColor;
+      const nodeFillColor = isSynthMuted
+        ? 'rgba(90, 90, 90, 1)'
+        : (baseColor.startsWith('#') ? darkenColor(baseColor, 35) : baseColor);
 
       for (const node of voice.nodes) {
         const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
@@ -916,18 +942,18 @@ export function Grid({
           continue;
         }
 
-        // Regular node circle with opaque fill (mockup style)
+        // Regular node circle with opaque fill
         ctx.beginPath();
         ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
-        ctx.fillStyle = voiceColor; // Fully opaque fill
+        ctx.fillStyle = nodeFillColor;
         ctx.fill();
-        ctx.strokeStyle = isSynthMuted ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.4)'; // Subtle white ring
+        ctx.strokeStyle = nodeStrokeColor;
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
         ctx.shadowBlur = 0;
 
-        // Always draw scale degree number inside node (white text for contrast)
+        // Scale degree number inside node
         ctx.fillStyle = isSynthMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
         ctx.font = 'bold 12px system-ui';
         ctx.textAlign = 'center';
@@ -935,8 +961,7 @@ export function Grid({
         ctx.fillText(node.semi !== undefined ? semitoneToLabel(node.semi) : String(node.deg), x, y + 0.5);
       }
 
-      // Create mode hover preview ("phantom" node).
-      // This helps you see the exact snapped point BEFORE you commit a node.
+      // Create mode hover preview ("phantom" node) is also drawn in this pass so it always sits above contours.
       const isDraggingAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && !!voice.nodes.find(n => n.term && n.t16 === dragState.originalT16);
 
       if (mode === 'create' && hoverPreviewRef.current?.voiceId === voice.id && !onlyChords && !isDraggingAnchor) {
@@ -949,17 +974,15 @@ export function Grid({
         ctx.save();
         ctx.globalAlpha = 0.35;
 
-        // Draw the preview node as a semi-transparent version of a normal node.
         ctx.beginPath();
         ctx.arc(px, py, nodeRadius, 0, Math.PI * 2);
-        ctx.fillStyle = voiceColor;
+        ctx.fillStyle = nodeFillColor;
         ctx.fill();
 
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.strokeStyle = nodeStrokeColor;
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Degree number inside the phantom node.
         ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
         ctx.font = 'bold 12px system-ui';
         ctx.textAlign = 'center';
@@ -967,31 +990,21 @@ export function Grid({
         ctx.fillText(preview.semi !== undefined ? semitoneToLabel(preview.semi) : String(preview.deg), px, py + 0.5);
 
         ctx.restore();
+        }
       }
-
       ctx.restore();
+
+      // 4. Draw playhead - read directly from engine for smooth animation
+      const playheadT16 = playbackEngine.getCurrentPositionT16();
+      const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
+
+      ctx.strokeStyle = playheadColor;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(playheadX, gridTop);
+      ctx.lineTo(playheadX, gridTop + gridHeight);
+      ctx.stroke();
     }
-    ctx.restore();
-
-    // 4. Draw playhead - read directly from engine for smooth animation
-    const playheadT16 = playbackEngine.getCurrentPositionT16();
-    const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
-
-    ctx.strokeStyle = playheadColor;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, gridTop);
-    ctx.lineTo(playheadX, gridTop + gridHeight);
-    ctx.stroke();
-
-    // Playhead glow
-    ctx.shadowColor = playheadColor;
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, gridTop);
-    ctx.lineTo(playheadX, gridTop + gridHeight);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
   }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording]);
 
   /**
