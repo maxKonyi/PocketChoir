@@ -66,7 +66,7 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
   [User Vocals] ───┘
   ```
 - [x] Implement per-voice gain nodes for volume control
-- [ ] Add simple reverb using ConvolverNode (or basic delay-based reverb) — *Deferred*
+- [x] Add simple reverb using Tone.Reverb (global reverb send) — *Implemented (more advanced than planned)*
 
 ### 2.2 Synthesizer
 - [x] Create `SynthVoice` class for playing reference tones
@@ -97,7 +97,7 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 ## Phase 3: Data Layer & State Management ✅ MOSTLY COMPLETE
 
 ### 3.1 Arrangement Data
-- [x] Create 10-15 sample arrangements in JSON format — *4 created, need more*
+- [x] Create 5+ sample arrangements in JSON format — *5 built-ins + auto-import from imported/*.json*
 - [x] Start simple: 2-voice arrangements, then progress to 4-6 voices
 - [x] Include variety:
   - Simple parallel motion
@@ -184,19 +184,18 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 - [x] **Loop toggle:** Enable/disable looping
 - [x] **Speed selector:** 0.5x / 0.75x / 1.0x tempo multiplier
 - [x] **Zoom controls:** Zoom in/out buttons
-- [x] **Record button:** Start recording (only when a voice is armed)
+- [x] **Record button:** Start recording (click voice name in sidebar, not transport) — *Implemented via VoiceSidebar*
 - [x] **Position display:** Shows current Bar:Beat
 - [x] **Go to start button:** Reset position
 
-### 5.4 Mixer Panel — *Deferred*
-- [ ] **Mixer button** in top bar or sidebar opens mixer panel
-- [ ] Per-voice controls:
+### 5.4 Mixer Panel ✅ IMPLEMENTED
+- [x] **Mixer button** in top bar opens mixer panel
+- [x] Per-voice controls:
   - Volume slider
-  - Pan knob (optional, simple left/center/right)
-  - Reverb send slider
+  - Pan knob (left/center/right)
   - Mute/Solo (synced with sidebar)
-- [ ] Separate sections for synth voices and recorded vocals
-- [ ] Master output level
+- [x] Separate sections for synth voices and recorded vocals
+- [x] Master output level and global reverb
 
 ### 5.5 Arrangement Library Modal
 - [x] Grid/list of available arrangements
@@ -228,11 +227,11 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 - [x] Handle phrase termination nodes (silence until next phrase)
 - [x] Respect mute/solo states
 
-### 6.3 Recorded Vocal Playback — *Partial*
-- [ ] Load recorded audio blobs into AudioBufferSourceNodes
-- [ ] Sync playback with timeline
-- [ ] Apply per-voice effects (volume, reverb)
-- [ ] Respect mute/solo states
+### 6.3 Recorded Vocal Playback ✅ IMPLEMENTED
+- [x] Load recorded audio blobs into AudioBufferSourceNodes
+- [x] Sync playback with timeline
+- [x] Apply per-voice effects (volume, pan, mute/solo)
+- [x] Respect mute/solo states
 
 ---
 
@@ -252,7 +251,7 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 - [x] Start recording audio from microphone
 - [x] Start pitch detection, draw live trace on grid
 - [x] Play synth voices (so user can sing along)
-- [ ] At end of loop: stop recording automatically
+- [x] At end of loop: stop recording automatically (with option to keep playing)
 
 ### 7.4 Post-Recording
 - [x] Store pitch trace data (in-session only)
@@ -262,17 +261,19 @@ This document outlines the step-by-step plan to build the Minimum Viable Product
 
 ---
 
-## Phase 8: Transposition & Vocal Range
+## Phase 8: Transposition & Vocal Range ✅ MOSTLY IMPLEMENTED
 
 ### 8.1 Vocal Range Settings
-- [ ] UI to set user's vocal range (low note, high note)
-- [ ] Store in user preferences
+- [x] UI to set user's vocal range (low note, high note) — *In MicSetupModal*
+- [x] Pitch detection assistance for setting range
+- [x] Store in user preferences (session storage)
 
 ### 8.2 Auto-Transposition
-- [ ] Analyze arrangement to find its pitch range
-- [ ] Calculate optimal transposition to fit user's range
-- [ ] Apply global transpose (shift all notes by N semitones)
-- [ ] Update displayed tonic/key accordingly
+- [x] Analyze arrangement to find its pitch range
+- [x] Calculate optimal transposition to fit user's range
+- [x] Apply global transpose (shift all notes by N semitones)
+- [x] Update displayed tonic/key accordingly
+- [x] Show notification when auto-transposition is applied
 
 ### 8.3 Out-of-Range Warning
 - [ ] If notes still fall outside user's range after transposition:
@@ -303,7 +304,7 @@ This enables creating new arrangements within the app.
 
 ### 9.3 Export Arrangement
 - [x] Export arrangement as JSON file (download button in Create mode)
-- [ ] Save to library
+- [ ] Save to library — *Needs in-app save workflow (currently export + import folder)*
 
 ### 9.4 Grid Enhancements
 - [x] Chromatic (semitone-based) grid display with labels (1, b2, 2, b3, 3, 4, #4, 5, b6, 6, b7, 7)
@@ -437,23 +438,19 @@ HarmonySinging/
         │   ├── grid/
         │   │   ├── Grid.tsx
         │   │   ├── ContourLine.tsx
-        │   │   ├── PitchTrace.tsx
-        │   │   ├── Playhead.tsx
-        │   │   └── ChordTrack.tsx
         │   ├── transport/
         │   │   └── TransportBar.tsx
         │   ├── sidebar/
-        │   │   ├── VoiceSidebar.tsx
-        │   │   └── VoiceControl.tsx
-        │   ├── mixer/
-        │   │   └── MixerPanel.tsx
+        │   │   └── VoiceSidebar.tsx
         │   ├── topbar/
         │   │   └── TopBar.tsx
-        │   └── modals/
-        │       ├── LibraryModal.tsx
-        │       ├── MicSetupModal.tsx
-        │       ├── RangeModal.tsx
-        │       └── SaveLoadModal.tsx
+        │   ├── modals/
+        │   │   ├── LibraryModal.tsx
+        │   │   ├── MicSetupModal.tsx
+        │   │   ├── RangeSetupModal.tsx
+        │   │   ├── DisplaySettingsModal.tsx
+        │   │   ├── CreateArrangementModal.tsx
+        │   │   └── MixerModal.tsx
         ├── hooks/
         │   ├── useAudio.ts
         │   ├── usePitchDetection.ts
@@ -496,4 +493,4 @@ HarmonySinging/
 ---
 
 *Document created: February 2, 2026*
-*Last updated: February 2, 2026*
+*Last updated: February 6, 2026*

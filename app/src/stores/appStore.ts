@@ -379,7 +379,7 @@ const initialDisplaySettings: DisplaySettings = {
   labelFormat: 'degree',
   zoomLevel: 1,
   glowIntensity: 0,
-  gridOpacity: 1.0,
+  gridOpacity: 0.6,
   backgroundVideo: '/src/data/backgrounds/Forest1.mp4',
   backgroundBlur: 4,
   backgroundBrightness: 0.6,

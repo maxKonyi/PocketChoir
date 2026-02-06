@@ -657,11 +657,11 @@ export function Grid({
 
         // Draw semitone label on the left
         if (semi >= minSemitone + 1 && semi <= maxSemitone - 1) {
-          ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.35)';
+          ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.35)';
           ctx.font = 'bold 10px system-ui';
           ctx.textAlign = 'right';
           ctx.textBaseline = 'middle';
-          ctx.fillText(label, gridLeft - 10, y);
+          ctx.fillText(label, gridLeft - 15, y);
         }
       }
 
@@ -871,7 +871,7 @@ export function Grid({
       // Main line
       ctx.shadowBlur = 0;
       ctx.strokeStyle = voiceColor;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 3;
       drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
 
       // Draw nodes - larger circles with scale degree numbers (like mockup)
