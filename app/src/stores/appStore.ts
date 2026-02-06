@@ -67,11 +67,21 @@ interface DisplaySettings {
 
 
 
+interface ArrangementSnapshot {
+  arrangement: Arrangement;
+  voiceStates: VoiceState[];
+  selectedVoiceId: string | null;
+}
+
+
+
 /**
  * Maximum number of voices/tracks supported in the arranger UI.
  * Keeping this as a shared constant lets the modal and sidebar stay in sync.
  */
 export const MAX_VOICES = 6;
+
+const HISTORY_LIMIT = 100;
 
 /**
  * Return the default stereo pan for a voice index.
@@ -116,6 +126,46 @@ const generateVoiceId = (existingVoices: Voice[]): string => {
 
   return candidate;
 };
+
+/**
+ * Lightweight deep clone helper used for history snapshots.
+ */
+const clone = <T>(value: T): T => {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value));
+};
+
+const createSnapshot = (state: AppState): ArrangementSnapshot | null => {
+  if (!state.arrangement) return null;
+  return {
+    arrangement: clone(state.arrangement),
+    voiceStates: clone(state.voiceStates),
+    selectedVoiceId: state.selectedVoiceId,
+  };
+};
+
+const prepareHistoryUpdate = (state: AppState) => {
+  const snapshot = createSnapshot(state);
+  if (!snapshot) return null;
+  const nextHistory = [...state.history, snapshot];
+  if (nextHistory.length > HISTORY_LIMIT) {
+    nextHistory.shift();
+  }
+  return {
+    history: nextHistory,
+    future: [],
+    canUndo: true,
+    canRedo: false,
+  } as Pick<AppState, 'history' | 'future' | 'canUndo' | 'canRedo'>;
+};
+
+const applySnapshot = (snapshot: ArrangementSnapshot) => ({
+  arrangement: clone(snapshot.arrangement),
+  voiceStates: clone(snapshot.voiceStates),
+  selectedVoiceId: snapshot.selectedVoiceId,
+});
 
 /**
  * Complete application state.
@@ -171,6 +221,12 @@ interface AppState {
   isDisplaySettingsOpen: boolean;
   isSaveLoadOpen: boolean;
   isCreateModalOpen: boolean;
+
+  // History (undo/redo)
+  history: ArrangementSnapshot[];
+  future: ArrangementSnapshot[];
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 /**
@@ -181,6 +237,10 @@ interface AppActions {
   setArrangement: (arrangement: Arrangement | null) => void;
   setTransposition: (semitones: number) => void;
   addVoiceTrack: () => void;
+
+  // History controls
+  undo: () => void;
+  redo: () => void;
 
   // Helpers (Chord Track)
   getTotalT16: (arrangement: Arrangement) => number;
@@ -352,6 +412,10 @@ const initialState: AppState = {
   isDisplaySettingsOpen: false,
   isSaveLoadOpen: false,
   isCreateModalOpen: false,
+  history: [],
+  future: [],
+  canUndo: false,
+  canRedo: false,
 };
 
 /* ------------------------------------------------------------
@@ -462,6 +526,10 @@ export const useAppStore = create<AppState & AppActions>()(
       recordings: new Map(),
       livePitchTrace: [],
       armedVoiceId: null,
+      history: [],
+      future: [],
+      canUndo: false,
+      canRedo: false,
     });
     if (arrangement) {
       // Ensure any chord track we load covers the full timeline with no gaps.
@@ -509,6 +577,9 @@ export const useAppStore = create<AppState & AppActions>()(
     // Respect the global track cap so the UI and synth engine stay in sync.
     if (state.arrangement.voices.length >= MAX_VOICES) return state;
 
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
     const newVoiceIndex = state.arrangement.voices.length;
     const newVoiceId = generateVoiceId(state.arrangement.voices);
     const palette = DEFAULT_VOICE_COLORS[newVoiceIndex % DEFAULT_VOICE_COLORS.length];
@@ -527,9 +598,49 @@ export const useAppStore = create<AppState & AppActions>()(
     };
 
     return {
+      ...historyUpdate,
       arrangement: updatedArrangement,
       voiceStates: [...state.voiceStates, createVoiceState(newVoiceId, newVoiceIndex)],
       selectedVoiceId: state.mode === 'create' ? newVoiceId : state.selectedVoiceId,
+    };
+  }),
+
+  undo: () => set((state) => {
+    if (!state.canUndo || state.history.length === 0) return state;
+    const snapshot = state.history[state.history.length - 1];
+    const previousHistory = state.history.slice(0, -1);
+    const currentSnapshot = createSnapshot(state);
+    const nextFuture = currentSnapshot
+      ? [currentSnapshot, ...state.future].slice(0, HISTORY_LIMIT)
+      : state.future;
+
+    return {
+      ...applySnapshot(snapshot),
+      history: previousHistory,
+      future: nextFuture,
+      canUndo: previousHistory.length > 0,
+      canRedo: true,
+    };
+  }),
+
+  redo: () => set((state) => {
+    if (!state.canRedo || state.future.length === 0) return state;
+    const snapshot = state.future[0];
+    const remainingFuture = state.future.slice(1);
+    const currentSnapshot = createSnapshot(state);
+    if (!currentSnapshot) return state;
+
+    const nextHistory = [...state.history, currentSnapshot];
+    if (nextHistory.length > HISTORY_LIMIT) {
+      nextHistory.shift();
+    }
+
+    return {
+      ...applySnapshot(snapshot),
+      history: nextHistory,
+      future: remainingFuture,
+      canUndo: nextHistory.length > 0,
+      canRedo: remainingFuture.length > 0,
     };
   }),
 
@@ -575,6 +686,9 @@ export const useAppStore = create<AppState & AppActions>()(
   addNode: (voiceId, t16, deg, octave = 0, semi) => set((state) => {
     if (!state.arrangement) return state;
 
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
     // Find and update the voice
     const updatedVoices = state.arrangement.voices.map((voice) => {
       if (voice.id !== voiceId) return voice;
@@ -588,12 +702,16 @@ export const useAppStore = create<AppState & AppActions>()(
     });
 
     return {
+      ...historyUpdate,
       arrangement: { ...state.arrangement, voices: updatedVoices },
     };
   }),
 
   removeNode: (voiceId, t16) => set((state) => {
     if (!state.arrangement) return state;
+
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
 
     const updatedVoices = state.arrangement.voices.map((voice) => {
       if (voice.id !== voiceId) return voice;
@@ -625,12 +743,16 @@ export const useAppStore = create<AppState & AppActions>()(
     });
 
     return {
+      ...historyUpdate,
       arrangement: { ...state.arrangement, voices: updatedVoices },
     };
   }),
 
   updateNode: (voiceId, oldT16, newT16, deg, octave = 0, term = false, semi) => set((state) => {
     if (!state.arrangement) return state;
+
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
 
     const updatedVoices = state.arrangement.voices.map((voice) => {
       if (voice.id !== voiceId) return voice;
@@ -713,9 +835,12 @@ export const useAppStore = create<AppState & AppActions>()(
    */
   enableChordTrack: () => set((state) => {
     if (!state.arrangement) return state;
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
     const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
     const defaults = get().createDefaultChordTrack(state.arrangement);
     return {
+      ...historyUpdate,
       arrangement: {
         ...state.arrangement,
         chords: get().normalizeChordTrack(defaults, totalT16),
@@ -731,8 +856,12 @@ export const useAppStore = create<AppState & AppActions>()(
     const chords = state.arrangement.chords || [];
     if (chordIndex < 0 || chordIndex >= chords.length) return state;
 
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
     const updated = chords.map((c, idx) => idx === chordIndex ? { ...c, name } : c);
     return {
+      ...historyUpdate,
       arrangement: {
         ...state.arrangement,
         chords: updated,
@@ -748,6 +877,9 @@ export const useAppStore = create<AppState & AppActions>()(
     if (!state.arrangement) return state;
     const chords = state.arrangement.chords || [];
     if (chords.length === 0) return state;
+
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
 
     const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
     const snappedT16 = Math.round(t16);
@@ -775,6 +907,7 @@ export const useAppStore = create<AppState & AppActions>()(
       const next = insertChordAtIndex(0, 0);
       if (!next) return state;
       return {
+        ...historyUpdate,
         arrangement: {
           ...state.arrangement,
           chords: get().normalizeChordTrack(next, totalT16),
@@ -786,6 +919,7 @@ export const useAppStore = create<AppState & AppActions>()(
       const next = insertChordAtIndex(chords.length, chords.length - 1);
       if (!next) return state;
       return {
+        ...historyUpdate,
         arrangement: {
           ...state.arrangement,
           chords: get().normalizeChordTrack(next, totalT16),
@@ -807,6 +941,7 @@ export const useAppStore = create<AppState & AppActions>()(
       if (!next) return state;
 
       return {
+        ...historyUpdate,
         arrangement: {
           ...state.arrangement,
           chords: get().normalizeChordTrack(next, totalT16),
@@ -824,6 +959,7 @@ export const useAppStore = create<AppState & AppActions>()(
 
     const next = [...chords.slice(0, idx), left, right, ...chords.slice(idx + 1)];
     return {
+      ...historyUpdate,
       arrangement: {
         ...state.arrangement,
         chords: get().normalizeChordTrack(next, totalT16),
@@ -840,6 +976,9 @@ export const useAppStore = create<AppState & AppActions>()(
     const chords = state.arrangement.chords || [];
     if (leftChordIndex < 0 || leftChordIndex >= chords.length - 1) return state;
 
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
     const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
 
     const left = chords[leftChordIndex];
@@ -847,12 +986,40 @@ export const useAppStore = create<AppState & AppActions>()(
     const leftStart = left.t16;
     const rightEnd = right.t16 + right.duration16;
 
-    // Minimum length of any chord segment (in 16ths).
+    const snappedBoundary = Math.round(newBoundaryT16);
     const minDur16 = 1;
+
+    if (snappedBoundary <= leftStart) {
+      // Delete the left chord and let the right chord extend over it.
+      const remaining = chords.filter((_, idx) => idx !== leftChordIndex);
+      const mergedRight: Chord = { ...right, t16: leftStart, duration16: rightEnd - leftStart };
+      remaining[leftChordIndex] = mergedRight;
+      return {
+        ...historyUpdate,
+        arrangement: {
+          ...state.arrangement,
+          chords: get().normalizeChordTrack(remaining, totalT16),
+        },
+      };
+    }
+
+    if (snappedBoundary >= rightEnd) {
+      // Delete the right chord and extend the left chord through it.
+      const remaining = chords.filter((_, idx) => idx !== leftChordIndex + 1);
+      const mergedLeft: Chord = { ...left, duration16: rightEnd - leftStart };
+      remaining[leftChordIndex] = mergedLeft;
+      return {
+        ...historyUpdate,
+        arrangement: {
+          ...state.arrangement,
+          chords: get().normalizeChordTrack(remaining, totalT16),
+        },
+      };
+    }
 
     const minBoundary = leftStart + minDur16;
     const maxBoundary = rightEnd - minDur16;
-    const boundary = Math.max(minBoundary, Math.min(maxBoundary, Math.round(newBoundaryT16)));
+    const boundary = Math.max(minBoundary, Math.min(maxBoundary, snappedBoundary));
 
     const updatedLeft: Chord = { ...left, duration16: boundary - leftStart };
     const updatedRight: Chord = { ...right, t16: boundary, duration16: rightEnd - boundary };
@@ -864,6 +1031,7 @@ export const useAppStore = create<AppState & AppActions>()(
     });
 
     return {
+      ...historyUpdate,
       arrangement: {
         ...state.arrangement,
         chords: get().normalizeChordTrack(next, totalT16),
@@ -880,11 +1048,15 @@ export const useAppStore = create<AppState & AppActions>()(
     const chords = state.arrangement.chords || [];
     if (chordIndex < 0 || chordIndex >= chords.length) return state;
 
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
     const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
 
     // If there is only one chord, deleting it disables the chord track.
     if (chords.length === 1) {
       return {
+        ...historyUpdate,
         arrangement: {
           ...state.arrangement,
           chords: [],
@@ -907,6 +1079,7 @@ export const useAppStore = create<AppState & AppActions>()(
     }
 
     return {
+      ...historyUpdate,
       arrangement: {
         ...state.arrangement,
         chords: get().normalizeChordTrack(remaining, totalT16),

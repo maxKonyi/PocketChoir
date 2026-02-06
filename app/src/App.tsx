@@ -29,6 +29,20 @@ function App() {
   const setPosition = useAppStore((state) => state.setPosition);
   const transposition = useAppStore((state) => state.transposition);
   const autoTranspositionNotice = useAppStore((state) => state.autoTranspositionNotice);
+  const mode = useAppStore((state) => state.mode);
+  const undo = useAppStore((state) => state.undo);
+  const redo = useAppStore((state) => state.redo);
+  const canUndo = useAppStore((state) => state.canUndo);
+  const canRedo = useAppStore((state) => state.canRedo);
+  const isAnyModalOpen = useAppStore((state) => (
+    state.isLibraryOpen ||
+    state.isMixerOpen ||
+    state.isMicSetupOpen ||
+    state.isRangeSetupOpen ||
+    state.isDisplaySettingsOpen ||
+    state.isSaveLoadOpen ||
+    state.isCreateModalOpen
+  ));
 
   const microphoneState = useAppStore((state) => state.microphoneState);
 
@@ -279,6 +293,54 @@ function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [playback.isPlaying, playback.isRecording, setPlaying, stopRecording]);
+
+  useEffect(() => {
+    const handleUndoRedo = (e: KeyboardEvent) => {
+      // Only allow shortcuts while editing in Create mode with no blocking UI.
+      if (mode !== 'create' || isAnyModalOpen) return;
+
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        const isEditable = target.isContentEditable
+          || tag === 'INPUT'
+          || tag === 'TEXTAREA'
+          || (target as HTMLInputElement).type === 'text';
+        if (isEditable) return;
+      }
+
+      const modifierHeld = e.ctrlKey || e.metaKey;
+      if (!modifierHeld) return;
+
+      const key = e.key.toLowerCase();
+
+      // Ctrl/Cmd + Z => undo (unless Shift is also held, which maps to redo)
+      if (key === 'z' && !e.shiftKey) {
+        if (!canUndo) return;
+        e.preventDefault();
+        undo();
+        return;
+      }
+
+      // Ctrl/Cmd + Shift + Z => redo
+      if (key === 'z' && e.shiftKey) {
+        if (!canRedo) return;
+        e.preventDefault();
+        redo();
+        return;
+      }
+
+      // Ctrl/Cmd + Y => redo
+      if (key === 'y') {
+        if (!canRedo) return;
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener('keydown', handleUndoRedo);
+    return () => window.removeEventListener('keydown', handleUndoRedo);
+  }, [mode, isAnyModalOpen, undo, redo, canUndo, canRedo]);
 
   return (
     <div

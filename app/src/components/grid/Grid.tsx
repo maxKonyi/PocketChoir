@@ -1802,13 +1802,19 @@ export function Grid({
                           : `linear-gradient(to bottom, var(--chord-fill-tension-top), var(--chord-fill-tension-bottom))`,
                         borderColor: isDiatonicChord ? 'var(--chord-stroke)' : 'var(--chord-stroke-tension)',
                       }}
+                      title="Shift+click to delete. Drag edges to stretch or overwrite."
                       onDoubleClick={(evt) => {
+                        // Double-click focuses the inline rename input for the clicked chord.
                         evt.stopPropagation();
                         setEditingChordIndex(idx);
                         setEditingChordName(chord.name);
                       }}
                       onClick={(evt) => {
+                        // Shift+click removes the chord without needing an X button.
                         evt.stopPropagation();
+                        if (evt.shiftKey) {
+                          deleteChord(idx);
+                        }
                       }}
                     >
                       <div className="absolute inset-0 flex items-center justify-center px-2">
@@ -1839,18 +1845,6 @@ export function Grid({
                           </span>
                         )}
                       </div>
-
-                      <button
-                        type="button"
-                        className="absolute right-1 top-1 text-[10px] font-black text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                        title="Delete chord"
-                        onClick={(evt) => {
-                          evt.stopPropagation();
-                          deleteChord(idx);
-                        }}
-                      >
-                        ×
-                      </button>
                     </div>
                   );
                 })}
