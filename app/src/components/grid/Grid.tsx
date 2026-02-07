@@ -846,6 +846,13 @@ export function Grid({
     // In Create mode we render interactive chord blocks as HTML overlay elements,
     // so we skip the canvas chord drawing to avoid double-rendering.
     if (!hideChords && mode !== 'create' && display.showChordTrack && arrangement.chords) {
+      // Clip chords horizontally so they stop exactly at the visible grid edges.
+      // (Chord blocks sit slightly above `gridTop`, so we only clip in X, not Y.)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(gridLeft, 0, gridWidth, height);
+      ctx.clip();
+
       const blockHeight = 24;
       const blockY = gridTop - 30;
 
@@ -922,14 +929,13 @@ export function Grid({
           ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
           ctx.shadowBlur = 6;
           ctx.fillText(chord.name, blockStartX + blockWidth / 2, blockY + blockHeight / 2);
-          ctx.restore();
+          ctx.stroke();
         }
       }
-    }
 
-    if (!onlyChords) {
-      ctx.save();
-      ctx.lineCap = 'round';
+      // Pop the chord-track clip rect.
+      ctx.restore();
+
       ctx.lineJoin = 'round';
 
       // 1. Draw recorded pitch traces (behind contours) — tiled across visible tiles
@@ -995,6 +1001,13 @@ export function Grid({
     // that sits on top of the main (masked) grid.
     // In that mode, we must NOT draw contours/nodes/playhead, otherwise they won't receive the fade mask.
     if (!onlyChords) {
+      // Clip to the visible grid rectangle so contour lines / nodes / playhead
+      // do not render past the left/right grid edge.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(gridLeft, gridTop, gridWidth, gridHeight);
+      ctx.clip();
+
       // 3A. Draw contour lines for each voice — tiled
       ctx.save();
       ctx.lineCap = 'round';
@@ -1172,6 +1185,9 @@ export function Grid({
           }
         }
       }
+      ctx.restore();
+
+      // Pop the clip rect.
       ctx.restore();
     }
   }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT]);
@@ -1971,7 +1987,7 @@ export function Grid({
         <div className="absolute inset-0 z-30 pointer-events-none">
           <div
             ref={chordLaneRef}
-            className="absolute pointer-events-auto"
+            className="absolute pointer-events-auto overflow-hidden"
             style={{
               left: GRID_MARGIN.left,
               right: GRID_MARGIN.right,

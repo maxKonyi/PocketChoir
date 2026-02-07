@@ -385,14 +385,17 @@ function App() {
       {/* Main grid visualization - background layer (masked lines/voices) */}
       {/* Extra top padding (pt-[7.5rem]) makes room for top bar + minimap above chord bar */}
       <div className="absolute inset-0 pt-[9rem] pb-20 pl-44 pr-8">
-        <div className="h-full w-full mask-vertical-fade">
-          <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
-        </div>
-      </div>
+        {/* Right-edge fade uses a real mask (not a color overlay) so it fades to transparency. */}
+        <div className="relative h-full w-full mask-right-fade">
+          <div className="relative h-full w-full mask-vertical-fade">
+            <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
+          </div>
 
-      {/* Chord Track layer - floating on top, not masked */}
-      <div className="absolute inset-0 pt-[9rem] pb-20 pl-44 pr-8 pointer-events-none">
-        <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} />
+          {/* Chord Track layer - floating on top, not vertically masked, but DOES right-fade */}
+          <div className="absolute inset-0 pointer-events-none">
+            <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} />
+          </div>
+        </div>
       </div>
 
       {/* UI Overlays - Floating panes */}
