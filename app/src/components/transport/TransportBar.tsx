@@ -37,14 +37,13 @@ export function TransportBar() {
   // Get state from store
   const playback = useAppStore((state) => state.playback);
   const arrangement = useAppStore((state) => state.arrangement);
-  const display = useAppStore((state) => state.display);
 
   // actions
   const setPlaying = useAppStore((state) => state.setPlaying);
   const setLoopEnabled = useAppStore((state) => state.setLoopEnabled);
   const setMetronomeEnabled = useAppStore((state) => state.setMetronomeEnabled);
   const setTempoMultiplier = useAppStore((state) => state.setTempoMultiplier);
-  const setZoomLevel = useAppStore((state) => state.setZoomLevel);
+  const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
   // setPosition is unused here because we use playbackEngine.seek directly for interactions that need immediate engine response
   // const setPosition = useAppStore((state) => state.setPosition);
 
@@ -72,7 +71,7 @@ export function TransportBar() {
 
   return (
     <div className="
-      absolute bottom-12 left-[calc(50%+4.5rem+15px)] -translate-x-1/2
+      absolute bottom-4 left-[calc(50%+4.5rem+15px)] -translate-x-1/2
       flex items-center justify-between px-8 h-[72px]
       w-auto min-w-[760px]
       glass-pane glass-med rounded-full shimmer
@@ -237,27 +236,29 @@ export function TransportBar() {
 
         <div className="w-px h-6 bg-white/8" />
 
-        {/* Zoom Controls */}
+        {/* Horizontal Zoom Controls (follow-mode timeline zoom) */}
         <div className="flex items-center gap-0.5 bg-white/5 rounded-full p-0.5 border border-white/5">
           <button
-            onClick={() => setZoomLevel(Math.max(0.5, display.zoomLevel - 0.25))}
-            aria-label="Zoom Out"
+            onClick={() => setHorizontalZoom('out')}
+            aria-label="Zoom Out (Timeline)"
             className="
               w-8 h-8 rounded-full flex items-center justify-center
               text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
               transition-all duration-200 cursor-pointer
             "
+            title="Zoom Out (Shift+Scroll Down)"
           >
             <ZoomOut size={14} />
           </button>
           <button
-            onClick={() => setZoomLevel(Math.min(4, display.zoomLevel + 0.25))}
-            aria-label="Zoom In"
+            onClick={() => setHorizontalZoom('in')}
+            aria-label="Zoom In (Timeline)"
             className="
               w-8 h-8 rounded-full flex items-center justify-center
               text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
               transition-all duration-200 cursor-pointer
             "
+            title="Zoom In (Shift+Scroll Up)"
           >
             <ZoomIn size={14} />
           </button>

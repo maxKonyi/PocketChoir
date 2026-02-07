@@ -113,6 +113,11 @@ export class PlaybackEngine {
   private loopStartT16: number = 0;
   private loopEndT16: number = 64;
 
+  // World time tracking: counts how many complete loops have occurred.
+  // Used by follow-mode to compute a monotonically increasing world position
+  // (worldT16 = loopCount * loopLengthT16 + currentLoopPositionT16).
+  private loopCount: number = 0;
+
   // Tempo
   private tempoMultiplier: number = 1.0;
   private baseTempo: number = 120;
@@ -746,6 +751,12 @@ export class PlaybackEngine {
     this.startTime = AudioService.getCurrentTime();
     this.startPosition = this.currentPositionMs;
 
+    // If starting from position 0 (beginning), reset the world-time loop counter.
+    // This ensures worldT starts at 0 for a fresh playback.
+    if (this.currentPositionMs <= 0) {
+      this.loopCount = 0;
+    }
+
     // Reset metronome scheduling so beat 0 is aligned with the timeline.
     // If we start from the middle, we start scheduling from the *current* beat.
     const beatDurationMs = 60000 / this.getEffectiveTempo();
@@ -893,6 +904,25 @@ export class PlaybackEngine {
   }
 
   /**
+   * Seek to a world-time position (converts to loop-relative for the engine).
+   * Also updates loopCount so worldT stays consistent.
+   * @param worldT16 - Monotonic world position in 16th notes (clamped >= 0)
+   */
+  seekWorld(worldT16: number): void {
+    const clamped = Math.max(0, worldT16);
+    const loopLength = this.getLoopLengthT16();
+    if (loopLength <= 0) {
+      this.seek(clamped);
+      return;
+    }
+    // Compute which loop iteration this lands in and the position within the loop.
+    const loopsCompleted = Math.floor(clamped / loopLength);
+    const positionInLoop = clamped - loopsCompleted * loopLength;
+    this.loopCount = loopsCompleted;
+    this.seek(this.loopStartT16 + positionInLoop);
+  }
+
+  /**
    * Start playback of all relevant recorded audio buffers.
    */
   private startAudioSources(fromMs: number): void {
@@ -988,12 +1018,38 @@ export class PlaybackEngine {
   }
 
   /**
-   * Get current position in 16th notes.
+   * Get current position in 16th notes (loops back within the arrangement).
    */
   getCurrentPositionT16(): number {
     const ms = this.getCurrentPositionMs();
     const sixteenthMs = sixteenthDurationMs(this.getEffectiveTempo(), this.timeSig);
     return ms / sixteenthMs;
+  }
+
+  /**
+   * Get the monotonically increasing "world" position in 16th notes.
+   * This never resets on loop — it keeps increasing so the follow-mode
+   * timeline scrolls seamlessly forward.
+   *   worldT16 = loopCount * loopLengthT16 + currentLoopPositionT16
+   */
+  getWorldPositionT16(): number {
+    const loopLengthT16 = this.loopEndT16 - this.loopStartT16;
+    const loopPositionT16 = this.getCurrentPositionT16() - this.loopStartT16;
+    return this.loopCount * loopLengthT16 + this.loopStartT16 + loopPositionT16;
+  }
+
+  /**
+   * Get the total length of the loop in 16th notes.
+   */
+  getLoopLengthT16(): number {
+    return this.loopEndT16 - this.loopStartT16;
+  }
+
+  /**
+   * Get the current loop count (how many full loops have completed).
+   */
+  getLoopCount(): number {
+    return this.loopCount;
   }
 
   /**
@@ -1006,8 +1062,18 @@ export class PlaybackEngine {
       const currentMs = this.getCurrentPositionMs();
       const currentT16 = this.getCurrentPositionT16();
 
-      // Check for loop
+      // ── One-shot auto-stop: stop one bar past the loop end ──
       const loopEndMs = t16ToMs(this.loopEndT16, this.getEffectiveTempo(), this.timeSig);
+      if (!this.loopEnabled) {
+        const oneBarT16 = this.timeSig.numerator * 4;
+        const oneShotEndMs = t16ToMs(this.loopEndT16 + oneBarT16, this.getEffectiveTempo(), this.timeSig);
+        if (currentMs >= oneShotEndMs) {
+          this.stop();
+          return;
+        }
+      }
+
+      // Check for loop
       if (this.loopEnabled && currentMs >= loopEndMs) {
         // Loop back to start
         const loopStartMs = t16ToMs(this.loopStartT16, this.getEffectiveTempo(), this.timeSig);
@@ -1026,6 +1092,10 @@ export class PlaybackEngine {
         // Loop audio recordings
         this.stopAudioSources();
         this.startAudioSources(loopStartMs);
+
+        // Increment the world-time loop counter so follow-mode visuals
+        // keep scrolling forward instead of jumping back.
+        this.loopCount += 1;
 
         // Re-prime and schedule notes from the loop start.
         this.primeSynthSchedulingFromPosition(this.loopStartT16);

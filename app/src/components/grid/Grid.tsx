@@ -16,6 +16,17 @@ import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMid
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 import { darkenColor } from '../../utils/colors';
 import { playbackEngine } from '../../services/PlaybackEngine';
+import {
+  cameraLeftWorldT,
+  visibleDurationT,
+  worldTToScreenX,
+  screenXToWorldT,
+  getTileRange,
+  tileLocalToWorldT,
+  getGridLOD,
+  dragPixelsToTimeDelta,
+  resolveToCanonical,
+} from '../../utils/followCamera';
 
 /* ------------------------------------------------------------
    Types
@@ -141,18 +152,30 @@ function degreeToY(
 
 
 /**
- * Convert a time position (t16) to X position on the grid.
+ * Find the closest in-scale ("legal") semitone to a raw semitone.
+ * The semitone values here are relative to the arrangement tonic (0 = tonic).
  */
-function t16ToX(
-  t16: number,
-  startT16: number,
-  endT16: number,
-  gridLeft: number,
-  gridWidth: number
-): number {
-  const range = endT16 - startT16;
-  const normalized = (t16 - startT16) / range;
-  return gridLeft + gridWidth * normalized;
+function snapSemitoneToScale(scaleType: string, rawSemitone: number): number {
+  const pattern = SCALE_PATTERNS[scaleType] || SCALE_PATTERNS['major'];
+
+  // We search a small octave window around the raw semitone.
+  // This is enough to find the nearest scale tone without heavy computation.
+  const baseOctave = Math.floor(rawSemitone / 12);
+  let best = 0;
+  let bestDiff = Infinity;
+
+  for (let octave = baseOctave - 1; octave <= baseOctave + 1; octave++) {
+    for (const semiInOctave of pattern) {
+      const candidate = octave * 12 + semiInOctave;
+      const diff = Math.abs(candidate - rawSemitone);
+      if (diff < bestDiff) {
+        best = candidate;
+        bestDiff = diff;
+      }
+    }
+  }
+
+  return best;
 }
 
 /* ------------------------------------------------------------
@@ -241,6 +264,15 @@ export function Grid({
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
   const updateNode = useAppStore((state) => state.updateNode);
   const transposition = useAppStore((state) => state.transposition);
+
+  // Follow-mode timeline state and actions
+  const followMode = useAppStore((state) => state.followMode);
+  const startTimelineDrag = useAppStore((state) => state.startTimelineDrag);
+  const updatePendingWorldT = useAppStore((state) => state.updatePendingWorldT);
+  const commitTimelineDrag = useAppStore((state) => state.commitTimelineDrag);
+
+  // Ref to track drag start position for scrub gestures
+  const dragStartRef = useRef<{ startX: number; startWorldT: number } | null>(null);
 
   // Chord-track editor actions (Create mode)
   const enableChordTrack = useAppStore((state) => state.enableChordTrack);
@@ -360,8 +392,8 @@ export function Grid({
   const getNodeHitAtMouseEvent = useCallback((
     e: React.MouseEvent<HTMLCanvasElement>,
     voiceId: string,
-    startT16: number,
-    endT16: number,
+    _startT16: number,
+    _endT16: number,
     gridLeft: number,
     gridTop: number,
     gridWidth: number,
@@ -383,23 +415,43 @@ export function Grid({
 
     const hitRadius = 14;
 
-    for (const node of voice.nodes) {
-      const r = node.term ? 9 : hitRadius;
+    // ── Follow-mode: compute camera to position nodes on screen ──
+    const pxPerTVal = followMode.pxPerT;
+    const loopLen = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const currentWorldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : playbackEngine.getWorldPositionT16();
+    const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
+    const visDur = visibleDurationT(gridWidth, pxPerTVal);
+    const [kStart, kEnd] = getTileRange(camLeft, camLeft + visDur, loopLen);
 
-      const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
-      const y = node.semi !== undefined
-        ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-        : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+    // Check all visible tiles for a node hit
+    for (let k = kStart; k <= kEnd; k++) {
+      const tileOffset = k * loopLen;
+      for (const node of voice.nodes) {
+        const r = node.term ? 9 : hitRadius;
 
-      const dx = mouseX - x;
-      const dy = mouseY - y;
-      if (dx * dx + dy * dy <= r * r) {
-        return node;
+        const nodeWorldT = node.t16 + tileOffset;
+        if (nodeWorldT < 0) continue;
+        const x = gridLeft + worldTToScreenX(nodeWorldT, camLeft, pxPerTVal);
+
+        // Skip off-screen nodes
+        if (x < gridLeft - r || x > gridLeft + gridWidth + r) continue;
+
+        const y = node.semi !== undefined
+          ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+          : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+        const dx = mouseX - x;
+        const dy = mouseY - y;
+        if (dx * dx + dy * dy <= r * r) {
+          return node;
+        }
       }
     }
 
     return null;
-  }, [arrangement]);
+  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Convert a snapped semitone into (deg, octaveOffset) for storage in the arrangement.
@@ -526,9 +578,18 @@ export function Grid({
     const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
     const { minSemitone, maxSemitone } = getPitchRange();
 
-    const relativeX = (x - gridLeft) / gridWidth;
-    const rawT16 = relativeX * totalT16;
-    const t16 = Math.max(0, Math.min(totalT16, Math.round(rawT16)));
+    // ── Follow-mode: convert screen X → world time → canonical local t16 ──
+    const pxPerTVal = followMode.pxPerT;
+    const currentWorldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : playbackEngine.getWorldPositionT16();
+    const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
+
+    // Screen X (relative to grid left) → world time
+    const clickWorldT = screenXToWorldT(x - gridLeft, camLeft, pxPerTVal);
+    // Resolve world time → canonical local t16 within [0, loopLengthT)
+    const { tLocal } = resolveToCanonical(clickWorldT, totalT16);
+    const t16 = Math.max(0, Math.min(totalT16, Math.round(tLocal)));
 
     const relativeY = (y - gridTop) / gridHeight;
     const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
@@ -543,7 +604,7 @@ export function Grid({
     const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
 
     return { t16, deg, octave };
-  }, [arrangement, getPitchRange, snapSemitoneToScale, semitoneToDegreeAndOctave]);
+  }, [arrangement, getPitchRange, snapSemitoneToScale, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Main drawing function.
@@ -617,10 +678,42 @@ export function Grid({
     // Get pitch range (now in semitones)
     const { minSemitone, maxSemitone, effectiveTonicMidi } = getPitchRange();
 
-    // Time range (in 16th notes) - calculate based on time signature
-    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+    // ── Follow-mode camera setup ──
+    // loopLengthT is the arrangement length in 16th notes (one full loop cycle).
+    const loopLengthT = arrangement.bars * arrangement.timeSig.numerator * 4;
+
+    // Horizontal zoom: pixels per 16th note
+    const pxPerT = followMode.pxPerT;
+
+    // Current world time: use pendingWorldT during a drag, otherwise read from the engine.
+    const worldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : playbackEngine.getWorldPositionT16();
+
+    // Camera left edge in world time (may be negative near the start).
+    const camLeft = cameraLeftWorldT(worldT, gridWidth, pxPerT);
+
+    // Visible time span and the viewport's right edge in world time.
+    const visDur = visibleDurationT(gridWidth, pxPerT);
+    const viewEnd = camLeft + visDur;
+
+    // Which tile indices overlap the visible range (forward-only, clamped >= 0).
+    // In one-shot mode (loopEnabled=false), only draw tile 0 — no tiling.
+    const loopEnabled = playback.loopEnabled;
+    const [kStart, kEnd] = loopEnabled
+      ? getTileRange(camLeft, viewEnd, loopLengthT)
+      : [0, 0] as [number, number];
+
+    // Helper: convert a world-time value to a screen X pixel inside the grid area.
+    const wToX = (wt: number) => gridLeft + worldTToScreenX(wt, camLeft, pxPerT);
+
+    // Keep these around for pitch trace + chord drawing that still use local coordinates.
+    const totalT16 = loopLengthT;
     const startT16 = 0;
     const endT16 = totalT16;
+
+    // Grid level-of-detail: hide subdivision / beat lines when zoomed far out.
+    const lod = getGridLOD(pxPerT);
 
     // Draw horizontal pitch lines (semitone-based chromatic grid)
     if (!onlyChords) {
@@ -666,121 +759,171 @@ export function Grid({
         }
       }
 
-      // Draw vertical grid lines
+      // ── Tiled vertical grid lines ──
+      // Draw grid lines for every visible tile (seamless infinite looping).
       const gridLines = generateGridLines(arrangement.bars, arrangement.timeSig);
-      for (const line of gridLines) {
-        const x = t16ToX(line.t16, startT16, endT16, gridLeft, gridWidth);
 
-        switch (line.type) {
-          case 'bar':
-            ctx.strokeStyle = barLineColor;
-            ctx.lineWidth = 2;
-            break;
-          case 'beat':
-            ctx.strokeStyle = beatLineColor;
-            ctx.lineWidth = 1;
-            break;
-          case 'subdivision':
-            ctx.strokeStyle = subdivLineColor;
-            ctx.lineWidth = 1;
-            break;
+      for (let k = kStart; k <= kEnd; k++) {
+        for (const line of gridLines) {
+          // Skip line types based on LOD (zoom level)
+          if (line.type === 'subdivision' && !lod.showSubdivisions) continue;
+          if (line.type === 'beat' && !lod.showBeats) continue;
+
+          // Convert local grid time → world time for this tile
+          const drawWorldT = tileLocalToWorldT(line.t16, k, loopLengthT);
+          if (drawWorldT === null) continue; // before time 0
+
+          const x = wToX(drawWorldT);
+          // Skip lines that are off-screen (with a small margin)
+          if (x < gridLeft - 2 || x > gridLeft + gridWidth + 2) continue;
+
+          switch (line.type) {
+            case 'bar':
+              ctx.strokeStyle = barLineColor;
+              ctx.lineWidth = 2;
+              break;
+            case 'beat':
+              ctx.strokeStyle = beatLineColor;
+              ctx.lineWidth = 1;
+              break;
+            case 'subdivision':
+              ctx.strokeStyle = subdivLineColor;
+              ctx.lineWidth = 1;
+              break;
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(x, gridTop);
+          ctx.lineTo(x, gridTop + gridHeight);
+          ctx.stroke();
         }
 
-        ctx.beginPath();
-        ctx.moveTo(x, gridTop);
-        ctx.lineTo(x, gridTop + gridHeight);
-        ctx.stroke();
+        // ── Loop Start Marker ──
+        // Draw a distinctive marker at the beginning of each loop repetition.
+        // This helps the singer see "bar 1" approaching at the end of each cycle.
+        const loopStartWorldT = k * loopLengthT;
+        if (loopStartWorldT >= 0) {
+          const lsX = wToX(loopStartWorldT);
+          if (lsX >= gridLeft - 2 && lsX <= gridLeft + gridWidth + 2) {
+            // Bright, thick line
+            ctx.save();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(lsX, gridTop);
+            ctx.lineTo(lsX, gridTop + gridHeight);
+            ctx.stroke();
+
+            // Label "1" (bar 1) above the marker
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.font = 'bold 13px system-ui';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText('1', lsX, gridTop - 2);
+            ctx.restore();
+          }
+        }
+
+        // Draw bar numbers for this tile (skip bar 0 since the loop marker covers it)
+        ctx.fillStyle = textColor;
+        ctx.font = '12px system-ui';
+        ctx.textAlign = 'center';
+        for (let bar = 1; bar < arrangement.bars; bar++) {
+          const localT16 = bar * arrangement.timeSig.numerator * 4;
+          const drawWT = tileLocalToWorldT(localT16, k, loopLengthT);
+          if (drawWT === null) continue;
+          const bx = wToX(drawWT);
+          if (bx < gridLeft - 20 || bx > gridLeft + gridWidth + 20) continue;
+          ctx.fillText(`${bar + 1}`, bx, gridTop - 10);
+        }
       }
 
-      // Draw bar numbers
-      ctx.fillStyle = textColor;
-      ctx.font = '12px system-ui';
-      ctx.textAlign = 'center';
-      for (let bar = 0; bar <= arrangement.bars; bar++) {
-        const t16 = bar * arrangement.timeSig.numerator * 4;
-        const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
-        ctx.fillText(`${bar + 1}`, x, gridTop - 10);
-      }
       ctx.restore();
     }
 
-    // Draw chord track
+    // Draw chord track (tiled across visible tiles)
     // In Create mode we render interactive chord blocks as HTML overlay elements,
     // so we skip the canvas chord drawing to avoid double-rendering.
     if (!hideChords && mode !== 'create' && display.showChordTrack && arrangement.chords) {
-      // ... (rest of the drawing code)
-
-
       const blockHeight = 24;
       const blockY = gridTop - 30;
 
-      for (let i = 0; i < arrangement.chords.length; i++) {
-        const chord = arrangement.chords[i];
-        const isDiatonicChord = arrangement ? isChordDiatonic(chord, arrangement) : true;
+      for (let k = kStart; k <= kEnd; k++) {
+        for (let i = 0; i < arrangement.chords.length; i++) {
+          const chord = arrangement.chords[i];
+          const isDiatonicChord = arrangement ? isChordDiatonic(chord, arrangement) : true;
 
-        // Calculate block start and end positions
-        const blockStartX = t16ToX(chord.t16, startT16, endT16, gridLeft, gridWidth);
-        const blockEndX = t16ToX(chord.t16 + chord.duration16, startT16, endT16, gridLeft, gridWidth);
-        const blockWidth = blockEndX - blockStartX;
+          // Convert chord local times to world time for this tile
+          const chordStartWT = tileLocalToWorldT(chord.t16, k, loopLengthT);
+          const chordEndWT = tileLocalToWorldT(chord.t16 + chord.duration16, k, loopLengthT);
+          if (chordStartWT === null || chordEndWT === null) continue;
 
-        // Draw glass-like rounded block with gap
-        const gap = 6;
-        const radius = 8;
-        const bStartX = blockStartX + gap / 2;
-        const bWidth = Math.max(0, blockWidth - gap);
+          const blockStartX = wToX(chordStartWT);
+          const blockEndX = wToX(chordEndWT);
+          const blockWidth = blockEndX - blockStartX;
 
-        // Build the main fill gradient (same for every diatonic chord; special one for tension chords).
-        const gradient = ctx.createLinearGradient(bStartX, blockY, bStartX, blockY + blockHeight);
-        if (isDiatonicChord) {
-          gradient.addColorStop(0, chordFillTop);
-          gradient.addColorStop(1, chordFillBottom);
-        } else {
-          gradient.addColorStop(0, chordFillTensionTop);
-          gradient.addColorStop(1, chordFillTensionBottom);
+          // Skip off-screen blocks
+          if (blockEndX < gridLeft - 10 || blockStartX > gridLeft + gridWidth + 10) continue;
+
+          // Draw glass-like rounded block with gap
+          const gap = 6;
+          const radius = 8;
+          const bStartX = blockStartX + gap / 2;
+          const bWidth = Math.max(0, blockWidth - gap);
+
+          // Build the main fill gradient
+          const gradient = ctx.createLinearGradient(bStartX, blockY, bStartX, blockY + blockHeight);
+          if (isDiatonicChord) {
+            gradient.addColorStop(0, chordFillTop);
+            gradient.addColorStop(1, chordFillBottom);
+          } else {
+            gradient.addColorStop(0, chordFillTensionTop);
+            gradient.addColorStop(1, chordFillTensionBottom);
+          }
+
+          // Path for the rounded "chip".
+          ctx.beginPath();
+          if ((ctx as any).roundRect) {
+            (ctx as any).roundRect(bStartX, blockY, bWidth, blockHeight, radius);
+          } else {
+            ctx.rect(bStartX, blockY, bWidth, blockHeight);
+          }
+
+          // 1) Soft drop shadow
+          ctx.save();
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+          ctx.shadowBlur = 12;
+          ctx.shadowOffsetY = 4;
+          ctx.fillStyle = gradient;
+          ctx.fill();
+          ctx.restore();
+
+          // 2) Crisp outer stroke.
+          ctx.strokeStyle = isDiatonicChord ? chordStroke : chordStrokeTension;
+          ctx.lineWidth = 1.25;
+          ctx.stroke();
+
+          // 3) Top "sheen" highlight
+          const sheen = ctx.createLinearGradient(0, blockY, 0, blockY + blockHeight);
+          sheen.addColorStop(0, 'rgba(255, 255, 255, 0.18)');
+          sheen.addColorStop(0.45, 'rgba(255, 255, 255, 0.04)');
+          sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+          ctx.strokeStyle = sheen;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Draw chord text centered in block.
+          ctx.save();
+          ctx.fillStyle = isDiatonicChord ? chordText : chordTextTension;
+          ctx.font = '700 13px system-ui';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+          ctx.shadowBlur = 6;
+          ctx.fillText(chord.name, blockStartX + blockWidth / 2, blockY + blockHeight / 2);
+          ctx.restore();
         }
-
-        // Path for the rounded "chip".
-        ctx.beginPath();
-        if ((ctx as any).roundRect) {
-          (ctx as any).roundRect(bStartX, blockY, bWidth, blockHeight, radius);
-        } else {
-          ctx.rect(bStartX, blockY, bWidth, blockHeight);
-        }
-
-        // 1) Soft drop shadow to lift the chord bar off the grid.
-        ctx.save();
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-        ctx.shadowBlur = 12;
-        ctx.shadowOffsetY = 4;
-        ctx.fillStyle = gradient;
-        ctx.fill();
-        ctx.restore();
-
-        // 2) Crisp outer stroke.
-        ctx.strokeStyle = isDiatonicChord ? chordStroke : chordStrokeTension;
-        ctx.lineWidth = 1.25;
-        ctx.stroke();
-
-        // 3) Top "sheen" highlight (subtle glass reflection).
-        const sheen = ctx.createLinearGradient(0, blockY, 0, blockY + blockHeight);
-        sheen.addColorStop(0, 'rgba(255, 255, 255, 0.18)');
-        sheen.addColorStop(0.45, 'rgba(255, 255, 255, 0.04)');
-        sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        ctx.strokeStyle = sheen;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Draw chord text centered in block.
-        // We keep text neutral (not voice-colored) so the contour colors remain the primary signal.
-        ctx.save();
-        ctx.fillStyle = isDiatonicChord ? chordText : chordTextTension;
-        ctx.font = '700 13px system-ui';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-        ctx.shadowBlur = 6;
-        ctx.fillText(chord.name, blockStartX + blockWidth / 2, blockY + blockHeight / 2);
-        ctx.restore();
       }
     }
 
@@ -789,7 +932,7 @@ export function Grid({
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
-      // 1. Draw recorded pitch traces (behind contours)
+      // 1. Draw recorded pitch traces (behind contours) — tiled across visible tiles
       for (const [voiceId, recording] of recordings.entries()) {
         const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
         if (voiceIndex === -1) continue;
@@ -798,7 +941,6 @@ export function Grid({
         const voiceState = voiceStates.find(v => v.voiceId === voiceId);
 
         // Recorded traces follow the VOX (vocal) mute/solo state.
-        // Solo is global across all tracks, but VOX coloring is based on VOX solo.
         const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
         const isVocalMuted = (voiceState?.vocalMuted ?? false) || (anySoloActive && !(voiceState?.vocalSolo ?? false));
 
@@ -806,19 +948,26 @@ export function Grid({
           ? 'rgba(150, 150, 150, 0.4)'
           : (voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d');
 
-        drawPitchTrace(ctx, recording.pitchTrace, startT16, endT16,
-          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
-          color: voiceColor,
-          lineWidth: 10,
-          opacity: isVocalMuted ? 0.2 : 0.4,
-          isLive: false,
-          effectiveTonicMidi,
-          minSemitone,
-          maxSemitone
-        });
+        // Draw the pitch trace for each visible tile
+        for (let k = kStart; k <= kEnd; k++) {
+          const tileOffset = k * loopLengthT;
+          drawPitchTrace(ctx, recording.pitchTrace, startT16, endT16,
+            arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
+            color: voiceColor,
+            lineWidth: 10,
+            opacity: isVocalMuted ? 0.2 : 0.4,
+            isLive: false,
+            effectiveTonicMidi,
+            minSemitone,
+            maxSemitone,
+            worldTimeOffset: tileOffset,
+            camLeft,
+            pxPerT,
+          });
+        }
       }
 
-      // 2. Draw live pitch trace (during recording)
+      // 2. Draw live pitch trace (during recording) — only in current tile (tile 0)
       if (livePitchTrace.length > 0 && armedVoiceId && playback.isRecording) {
         const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
         const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
@@ -832,7 +981,10 @@ export function Grid({
           isLive: true,
           effectiveTonicMidi,
           minSemitone,
-          maxSemitone
+          maxSemitone,
+          worldTimeOffset: 0,
+          camLeft,
+          pxPerT,
         });
       }
       ctx.restore();
@@ -843,160 +995,177 @@ export function Grid({
     // that sits on top of the main (masked) grid.
     // In that mode, we must NOT draw contours/nodes/playhead, otherwise they won't receive the fade mask.
     if (!onlyChords) {
-      // 3A. Draw contour lines for each voice
+      // 3A. Draw contour lines for each voice — tiled
       ctx.save();
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
       // Node sizes are shared across voices.
       // We draw *all* contour lines first, then draw *all* nodes afterwards.
-      // This guarantees nodes always sit on top (a contour line from another voice can never cross over a node).
+      // This guarantees nodes always sit on top.
       const nodeRadius = 12;
       const anchorRadius = nodeRadius * 0.5;
 
-      // Pass A: Contour lines only (including glow)
-      for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
-        const voice = arrangement.voices[voiceIndex];
-        const voiceState = voiceStates.find(v => v.voiceId === voice.id);
+      // Pass A: Contour lines only (including glow) — for each visible tile
+      for (let k = kStart; k <= kEnd; k++) {
+        const tileOffset = k * loopLengthT;
 
-      // Contour lines follow the SYN (synth) mute/solo state.
-      // Solo is global across all tracks, but SYN coloring is based on SYN solo.
-      const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
-      const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
+        for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
+          const voice = arrangement.voices[voiceIndex];
+          const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
-      // Get voice color
-      const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
-      const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
-      const glowColor = voiceColor.includes('rgba') ? voiceColor : voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
+          // Contour lines follow the SYN (synth) mute/solo state.
+          const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
+          const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
 
-      // Draw contour with glow effect
-      ctx.save();
+          // Get voice color
+          const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+          const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
+          const glowColor = voiceColor.includes('rgba') ? voiceColor : voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
 
-      // Glow layer - only if not muted
-      if (display.glowIntensity > 0 && !isSynthMuted) {
-        ctx.shadowColor = glowColor;
-        ctx.shadowBlur = 10 * display.glowIntensity;
-        ctx.strokeStyle = voiceColor;
-        ctx.lineWidth = 3;
-        drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
-      }
+          // Draw contour with glow effect
+          ctx.save();
 
-      // Main line
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = voiceColor;
-      ctx.lineWidth = 3;
-      drawVoiceContour(ctx, voice, minSemitone, maxSemitone, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, arrangement.scale);
-        ctx.restore();
-      }
-
-      // Pass B: Nodes on top (for every voice)
-      for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
-        const voice = arrangement.voices[voiceIndex];
-        const voiceState = voiceStates.find(v => v.voiceId === voice.id);
-
-      // Contour nodes follow the SYN (synth) mute/solo state.
-      const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
-      const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
-
-      const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
-      const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
-
-      const nodeStrokeColor = voiceColor;
-      const nodeFillColor = isSynthMuted
-        ? 'rgba(90, 90, 90, 1)'
-        : (baseColor.startsWith('#') ? darkenColor(baseColor, 35) : baseColor);
-
-      for (const node of voice.nodes) {
-        const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
-        const y = node.semi !== undefined
-          ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-          : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
-
-        // Draw node glow - only if not muted
-        if (display.glowIntensity > 0 && !isSynthMuted) {
-          ctx.shadowColor = voiceColor;
-          ctx.shadowBlur = 8 * display.glowIntensity;
-        }
-
-        if (node.term) {
-          // Anchor: small filled circle, no stroke, same color as the line.
-          const isDraggedAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && dragState.originalT16 === node.t16;
-
-          if (isDraggedAnchor) {
-            // Simple "halo" while dragging: a slightly larger solid circle.
-            ctx.save();
-            ctx.globalAlpha = 0.35;
-            ctx.beginPath();
-            ctx.arc(x, y, anchorRadius * 2.2, 0, Math.PI * 2);
-            ctx.fillStyle = voiceColor;
-            ctx.fill();
-            ctx.restore();
+          // Glow layer - only if not muted
+          if (display.glowIntensity > 0 && !isSynthMuted) {
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = 10 * display.glowIntensity;
+            ctx.strokeStyle = voiceColor;
+            ctx.lineWidth = 3;
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeft, pxPerT, gridLeft, loopLengthT);
           }
 
-          ctx.beginPath();
-          ctx.arc(x, y, anchorRadius, 0, Math.PI * 2);
-          ctx.fillStyle = voiceColor;
-          ctx.fill();
-
+          // Main line
           ctx.shadowBlur = 0;
-          continue;
+          ctx.strokeStyle = voiceColor;
+          ctx.lineWidth = 3;
+          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeft, pxPerT, gridLeft, loopLengthT);
+          ctx.restore();
         }
-
-        // Regular node circle with opaque fill
-        ctx.beginPath();
-        ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
-        ctx.fillStyle = nodeFillColor;
-        ctx.fill();
-        ctx.strokeStyle = nodeStrokeColor;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        ctx.shadowBlur = 0;
-
-        // Scale degree number inside node
-        ctx.fillStyle = isSynthMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
-        ctx.font = 'bold 12px system-ui';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(node.semi !== undefined ? semitoneToLabel(node.semi) : String(node.deg), x, y + 0.5);
       }
 
-      // Create mode hover preview ("phantom" node) is also drawn in this pass so it always sits above contours.
-      const isDraggingAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && !!voice.nodes.find(n => n.term && n.t16 === dragState.originalT16);
+      // Pass B: Nodes on top (for every voice) — tiled
+      for (let k = kStart; k <= kEnd; k++) {
+        const tileOffset = k * loopLengthT;
 
-      if (mode === 'create' && hoverPreviewRef.current?.voiceId === voice.id && !onlyChords && !isDraggingAnchor) {
-        const preview = hoverPreviewRef.current.point;
-        const px = t16ToX(preview.t16, startT16, endT16, gridLeft, gridWidth);
-        const py = preview.semi !== undefined
-          ? semitoneOffsetToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-          : degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+        for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
+          const voice = arrangement.voices[voiceIndex];
+          const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
-        ctx.save();
-        ctx.globalAlpha = 0.35;
+          // Contour nodes follow the SYN (synth) mute/solo state.
+          const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
+          const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
 
-        ctx.beginPath();
-        ctx.arc(px, py, nodeRadius, 0, Math.PI * 2);
-        ctx.fillStyle = nodeFillColor;
-        ctx.fill();
+          const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+          const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
 
-        ctx.strokeStyle = nodeStrokeColor;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+          const nodeStrokeColor = voiceColor;
+          const nodeFillColor = isSynthMuted
+            ? 'rgba(90, 90, 90, 1)'
+            : (baseColor.startsWith('#') ? darkenColor(baseColor, 35) : baseColor);
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-        ctx.font = 'bold 12px system-ui';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(preview.semi !== undefined ? semitoneToLabel(preview.semi) : String(preview.deg), px, py + 0.5);
+          for (const node of voice.nodes) {
+            // Convert node local time to world time for this tile
+            const nodeWorldT = node.t16 + tileOffset;
+            if (nodeWorldT < 0) continue; // before time 0
+            const x = wToX(nodeWorldT);
+            // Skip nodes that are off-screen
+            if (x < gridLeft - 20 || x > gridLeft + gridWidth + 20) continue;
 
-        ctx.restore();
+            const y = node.semi !== undefined
+              ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+              : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+            // Draw node glow - only if not muted
+            if (display.glowIntensity > 0 && !isSynthMuted) {
+              ctx.shadowColor = voiceColor;
+              ctx.shadowBlur = 8 * display.glowIntensity;
+            }
+
+            if (node.term) {
+              // Anchor: small filled circle, no stroke, same color as the line.
+              const isDraggedAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && dragState.originalT16 === node.t16;
+
+              if (isDraggedAnchor) {
+                // Simple "halo" while dragging: a slightly larger solid circle.
+                ctx.save();
+                ctx.globalAlpha = 0.35;
+                ctx.beginPath();
+                ctx.arc(x, y, anchorRadius * 2.2, 0, Math.PI * 2);
+                ctx.fillStyle = voiceColor;
+                ctx.fill();
+                ctx.restore();
+              }
+
+              ctx.beginPath();
+              ctx.arc(x, y, anchorRadius, 0, Math.PI * 2);
+              ctx.fillStyle = voiceColor;
+              ctx.fill();
+
+              ctx.shadowBlur = 0;
+              continue;
+            }
+
+            // Regular node circle with opaque fill
+            ctx.beginPath();
+            ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
+            ctx.fillStyle = nodeFillColor;
+            ctx.fill();
+            ctx.strokeStyle = nodeStrokeColor;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.shadowBlur = 0;
+
+            // Scale degree number inside node
+            ctx.fillStyle = isSynthMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
+            ctx.font = 'bold 12px system-ui';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.semi !== undefined ? semitoneToLabel(node.semi) : String(node.deg), x, y + 0.5);
+          }
+
+          // Create mode hover preview ("phantom" node) — only draw once (not per tile)
+          if (k === kStart) {
+            const isDraggingAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && !!voice.nodes.find(n => n.term && n.t16 === dragState.originalT16);
+
+            if (mode === 'create' && hoverPreviewRef.current?.voiceId === voice.id && !onlyChords && !isDraggingAnchor) {
+              const preview = hoverPreviewRef.current.point;
+              // For create-mode hover, use the nearest visible tile to show the preview
+              const previewWorldT = preview.t16 + kStart * loopLengthT;
+              const px = wToX(previewWorldT);
+              const py = preview.semi !== undefined
+                ? semitoneOffsetToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+                : degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+              ctx.save();
+              ctx.globalAlpha = 0.35;
+
+              ctx.beginPath();
+              ctx.arc(px, py, nodeRadius, 0, Math.PI * 2);
+              ctx.fillStyle = nodeFillColor;
+              ctx.fill();
+
+              ctx.strokeStyle = nodeStrokeColor;
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+              ctx.font = 'bold 12px system-ui';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(preview.semi !== undefined ? semitoneToLabel(preview.semi) : String(preview.deg), px, py + 0.5);
+
+              ctx.restore();
+            }
+          }
         }
       }
       ctx.restore();
 
-      // 4. Draw playhead - read directly from engine for smooth animation
-      const playheadT16 = playbackEngine.getCurrentPositionT16();
-      const playheadX = t16ToX(playheadT16, startT16, endT16, gridLeft, gridWidth);
+      // 4. Draw playhead — STATIC AND CENTERED (follow-mode)
+      // The playhead is always at the horizontal center of the grid area.
+      const playheadX = gridLeft + gridWidth / 2;
 
       ctx.strokeStyle = playheadColor;
       ctx.lineWidth = 2;
@@ -1005,25 +1174,37 @@ export function Grid({
       ctx.lineTo(playheadX, gridTop + gridHeight);
       ctx.stroke();
     }
-  }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording]);
+  }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Draw a voice's contour line (now using semitones).
+   * Uses follow-mode world-time coordinates for tiled rendering.
+   *
+   * @param tileOffset - world-time offset for this tile (k * loopLengthT)
+   * @param camLeft    - camera left edge in world time
+   * @param pxPerT     - pixels per 16th note (horizontal zoom)
+   * @param gridLeftPx - left edge of the grid area in CSS pixels
+   * @param loopLen    - loop length in 16th notes
    */
   function drawVoiceContour(
     ctx: CanvasRenderingContext2D,
     voice: Voice,
     minSemitone: number,
     maxSemitone: number,
-    startT16: number,
-    endT16: number,
-    gridLeft: number,
     gridTop: number,
-    gridWidth: number,
     gridHeight: number,
-    scaleType: string
+    scaleType: string,
+    tileOffset: number,
+    camLeft: number,
+    pxPerT: number,
+    gridLeftPx: number,
+    loopLen: number
   ) {
     if (voice.nodes.length === 0) return;
+
+    // Helper: convert a local t16 to screen X via world time
+    const nodeToX = (localT16: number) =>
+      gridLeftPx + worldTToScreenX(localT16 + tileOffset, camLeft, pxPerT);
 
     ctx.beginPath();
     let lastX = 0;
@@ -1037,7 +1218,7 @@ export function Grid({
       if (node.term) {
         if (inPhrase) {
           // Draw a horizontal hold segment to the termination time.
-          const termX = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
+          const termX = nodeToX(node.t16);
           ctx.lineTo(termX, lastY);
           ctx.stroke();
           ctx.beginPath();
@@ -1046,7 +1227,7 @@ export function Grid({
         continue;
       }
 
-      const x = t16ToX(node.t16, startT16, endT16, gridLeft, gridWidth);
+      const x = nodeToX(node.t16);
       const y = node.semi !== undefined
         ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
         : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
@@ -1092,12 +1273,13 @@ export function Grid({
       // If playback is running and there is no terminating anchor,
       // show a dashed line indicating the note holds to the end of the loop.
       if (playbackEngine.getIsPlaying()) {
-        const endX = t16ToX(endT16, startT16, endT16, gridLeft, gridWidth);
+        // Extend to the end of this tile (loop end for this tile)
+        const endX = nodeToX(loopLen);
 
         // IMPORTANT:
         // We must stroke the contour so far using a solid line BEFORE enabling dashes.
         // Otherwise the dash pattern applies to the entire path and the whole voice
-        // appears dashed (which is the bug you were seeing).
+        // appears dashed.
         ctx.stroke();
 
         // Now draw ONLY the final "hold" extension as a separate dashed segment.
@@ -1116,17 +1298,18 @@ export function Grid({
 
   /**
    * Draw a pitch trace (user recording) with clean, neon glow.
+   * Uses follow-mode world-time coordinates for tiled rendering.
    */
   function drawPitchTrace(
     ctx: CanvasRenderingContext2D,
     trace: PitchPoint[],
-    startT16: number,
-    endT16: number,
+    _startT16: number,
+    _endT16: number,
     tempo: number,
     timeSig: { numerator: number; denominator: number },
     gridLeft: number,
     gridTop: number,
-    gridWidth: number,
+    _gridWidth: number,
     gridHeight: number,
     options: {
       color: string;
@@ -1136,11 +1319,20 @@ export function Grid({
       effectiveTonicMidi: number;
       minSemitone: number;
       maxSemitone: number;
+      // Follow-mode parameters: offset the pitch trace by a tile's world time
+      worldTimeOffset: number;
+      camLeft: number;
+      pxPerT: number;
     }
   ) {
     if (trace.length < 2) return;
 
-    const { color, lineWidth, opacity, isLive, effectiveTonicMidi, minSemitone, maxSemitone } = options;
+    const { color, lineWidth, opacity, isLive, effectiveTonicMidi, minSemitone, maxSemitone,
+            worldTimeOffset, camLeft: optCamLeft, pxPerT: optPxPerT } = options;
+
+    // Helper: convert a local t16 to screen X via world time
+    const traceToX = (localT16: number) =>
+      gridLeft + worldTToScreenX(localT16 + worldTimeOffset, optCamLeft, optPxPerT);
 
     function getPitchY(frequency: number): number {
       // Calibrate against the grid: 
@@ -1187,7 +1379,7 @@ export function Grid({
 
         const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
         const t16 = point.time / sixteenthMs;
-        const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
+        const x = traceToX(t16);
         const y = getPitchY(point.frequency);
 
         if (!started) {
@@ -1222,7 +1414,7 @@ export function Grid({
       if (lastPoint && lastPoint.frequency > 0) {
         const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
         const t16 = lastPoint.time / sixteenthMs;
-        const x = t16ToX(t16, startT16, endT16, gridLeft, gridWidth);
+        const x = traceToX(t16);
         const y = getPitchY(lastPoint.frequency);
 
         ctx.save();
@@ -1454,10 +1646,22 @@ export function Grid({
   }, [mode, arrangement, selectedVoiceId, updateNode, removeNode, getPitchRange, getNodeHitAtMouseEvent, getSnappedPointFromMouseEvent]);
 
   /**
-   * Handle mouse down for starting node drag in create mode.
+   * Handle mouse down for starting node drag in create mode,
+   * or for starting a timeline scrub/drag in play mode.
    */
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (mode !== 'create' || !arrangement) return;
+    if (!arrangement) return;
+
+    // ── Play mode: start a timeline scrub/drag (seek-on-release) ──
+    if (mode === 'play') {
+      const currentWorldT = playbackEngine.getWorldPositionT16();
+      dragStartRef.current = { startX: e.clientX, startWorldT: currentWorldT };
+      startTimelineDrag();
+      updatePendingWorldT(currentWorldT);
+      return;
+    }
+
+    if (mode !== 'create') return;
 
     // If this is the second click of a double-click, don't start auditioning/placing.
     // The `onDoubleClick` handler will take care of the interaction.
@@ -1546,10 +1750,23 @@ export function Grid({
   }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, removeNode, setSelectedVoiceId, getPitchRange, getNodeHitAtMouseEvent]);
 
   /**
-   * Handle mouse move for dragging nodes.
+   * Handle mouse move for dragging nodes (Create mode)
+   * or scrubbing the timeline (Play mode).
    */
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (mode !== 'create' || !arrangement) return;
+    if (!arrangement) return;
+
+    // ── Play mode: update pending world time during a drag ──
+    if (mode === 'play' && followMode.isDraggingTimeline && dragStartRef.current) {
+      const dx = e.clientX - dragStartRef.current.startX;
+      // Dragging left → time moves forward (positive delta)
+      const dT = dragPixelsToTimeDelta(dx, followMode.pxPerT);
+      const newWorldT = Math.max(0, dragStartRef.current.startWorldT + dT);
+      updatePendingWorldT(newWorldT);
+      return;
+    }
+
+    if (mode !== 'create') return;
 
     const snapped = getSnappedPointFromMouseEvent(e);
     if (!snapped) {
@@ -1651,8 +1868,21 @@ export function Grid({
 
   /**
    * Handle mouse up to end drag.
+   * In Play mode this commits the scrub (seek-on-release).
+   * In Create mode this commits a new node placement or ends a node drag.
    */
   const handleMouseUp = useCallback(() => {
+    // ── Play mode: commit the timeline scrub (seek-on-release) ──
+    if (followMode.isDraggingTimeline) {
+      const pending = followMode.pendingWorldT;
+      if (pending !== null) {
+        playbackEngine.seekWorld(pending);
+      }
+      commitTimelineDrag();
+      dragStartRef.current = null;
+      return;
+    }
+
     // Commit a new node placement (if we were placing one).
     const placing = placingNewNodeRef.current;
     if (placing && mode === 'create') {
@@ -1677,7 +1907,48 @@ export function Grid({
       playbackEngine.previewSynthRelease(audition.voiceId);
       auditionRef.current = null;
     }
-  }, [dragState, mode, addNode, arrangement]);
+  }, [dragState, mode, addNode, arrangement, followMode.isDraggingTimeline, followMode.pendingWorldT, commitTimelineDrag]);
+
+  // Follow-mode horizontal zoom action from the store
+  const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
+  const setMinPxPerT = useAppStore((state) => state.setMinPxPerT);
+
+  /**
+   * Keep the store's minPxPerT floor in sync with the current grid width and arrangement.
+   * This ensures max zoom-out always shows exactly one full loop.
+   * Called on mount, resize, and arrangement change.
+   */
+  useEffect(() => {
+    const updateFloor = () => {
+      if (!arrangement) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const gridW = container.getBoundingClientRect().width - GRID_MARGIN.left - GRID_MARGIN.right;
+      const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
+      if (loopLenT <= 0) return;
+      setMinPxPerT(gridW / loopLenT);
+    };
+    updateFloor();
+    window.addEventListener('resize', updateFloor);
+    return () => window.removeEventListener('resize', updateFloor);
+  }, [arrangement, setMinPxPerT]);
+
+  /**
+   * Handle mouse wheel for horizontal zoom.
+   * Scrolling up (or pinch-out) zooms in, scrolling down zooms out.
+   * Uses Shift as the modifier key to avoid conflicting with browser Ctrl+scroll zoom.
+   */
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
+    // Only zoom when Shift is held (Ctrl conflicts with browser zoom)
+    if (!e.shiftKey) return;
+    e.preventDefault();
+
+    if (e.deltaY < 0) {
+      setHorizontalZoom('in');
+    } else if (e.deltaY > 0) {
+      setHorizontalZoom('out');
+    }
+  }, [setHorizontalZoom]);
 
   return (
     <div
@@ -1909,12 +2180,17 @@ export function Grid({
 
       <canvas
         ref={canvasRef}
-        className={`absolute inset-0 w-full h-full ${mode === 'create' ? (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringAnchor ? 'cursor-grab' : 'cursor-crosshair')) : ''}`}
+        className={`absolute inset-0 w-full h-full ${
+          mode === 'create'
+            ? (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringAnchor ? 'cursor-grab' : 'cursor-crosshair'))
+            : (followMode.isDraggingTimeline ? 'cursor-grabbing' : 'cursor-grab')
+        }`}
         onClick={handleCanvasClick}
         onDoubleClick={handleCanvasDoubleClick}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onWheel={handleWheel}
         onMouseLeave={() => {
           hoverPreviewRef.current = null;
           handleMouseUp();

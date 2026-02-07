@@ -10,6 +10,7 @@ import { TopBar } from './components/topbar';
 import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
 import { Grid } from './components/grid/Grid';
+import { Minimap } from './components/grid/Minimap';
 import { LibraryModal, MixerModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
 import { BackgroundVideo } from './components/ui/BackgroundVideo';
 import { DevControls } from './components/dev/DevControls';
@@ -374,17 +375,23 @@ function App() {
 
       <BackgroundVideo />
 
+      {/* Minimap - compressed contour preview above the chord bar, between top bar and grid */}
+      {arrangement && (
+        <div className="absolute top-[5.25rem] left-[calc(11rem+50px)] right-[calc(2rem+20px)] z-30">
+          <Minimap arrangement={arrangement} className="w-full" />
+        </div>
+      )}
+
       {/* Main grid visualization - background layer (masked lines/voices) */}
-      <div className="absolute inset-0 pt-24 pb-28 pl-44 pr-8 mask-vertical-fade">
+      {/* Extra top padding (pt-[7.5rem]) makes room for top bar + minimap above chord bar */}
+      <div className="absolute inset-0 pt-[9rem] pb-24 pl-44 pr-8 mask-vertical-fade">
         <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
       </div>
 
       {/* Chord Track layer - floating on top, not masked */}
-      <div className="absolute inset-0 pt-24 pb-28 pl-44 pr-8 pointer-events-none">
+      <div className="absolute inset-0 pt-[9rem] pb-24 pl-44 pr-8 pointer-events-none">
         <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} />
       </div>
-
-
 
       {/* UI Overlays - Floating panes */}
       <TopBar />

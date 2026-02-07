@@ -57,12 +57,24 @@ interface DisplaySettings {
   showScaleDegrees: boolean;    // Show numbers on nodes
   showPitchLabels: boolean;     // Show note names
   labelFormat: 'degree' | 'solfege' | 'noteName';
-  zoomLevel: number;            // 1 = fit all, higher = zoomed in
+  zoomLevel: number;            // 1 = fit all, higher = zoomed in (vertical / pitch zoom)
   glowIntensity: number;        // 0-2, multiplier for glow effects
   gridOpacity: number;          // 0-1, opacity of grid elements
   backgroundVideo: string;      // Current background video path (or 'none')
   backgroundBlur: number;       // Blur amount in px
   backgroundBrightness: number; // 0-1 brightness
+}
+
+/**
+ * Follow-mode timeline state.
+ * Controls horizontal zoom, scrub/drag, and the scrolling camera.
+ */
+interface FollowModeState {
+  pxPerT: number;                  // Pixels per 16th note (horizontal zoom). Higher = more zoomed in.
+  minPxPerT: number;               // Floor for pxPerT so max zoom-out = exactly one loop visible.
+  pendingWorldT: number | null;    // During a drag/scrub, the pending seek position. null = not dragging.
+  isDraggingTimeline: boolean;     // True while the user is dragging the main timeline view.
+  isDraggingMinimap: boolean;      // True while the user is dragging inside the minimap.
 }
 
 
@@ -227,6 +239,9 @@ interface AppState {
   future: ArrangementSnapshot[];
   canUndo: boolean;
   canRedo: boolean;
+
+  // Follow-mode timeline
+  followMode: FollowModeState;
 }
 
 /**
@@ -311,6 +326,18 @@ interface AppActions {
   setDisplaySettings: (settings: Partial<DisplaySettings>) => void;
   setZoomLevel: (zoom: number) => void;
 
+  // Follow-mode timeline
+  setPxPerT: (pxPerT: number) => void;
+  setMinPxPerT: (minPxPerT: number) => void;
+  setHorizontalZoom: (direction: 'in' | 'out') => void;
+  startTimelineDrag: () => void;
+  updatePendingWorldT: (worldT: number) => void;
+  commitTimelineDrag: () => void;
+  cancelTimelineDrag: () => void;
+  startMinimapDrag: () => void;
+  commitMinimapDrag: () => void;
+  cancelMinimapDrag: () => void;
+
   // Theme
   setTheme: (theme: ThemeName) => void;
 
@@ -385,6 +412,17 @@ const initialDisplaySettings: DisplaySettings = {
   backgroundBrightness: 0.6,
 };
 
+// Default follow-mode state.
+// pxPerT = 10 means each 16th note is 10px wide.
+// For a 4-bar arrangement in 4/4 (64 sixteenths), that's 640px total per loop.
+const initialFollowModeState: FollowModeState = {
+  pxPerT: 10,
+  minPxPerT: 0.5,
+  pendingWorldT: null,
+  isDraggingTimeline: false,
+  isDraggingMinimap: false,
+};
+
 
 
 const initialState: AppState = {
@@ -416,6 +454,7 @@ const initialState: AppState = {
   future: [],
   canUndo: false,
   canRedo: false,
+  followMode: initialFollowModeState,
 };
 
 /* ------------------------------------------------------------
@@ -1251,6 +1290,101 @@ export const useAppStore = create<AppState & AppActions>()(
 
   setZoomLevel: (zoom) => set((state) => ({
     display: { ...state.display, zoomLevel: zoom },
+  })),
+
+  // -- Follow-mode timeline --
+
+  /**
+   * Set the exact horizontal zoom value (pixels per 16th note).
+   */
+  setPxPerT: (pxPerT) => set((state) => ({
+    followMode: { ...state.followMode, pxPerT: Math.max(0.5, Math.min(60, pxPerT)) },
+  })),
+
+  /**
+   * Update the minimum pxPerT floor (set by the Grid on resize).
+   * Also clamp current pxPerT upward if it's below the new floor.
+   */
+  setMinPxPerT: (minPxPerT) => set((state) => {
+    const clamped = Math.max(minPxPerT, state.followMode.pxPerT);
+    return { followMode: { ...state.followMode, minPxPerT, pxPerT: clamped } };
+  }),
+
+  setHorizontalZoom: (direction) => set((state) => {
+    const factor = direction === 'in' ? 1.15 : 1 / 1.15;
+    const floor = state.followMode.minPxPerT;
+    const next = Math.max(floor, Math.min(60, state.followMode.pxPerT * factor));
+    return { followMode: { ...state.followMode, pxPerT: next } };
+  }),
+
+  /**
+   * Begin a scrub/drag gesture on the main timeline.
+   */
+  startTimelineDrag: () => set((state) => ({
+    followMode: { ...state.followMode, isDraggingTimeline: true },
+  })),
+
+  /**
+   * Update the pending seek position while dragging.
+   * The grid renders using this value instead of the transport worldT.
+   */
+  updatePendingWorldT: (worldT) => set((state) => ({
+    followMode: { ...state.followMode, pendingWorldT: Math.max(0, worldT) },
+  })),
+
+  /**
+   * Commit the drag: seek the transport to the pending position, then clear drag state.
+   */
+  commitTimelineDrag: () => set((state) => {
+    // The actual seek is handled by the component that calls this
+    // (it reads pendingWorldT and calls playbackEngine.seekWorld).
+    return {
+      followMode: {
+        ...state.followMode,
+        isDraggingTimeline: false,
+        pendingWorldT: null,
+      },
+    };
+  }),
+
+  /**
+   * Cancel the drag without seeking.
+   */
+  cancelTimelineDrag: () => set((state) => ({
+    followMode: {
+      ...state.followMode,
+      isDraggingTimeline: false,
+      pendingWorldT: null,
+    },
+  })),
+
+  /**
+   * Begin a drag gesture on the minimap.
+   */
+  startMinimapDrag: () => set((state) => ({
+    followMode: { ...state.followMode, isDraggingMinimap: true },
+  })),
+
+  /**
+   * Commit the minimap drag: seek the transport to the pending position.
+   */
+  commitMinimapDrag: () => set((state) => ({
+    followMode: {
+      ...state.followMode,
+      isDraggingMinimap: false,
+      pendingWorldT: null,
+    },
+  })),
+
+  /**
+   * Cancel the minimap drag without seeking.
+   */
+  cancelMinimapDrag: () => set((state) => ({
+    followMode: {
+      ...state.followMode,
+      isDraggingMinimap: false,
+      pendingWorldT: null,
+    },
   })),
 
   // -- Theme --
