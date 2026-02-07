@@ -11,6 +11,10 @@ class AudioServiceClass {
   // Master gain node - controls overall volume
   private masterGain: GainNode | null = null;
 
+  // Transport gain node - used for very short fades when starting/stopping/pausing.
+  // This prevents clicks without changing the user's master volume setting.
+  private transportGain: GainNode | null = null;
+
   // Reverb effect using Tone.Reverb (matches choir_ref behavior)
   private reverbNode: Tone.Reverb | null = null;
   private reverbGain: GainNode | null = null;  // Wet signal level
@@ -38,7 +42,14 @@ class AudioServiceClass {
     // Create the master gain node (controls overall volume)
     this.masterGain = this.context.createGain();
     this.masterGain.gain.value = 0.8; // Default to 80% volume
-    this.masterGain.connect(this.context.destination);
+
+    // Create a dedicated transport gain stage after the master gain.
+    // We keep this at 1.0 most of the time, and only use it for very short fades.
+    this.transportGain = this.context.createGain();
+    this.transportGain.gain.value = 1.0;
+
+    this.masterGain.connect(this.transportGain);
+    this.transportGain.connect(this.context.destination);
 
     // Create dry/wet routing for reverb effect
     this.dryGain = this.context.createGain();
@@ -109,6 +120,33 @@ class AudioServiceClass {
       throw new Error('AudioService not initialized. Call initialize() first.');
     }
     return this.masterGain;
+  }
+
+  /**
+   * Get the transport gain node.
+   * This should only be used for short fades (play/pause/stop) to prevent clicks.
+   */
+  getTransportGain(): GainNode {
+    if (!this.transportGain) {
+      throw new Error('AudioService not initialized. Call initialize() first.');
+    }
+    return this.transportGain;
+  }
+
+  /**
+   * Fade the transport gain to a target value over a short duration.
+   * This is used to prevent audible clicks when audio starts/stops abruptly.
+   */
+  fadeTransportGain(target: number, seconds: number): void {
+    if (!this.transportGain || !this.context) return;
+
+    const clampedTarget = Math.max(0, Math.min(1, target));
+    const dur = Math.max(0, seconds);
+    const now = this.context.currentTime;
+
+    this.transportGain.gain.cancelScheduledValues(now);
+    this.transportGain.gain.setValueAtTime(this.transportGain.gain.value, now);
+    this.transportGain.gain.linearRampToValueAtTime(clampedTarget, now + dur);
   }
 
   /**

@@ -104,6 +104,13 @@ export class PlaybackEngine {
   private vocalMuted: Set<string> = new Set();
   private vocalSolo: Set<string> = new Set();
 
+  // Short fade used whenever recorded audio starts/stops abruptly.
+  // This helps prevent clicks.
+  private readonly recordingFadeSeconds: number = 0.015;
+
+  // Short fade used for transport start/stop/pause to prevent clicks.
+  private readonly transportFadeSeconds: number = 0.02;
+
   // Per-voice pan (stereo position) for each part.
   // We keep vocal panners as native WebAudio nodes because recorded audio uses WebAudio.
   private vocalPannerNodes: Map<string, StereoPannerNode> = new Map();
@@ -358,7 +365,9 @@ export class PlaybackEngine {
    */
   async setAudioRecording(voiceId: string, blob: Blob): Promise<void> {
     if (blob.size === 0) {
-      this.stopAudioSource(voiceId);
+      // Clearing a recording can happen while audio is playing (ex: overwrite take).
+      // Fade out briefly to avoid an abrupt stop click.
+      this.stopAudioSourceWithFade(voiceId, this.recordingFadeSeconds);
       this.audioBuffers.delete(voiceId);
       return;
     }
@@ -497,7 +506,8 @@ export class PlaybackEngine {
         if (isAudible && !source) {
           this.startAudioSource(voiceId, this.getCurrentPositionMs());
         } else if (!isAudible && source) {
-          this.stopAudioSource(voiceId);
+          // Fade out briefly before stopping the buffer source to reduce clicks.
+          this.stopAudioSourceWithFade(voiceId, this.recordingFadeSeconds);
         }
       }
     }
@@ -530,12 +540,16 @@ export class PlaybackEngine {
    * Check if a synth should be audible (considering synth mute/solo).
    */
   private isSynthAudible(voiceId: string): boolean {
-    // Synth solo is scoped to synth tracks.
-    // If ANY synth solo is active, only synth tracks that are soloed are audible.
-    if (this.synthSolo.size > 0) {
+    // SOLO RULE (global):
+    // If ANY solo is active anywhere (SYN or VOX), then ONLY synth tracks whose
+    // synth-solo button is enabled are audible.
+    // Example: if you solo a VOX track, all SYN tracks mute unless they are also soloed.
+    const anySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
+    if (anySoloActive) {
       return this.synthSolo.has(voiceId);
     }
 
+    // Otherwise (no solos active), normal mute rules apply.
     return !this.synthMuted.has(voiceId);
   }
 
@@ -543,12 +557,16 @@ export class PlaybackEngine {
    * Check if a recording should be audible (considering vocal mute/solo).
    */
   private isVocalAudible(voiceId: string): boolean {
-    // Vocal solo is scoped to vocal tracks.
-    // If ANY vocal solo is active, only vocal tracks that are soloed are audible.
-    if (this.vocalSolo.size > 0) {
+    // SOLO RULE (global):
+    // If ANY solo is active anywhere (SYN or VOX), then ONLY vocal tracks whose
+    // vocal-solo button is enabled are audible.
+    // Example: if you solo a SYN track, all VOX tracks mute unless they are also soloed.
+    const anySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
+    if (anySoloActive) {
       return this.vocalSolo.has(voiceId);
     }
 
+    // Otherwise (no solos active), normal mute rules apply.
     return !this.vocalMuted.has(voiceId);
   }
 
@@ -738,6 +756,9 @@ export class PlaybackEngine {
     // Make sure audio context is running
     await AudioService.resume();
 
+    // Fade in the overall transport output so play/count-in doesn't click.
+    AudioService.fadeTransportGain(1, this.transportFadeSeconds);
+
     if (countInBars > 0) {
       const completed = await this.performCountIn(countInBars);
       if (!completed) {
@@ -855,6 +876,10 @@ export class PlaybackEngine {
    * Stop playback.
    */
   stop(): void {
+    // Fade out the overall transport output before stopping anything abruptly.
+    // This is a safety net against clicks from sudden note/source stops.
+    AudioService.fadeTransportGain(0, this.transportFadeSeconds);
+
     this.isPlaying = false;
     this.isCountingIn = false;
 
@@ -951,8 +976,9 @@ export class PlaybackEngine {
     const lagMs = Math.max(0, this.config.recordingLagMs ?? 0);
     const offset = Math.max(0, (fromMs + lagMs) / 1000);
 
-    // Stop existing if any
-    this.stopAudioSource(voiceId);
+    // Stop existing if any.
+    // We use a very short fade so restarting a source doesn't click.
+    this.stopAudioSourceWithFade(voiceId, this.recordingFadeSeconds);
 
     // Only play if the offset is within the buffer duration
     if (offset < buffer.duration) {
@@ -962,6 +988,15 @@ export class PlaybackEngine {
       // Connect to the per-voice gain node
       const gainNode = this.vocalGainNodes.get(voiceId);
       if (gainNode) {
+        // Fade in recorded audio very quickly so the source start doesn't click.
+        // We compute the intended target volume the same way as updateVoiceVolume.
+        const baseVolume = this.vocalVolumes.get(voiceId) ?? 0.8;
+        const targetVolume = this.isVocalAudible(voiceId) ? baseVolume : 0;
+
+        gainNode.gain.cancelScheduledValues(when);
+        gainNode.gain.setValueAtTime(0, when);
+        gainNode.gain.linearRampToValueAtTime(targetVolume, when + this.recordingFadeSeconds);
+
         source.connect(gainNode);
       } else {
         // Fallback to master if gain node missing
@@ -977,24 +1012,60 @@ export class PlaybackEngine {
    * Stop all active audio sources.
    */
   private stopAudioSources(): void {
-    for (const voiceId of this.activeAudioSources.keys()) {
-      this.stopAudioSource(voiceId);
+    // Copy keys first because we mutate the map while stopping.
+    const voiceIds = Array.from(this.activeAudioSources.keys());
+    for (const voiceId of voiceIds) {
+      this.stopAudioSourceWithFade(voiceId, this.recordingFadeSeconds);
     }
   }
 
   /**
-   * Stop a specific audio source.
+   * Stop a specific audio source with a short fade-out.
+   * This avoids clicks from abruptly stopping an AudioBufferSourceNode.
    */
-  private stopAudioSource(voiceId: string): void {
+  private stopAudioSourceWithFade(voiceId: string, fadeSeconds: number): void {
     const source = this.activeAudioSources.get(voiceId);
-    if (source) {
+    if (!source) return;
+
+    const ctx = AudioService.getContext();
+    const now = ctx.currentTime;
+    const stopAt = now + Math.max(0, fadeSeconds);
+
+    // Remove it immediately so we don't try to stop it twice.
+    this.activeAudioSources.delete(voiceId);
+
+    // Fade the per-voice gain to zero quickly.
+    const gainNode = this.vocalGainNodes.get(voiceId);
+    if (gainNode) {
+      const current = gainNode.gain.value;
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(current, now);
+      gainNode.gain.linearRampToValueAtTime(0, stopAt);
+    }
+
+    // Disconnect after the node actually ends.
+    source.onended = () => {
+      try {
+        source.disconnect();
+      } catch {
+        // Ignore disconnect errors.
+      }
+    };
+
+    try {
+      source.stop(stopAt);
+    } catch {
+      // If scheduling fails (already stopped), fall back to immediate stop.
       try {
         source.stop();
-      } catch (e) {
-        // Source might have already ended or not started
+      } catch {
+        // Ignore.
       }
-      source.disconnect();
-      this.activeAudioSources.delete(voiceId);
+      try {
+        source.disconnect();
+      } catch {
+        // Ignore.
+      }
     }
   }
 

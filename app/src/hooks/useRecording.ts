@@ -34,7 +34,9 @@ export function useRecording() {
   const arrangement = useAppStore((state) => state.arrangement);
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
   const playback = useAppStore((state) => state.playback);
+  const recordings = useAppStore((state) => state.recordings);
   const addRecording = useAppStore((state) => state.addRecording);
+  const clearRecording = useAppStore((state) => state.clearRecording);
   const setLivePitchTrace = useAppStore((state) => state.setLivePitchTrace);
   const setRecording = useAppStore((state) => state.setRecording);
   const setPlaying = useAppStore((state) => state.setPlaying);
@@ -117,6 +119,20 @@ export function useRecording() {
     if (!voiceId || !arrangement) {
       console.warn('No voice specified or no arrangement loaded');
       return false;
+    }
+
+    // If this voice already has a take, immediately clear it BEFORE count-in begins.
+    // This ensures the old audio + pitch trace disappear right away when you re-record.
+    const existing = recordings.get(voiceId);
+    if (existing) {
+      console.log(`Clearing existing recording for voice ${voiceId} before re-recording`);
+
+      // 1) Remove the saved take from the app state (pitch trace + blob).
+      clearRecording(voiceId);
+
+      // 2) Remove the decoded audio buffer from the audio engine.
+      // Using an empty blob is our existing "clear" API.
+      await playbackEngine.setAudioRecording(voiceId, new Blob());
     }
 
     // Initialize microphone if not already done
@@ -209,7 +225,7 @@ export function useRecording() {
 
     console.log('Recording started for voice:', currentVoiceId);
     return true;
-  }, [armedVoiceId, arrangement, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, recordingLagMs]);
+  }, [armedVoiceId, arrangement, recordings, clearRecording, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, recordingLagMs]);
 
   /**
    * Toggle recording state.
