@@ -5,7 +5,7 @@
    Layout: TopBar + (Sidebar + Grid) + TransportBar
    ============================================================ */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TopBar } from './components/topbar';
 import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
@@ -53,6 +53,15 @@ function App() {
 
   // Count-in visual state
   const [countInDisplay, setCountInDisplay] = useState<number | null>(null);
+
+  // Track the previous transport flags so we can tell the difference between:
+  // - starting playback
+  // - starting recording (which may want count-in)
+  // - stopping recording (which should NOT restart playback)
+  const prevTransportFlagsRef = useRef<{ isPlaying: boolean; isRecording: boolean }>({
+    isPlaying: playback.isPlaying,
+    isRecording: playback.isRecording,
+  });
 
   /**
    * Load default arrangement on startup.
@@ -154,6 +163,15 @@ function App() {
   useEffect(() => {
     if (!arrangement) return;
 
+    const prevIsPlaying = prevTransportFlagsRef.current.isPlaying;
+    const prevIsRecording = prevTransportFlagsRef.current.isRecording;
+
+    // Store current flags for the next effect run.
+    prevTransportFlagsRef.current = {
+      isPlaying: playback.isPlaying,
+      isRecording: playback.isRecording,
+    };
+
     const handlePlayback = async () => {
       // Make sure audio is initialized
       await initializeAudio();
@@ -172,14 +190,28 @@ function App() {
         });
       }
 
-      if (playback.isPlaying) {
-        // Use count-in only when recording starts
+      // Only start/restart playback when:
+      // 1) the user toggles play ON, or
+      // 2) recording just started (so we can apply count-in behavior)
+      //
+      // IMPORTANT: when recording ENDS but playback stays ON (loop continues),
+      // we must NOT call play() again, because that can restart timing and cause
+      // a visible/audible "jump" at the loop boundary.
+      const recordingJustStarted = !prevIsRecording && playback.isRecording;
+      const playJustStarted = !prevIsPlaying && playback.isPlaying;
+      const shouldStartOrRestart = playback.isPlaying && (playJustStarted || recordingJustStarted);
+
+      if (shouldStartOrRestart) {
+        // Use count-in only when recording is active.
         const countInBars = (playback.isRecording && countIn.enabled) ? countIn.bars : 0;
         playbackEngine.play(countInBars).then(() => {
-          // Clear count-in display when done
           setCountInDisplay(null);
         });
-      } else {
+        return;
+      }
+
+      // Only pause when play is toggled OFF.
+      if (!playback.isPlaying && prevIsPlaying) {
         playbackEngine.pause();
         setCountInDisplay(null);
       }

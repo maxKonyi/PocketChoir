@@ -973,25 +973,35 @@ export function Grid({
         }
       }
 
-      // 2. Draw live pitch trace (during recording) — only in current tile (tile 0)
+      // 2. Draw live pitch trace (during recording) — tiled across visible tiles
+      // This is important in Loop mode so that, as the next repetition (bar 1) scrolls
+      // into view near the end of the current loop, you can also see the beginning of
+      // the pitch trace you are currently recording.
       if (livePitchTrace.length > 0 && armedVoiceId && playback.isRecording) {
         const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
         const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
         const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
 
-        drawPitchTrace(ctx, livePitchTrace, startT16, endT16,
-          arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
-          color: traceColor,
-          lineWidth: 10,
-          opacity: 0.8,
-          isLive: true,
-          effectiveTonicMidi,
-          minSemitone,
-          maxSemitone,
-          worldTimeOffset: 0,
-          camLeft,
-          pxPerT,
-        });
+        // Draw the same live trace for each visible tile.
+        // Because the live trace time axis starts at 0 for the recording,
+        // drawing it with `worldTimeOffset = k * loopLengthT` makes the trace
+        // appear correctly within each repeated copy of the arrangement.
+        for (let k = kStart; k <= kEnd; k++) {
+          const tileOffset = k * loopLengthT;
+          drawPitchTrace(ctx, livePitchTrace, startT16, endT16,
+            arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
+            color: traceColor,
+            lineWidth: 10,
+            opacity: 0.8,
+            isLive: true,
+            effectiveTonicMidi,
+            minSemitone,
+            maxSemitone,
+            worldTimeOffset: tileOffset,
+            camLeft,
+            pxPerT,
+          });
+        }
       }
       ctx.restore();
     }
