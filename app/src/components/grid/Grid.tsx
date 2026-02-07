@@ -1044,6 +1044,17 @@ export function Grid({
         }
       }
 
+      // Draw playhead above contour lines but below nodes.
+      // The playhead is always at the horizontal center of the grid area.
+      const playheadX = gridLeft + gridWidth / 2;
+
+      ctx.strokeStyle = playheadColor;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(playheadX, gridTop);
+      ctx.lineTo(playheadX, gridTop + gridHeight);
+      ctx.stroke();
+
       // Pass B: Nodes on top (for every voice) — tiled
       for (let k = kStart; k <= kEnd; k++) {
         const tileOffset = k * loopLengthT;
@@ -1162,17 +1173,6 @@ export function Grid({
         }
       }
       ctx.restore();
-
-      // 4. Draw playhead — STATIC AND CENTERED (follow-mode)
-      // The playhead is always at the horizontal center of the grid area.
-      const playheadX = gridLeft + gridWidth / 2;
-
-      ctx.strokeStyle = playheadColor;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(playheadX, gridTop);
-      ctx.lineTo(playheadX, gridTop + gridHeight);
-      ctx.stroke();
     }
   }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT]);
 

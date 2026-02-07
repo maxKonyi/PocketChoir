@@ -100,6 +100,28 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const fillRoundedRect = (
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      r: number
+    ) => {
+      const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+      ctx.beginPath();
+      if ((ctx as any).roundRect) {
+        (ctx as any).roundRect(x, y, w, h, radius);
+      } else {
+        ctx.moveTo(x + radius, y);
+        ctx.arcTo(x + w, y, x + w, y + h, radius);
+        ctx.arcTo(x + w, y + h, x, y + h, radius);
+        ctx.arcTo(x, y + h, x, y, radius);
+        ctx.arcTo(x, y, x + w, y, radius);
+        ctx.closePath();
+      }
+      ctx.fill();
+    };
+
     // Handle high DPI
     const dpr = window.devicePixelRatio || 1;
     const rect = container.getBoundingClientRect();
@@ -253,19 +275,20 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     // Only draw the fill (no stroke). The stroke edges can read as "extra playheads"
     // during dragging / wrapping. The only strong vertical line should be the playhead.
     ctx.fillStyle = 'rgba(255, 255, 255, 0.26)';
+    const viewportCornerRadius = 6;
 
     if (vpWidth >= drawWidth) {
       // Viewport is as wide as the full minimap
-      ctx.fillRect(drawLeft, drawTop, drawWidth, drawHeight);
+      fillRoundedRect(drawLeft, drawTop, drawWidth, drawHeight, viewportCornerRadius);
     } else if (!loopEnabled) {
       // One-shot mode: never wrap. Clamp rect to the minimap bounds.
       const clampedLeftPx = Math.max(drawLeft, Math.min(drawLeft + drawWidth, vpLeftX));
       const clampedRightPx = Math.max(drawLeft, Math.min(drawLeft + drawWidth, vpRightX));
       const w = Math.max(0, clampedRightPx - clampedLeftPx);
-      ctx.fillRect(clampedLeftPx, drawTop, w, drawHeight);
+      fillRoundedRect(clampedLeftPx, drawTop, w, drawHeight, viewportCornerRadius);
     } else if (vpLeftX >= drawLeft && vpRightX <= drawLeft + drawWidth) {
       // Viewport fits entirely within the minimap — no wrapping
-      ctx.fillRect(vpLeftX, drawTop, vpWidth, drawHeight);
+      fillRoundedRect(vpLeftX, drawTop, vpWidth, drawHeight, viewportCornerRadius);
     } else {
       // Viewport wraps around the edges — draw two rectangles
       if (vpLeftX < drawLeft) {
@@ -273,17 +296,17 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
         const leftPartWidth = drawLeft - vpLeftX;
         const rightPartWidth = vpWidth - leftPartWidth;
         // Right portion (start of viewport)
-        ctx.fillRect(drawLeft + drawWidth - leftPartWidth, drawTop, leftPartWidth, drawHeight);
+        fillRoundedRect(drawLeft + drawWidth - leftPartWidth, drawTop, leftPartWidth, drawHeight, viewportCornerRadius);
         // Left portion (main)
-        ctx.fillRect(drawLeft, drawTop, rightPartWidth, drawHeight);
+        fillRoundedRect(drawLeft, drawTop, rightPartWidth, drawHeight, viewportCornerRadius);
       } else {
         // Right portion wraps to the left side
         const rightOverflow = vpRightX - (drawLeft + drawWidth);
         const mainWidth = vpWidth - rightOverflow;
         // Main portion
-        ctx.fillRect(vpLeftX, drawTop, mainWidth, drawHeight);
+        fillRoundedRect(vpLeftX, drawTop, mainWidth, drawHeight, viewportCornerRadius);
         // Wrapped portion
-        ctx.fillRect(drawLeft, drawTop, rightOverflow, drawHeight);
+        fillRoundedRect(drawLeft, drawTop, rightOverflow, drawHeight, viewportCornerRadius);
       }
     }
 

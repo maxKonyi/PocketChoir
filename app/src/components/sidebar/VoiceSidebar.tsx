@@ -238,7 +238,7 @@ export function VoiceSidebar() {
     // Container defines the "safe zone" for centering.
     // Top is pinned below the TopBar (approx 5rem / 80px).
     // Bottom uses `bottom-32` to clear the transport bar area.
-    <div className="absolute left-6 top-0 bottom-0 pt-[9rem] pb-24 flex flex-col items-start justify-center pointer-events-none z-20 w-fit">
+    <div className="absolute left-6 top-0 bottom-0 pt-[9rem] pb-20 flex flex-col items-start justify-center pointer-events-none z-20 w-fit">
       <div
         className="
           flex flex-col gap-2.5 p-3 pb-4 pointer-events-auto
