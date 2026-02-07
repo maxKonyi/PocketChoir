@@ -205,6 +205,7 @@ interface AppState {
   armedVoiceId: string | null;  // Which voice is armed for recording
   recordings: Map<string, Recording>; // voiceId -> recording
   livePitchTrace: PitchPoint[]; // Current recording's pitch trace
+  livePitchTraceVoiceId: string | null; // Which voice the live trace belongs to
 
   // Microphone
   microphoneState: MicrophoneState;
@@ -300,7 +301,7 @@ interface AppActions {
   addRecording: (voiceId: string, recording: Recording) => void;
   clearRecording: (voiceId: string) => void;
   clearAllRecordings: () => void;
-  setLivePitchTrace: (trace: PitchPoint[]) => void;
+  setLivePitchTrace: (trace: PitchPoint[], voiceId?: string | null) => void;
   addPitchPoint: (point: PitchPoint) => void;
 
   // Playback
@@ -436,6 +437,7 @@ const initialState: AppState = {
   armedVoiceId: null,
   recordings: new Map(),
   livePitchTrace: [],
+  livePitchTraceVoiceId: null,
   microphoneState: initialMicrophoneState,
   countIn: initialCountIn,
   vocalRange: initialVocalRange,
@@ -564,6 +566,7 @@ export const useAppStore = create<AppState & AppActions>()(
       transposition: 0,
       recordings: new Map(),
       livePitchTrace: [],
+      livePitchTraceVoiceId: null,
       armedVoiceId: null,
       history: [],
       future: [],
@@ -1214,9 +1217,19 @@ export const useAppStore = create<AppState & AppActions>()(
     recordings: new Map(),
     voiceStates: state.voiceStates.map((v) => ({ ...v, hasRecording: false })),
     livePitchTrace: [],
+    livePitchTraceVoiceId: null,
   })),
 
-  setLivePitchTrace: (trace) => set({ livePitchTrace: trace }),
+  setLivePitchTrace: (trace, voiceId) => set((state) => ({
+    livePitchTrace: trace,
+    // If voiceId is explicitly provided, always use it (even if trace is empty —
+    // this is how startRecording "tags" the trace before data arrives).
+    // If voiceId is NOT provided: keep the existing value when trace has data,
+    // clear it when trace is emptied (recording finished).
+    livePitchTraceVoiceId: voiceId !== undefined
+      ? voiceId
+      : (trace.length === 0 ? null : state.livePitchTraceVoiceId),
+  })),
 
   addPitchPoint: (point) => set((state) => ({
     livePitchTrace: [...state.livePitchTrace, point],
@@ -1407,7 +1420,7 @@ export const useAppStore = create<AppState & AppActions>()(
     const voiceStates: VoiceState[] = voices.map((voice, index) =>
       createVoiceState(voice.id, index)
     );
-    set({ voiceStates, recordings: new Map(), livePitchTrace: [] });
+    set({ voiceStates, recordings: new Map(), livePitchTrace: [], livePitchTraceVoiceId: null });
   },
 
   reset: () => set(initialState),

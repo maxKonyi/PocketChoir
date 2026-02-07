@@ -9,7 +9,6 @@
 import { Mic, Volume2, VolumeX, Headphones, Trash2, Edit3, Music, Layers } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { useAppStore, MAX_VOICES } from '../../stores/appStore';
-import { useRecording } from '../../hooks/useRecording';
 
 /* ------------------------------------------------------------
    Voice Control Row Component - Grouped controls per voice
@@ -20,9 +19,11 @@ interface VoiceControlProps {
   voiceName: string;
   voiceColor: string;
   voiceIndex: number;
+  startRecording: (targetVoiceId?: string) => Promise<boolean>;
+  stopRecording: (keepPlaying?: boolean) => void;
 }
 
-function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
+function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopRecording }: VoiceControlProps) {
   // Get state from store
   const voiceState = useAppStore((state) =>
     state.voiceStates.find((v) => v.voiceId === voiceId)
@@ -32,9 +33,6 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
   const hasRecording = useAppStore((state) => state.recordings.has(voiceId));
   const mode = useAppStore((state) => state.mode);
   const selectedVoiceId = useAppStore((state) => state.selectedVoiceId);
-
-  // Recording hook
-  const { startRecording, stopRecording } = useRecording();
 
   // Get actions from store
   const armVoice = useAppStore((state) => state.armVoice);
@@ -217,8 +215,12 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
 /* ------------------------------------------------------------
    Main Sidebar Component - Floating panel
    ------------------------------------------------------------ */
+export interface VoiceSidebarProps {
+  startRecording: (targetVoiceId?: string) => Promise<boolean>;
+  stopRecording: (keepPlaying?: boolean) => void;
+}
 
-export function VoiceSidebar() {
+export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProps) {
   // Get arrangement from store
   const arrangement = useAppStore((state) => state.arrangement);
   const voiceStates = useAppStore((state) => state.voiceStates);
@@ -326,6 +328,8 @@ export function VoiceSidebar() {
               voiceName={voice.name}
               voiceColor={voice.color}
               voiceIndex={index}
+              startRecording={startRecording}
+              stopRecording={stopRecording}
             />
           ))}
         </div>

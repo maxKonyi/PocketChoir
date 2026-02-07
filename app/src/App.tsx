@@ -202,6 +202,14 @@ function App() {
       const shouldStartOrRestart = playback.isPlaying && (playJustStarted || recordingJustStarted);
 
       if (shouldStartOrRestart) {
+        // Guard: don't call play() if the engine is already playing or
+        // counting in. This prevents double play() calls when
+        // startRecording() stops the engine directly and then sets
+        // React state, causing multiple effect firings.
+        if (playbackEngine.getIsPlaying() || playbackEngine.getIsCountingIn()) {
+          return;
+        }
+
         // Use count-in only when recording is active.
         const countInBars = (playback.isRecording && countIn.enabled) ? countIn.bars : 0;
         playbackEngine.play(countInBars).then(() => {
@@ -212,7 +220,10 @@ function App() {
 
       // Only pause when play is toggled OFF.
       if (!playback.isPlaying && prevIsPlaying) {
-        playbackEngine.pause();
+        // Guard: don't pause if the engine was already stopped directly.
+        if (playbackEngine.getIsPlaying()) {
+          playbackEngine.pause();
+        }
         setCountInDisplay(null);
       }
     };
@@ -239,20 +250,31 @@ function App() {
 
   /**
    * Sync recorded audio with the playback engine.
-   * Handles both adding/updating recordings and clearing deleted ones.
+   * Uses a blob-reference cache so we only decode audio that actually changed,
+   * instead of re-decoding ALL voices on every store update.
    */
   const recordings = useAppStore((state) => state.recordings);
+  // Cache: maps voiceId → the Blob reference we last sent to the engine.
+  // If the reference hasn't changed, we skip the expensive async decode.
+  const lastSyncedBlobsRef = useRef<Map<string, Blob | null>>(new Map());
+
   useEffect(() => {
     if (!arrangement) return;
 
+    const synced = lastSyncedBlobsRef.current;
+
     arrangement.voices.forEach((voice) => {
       const recording = recordings.get(voice.id);
-      if (recording && recording.audioBlob && recording.audioBlob.size > 0) {
-        playbackEngine.setAudioRecording(voice.id, recording.audioBlob);
-      } else {
-        // Clear recording in engine if it doesn't exist in store
-        playbackEngine.setAudioRecording(voice.id, new Blob());
-      }
+      const blob = (recording && recording.audioBlob && recording.audioBlob.size > 0)
+        ? recording.audioBlob
+        : null;
+
+      // Skip if the blob reference hasn't changed since we last synced.
+      if (synced.get(voice.id) === blob) return;
+
+      // Update the cache and tell the engine.
+      synced.set(voice.id, blob);
+      playbackEngine.setAudioRecording(voice.id, blob ?? new Blob());
     });
   }, [recordings, arrangement]);
 
@@ -290,10 +312,18 @@ function App() {
   /**
    * Keyboard controls (Space for play/pause/stop recording).
    */
-  const { stopRecording } = useRecording();
+  const { startRecording, stopRecording } = useRecording();
   const setPlaying = useAppStore((state) => state.setPlaying);
 
   useEffect(() => {
+    const blurIfButtonFocused = () => {
+      const active = document.activeElement;
+      if (!active) return;
+      if (active instanceof HTMLButtonElement) {
+        active.blur();
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -303,16 +333,24 @@ function App() {
       if (e.code === 'Space') {
         e.preventDefault();
 
-        // 1. If counting in, cancel it
+        // Ensure Space never "clicks" a focused button.
+        blurIfButtonFocused();
+
+        // Read the LATEST state directly from the store so we never act on
+        // stale closure values. This is the key fix for Space not working
+        // during active recording.
+        const currentPlayback = useAppStore.getState().playback;
+
+        // 1. If counting in, cancel it AND stop everything
         if (playbackEngine.getIsCountingIn()) {
           console.log('Cancelling count-in via Space');
-          playbackEngine.cancelCountIn();
+          stopRecording(false);
           setPlaying(false);
           return;
         }
 
         // 2. If recording, stop it (and stop playback)
-        if (playback.isRecording) {
+        if (currentPlayback.isRecording) {
           console.log('Stopping recording via Space');
           stopRecording(false); // Manual stop stops both
           return;
@@ -320,13 +358,27 @@ function App() {
 
         // 3. Otherwise, toggle play/pause
         console.log('Toggling playback via Space');
-        setPlaying(!playback.isPlaying);
+        setPlaying(!currentPlayback.isPlaying);
+      }
+    };
+
+    const handlePointerDown = (e: MouseEvent) => {
+      // If you click a button, immediately blur it so keyboard shortcuts keep working.
+      const target = e.target as HTMLElement | null;
+      if (target instanceof HTMLButtonElement) {
+        window.setTimeout(() => target.blur(), 0);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [playback.isPlaying, playback.isRecording, setPlaying, stopRecording]);
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('mousedown', handlePointerDown);
+    };
+    // We read fresh state via useAppStore.getState() inside the handler,
+    // so we only need to re-register when the callback references change.
+  }, [setPlaying, stopRecording]);
 
   useEffect(() => {
     const handleUndoRedo = (e: KeyboardEvent) => {
@@ -432,7 +484,7 @@ function App() {
 
       {/* UI Overlays - Floating panes */}
       <TopBar />
-      <VoiceSidebar />
+      <VoiceSidebar startRecording={startRecording} stopRecording={stopRecording} />
       <TransportBar />
       <DevControls />
 

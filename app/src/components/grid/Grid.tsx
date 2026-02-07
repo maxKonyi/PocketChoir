@@ -254,6 +254,7 @@ export function Grid({
   const playback = useAppStore((state) => state.playback);
   const voiceStates = useAppStore((state) => state.voiceStates);
   const livePitchTrace = useAppStore((state) => state.livePitchTrace);
+  const livePitchTraceVoiceId = useAppStore((state) => state.livePitchTraceVoiceId);
   const display = useAppStore((state) => state.display);
   const recordings = useAppStore((state) => state.recordings);
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
@@ -362,27 +363,8 @@ export function Grid({
    * Find the closest in-scale ("legal") semitone to a raw semitone.
    * The semitone values here are relative to the arrangement tonic (0 = tonic).
    */
-  const snapSemitoneToScale = useCallback((rawSemitone: number, scaleType: string): number => {
-    const pattern = SCALE_PATTERNS[scaleType] || SCALE_PATTERNS['major'];
-
-    // We search a small octave window around the raw semitone.
-    // This is enough to find the nearest scale tone without heavy computation.
-    const baseOctave = Math.floor(rawSemitone / 12);
-    let best = 0;
-    let bestDiff = Infinity;
-
-    for (let octave = baseOctave - 1; octave <= baseOctave + 1; octave++) {
-      for (const semiInOctave of pattern) {
-        const candidate = octave * 12 + semiInOctave;
-        const diff = Math.abs(candidate - rawSemitone);
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          best = candidate;
-        }
-      }
-    }
-
-    return best;
+  const snapSemitoneToScaleMemo = useCallback((rawSemitone: number, scaleType: string): number => {
+    return snapSemitoneToScale(scaleType, rawSemitone);
   }, []);
 
   /**
@@ -600,11 +582,11 @@ export function Grid({
       return { t16, deg: 1, octave: 0, semi: chromaticSemitone };
     }
 
-    const snappedSemitone = snapSemitoneToScale(rawSemitone, arrangement.scale);
+    const snappedSemitone = snapSemitoneToScaleMemo(rawSemitone, arrangement.scale);
     const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
 
     return { t16, deg, octave };
-  }, [arrangement, getPitchRange, snapSemitoneToScale, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT]);
+  }, [arrangement, getPitchRange, snapSemitoneToScaleMemo, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Main drawing function.
@@ -935,11 +917,30 @@ export function Grid({
 
       // Pop the chord-track clip rect.
       ctx.restore();
+    }
+
+    // 3. Draw contours + nodes + playhead (these are part of the "main grid layer")
+    // IMPORTANT: When `onlyChords=true`, this component is being used as a dedicated chord-track overlay
+    // that sits on top of the main (masked) grid.
+    // In that mode, we must NOT draw contours/nodes/playhead, otherwise they won't receive the fade mask.
+    if (!onlyChords) {
+      // Clip to the visible grid rectangle so contour lines / nodes / playhead
+      // do not render past the left/right grid edge.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(gridLeft, gridTop, gridWidth, gridHeight);
+      ctx.clip();
 
       ctx.lineJoin = 'round';
 
       // 1. Draw recorded pitch traces (behind contours) — tiled across visible tiles
       for (const [voiceId, recording] of recordings.entries()) {
+        // Skip drawing the saved trace for the voice currently being recorded.
+        // The live trace (drawn below) replaces it during recording.
+        // Without this, both traces render simultaneously, causing flickering
+        // and wrong-color artifacts.
+        if (playback.isRecording && voiceId === livePitchTraceVoiceId) continue;
+
         const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
         if (voiceIndex === -1) continue;
 
@@ -977,8 +978,10 @@ export function Grid({
       // This is important in Loop mode so that, as the next repetition (bar 1) scrolls
       // into view near the end of the current loop, you can also see the beginning of
       // the pitch trace you are currently recording.
-      if (livePitchTrace.length > 0 && armedVoiceId && playback.isRecording) {
-        const voiceIndex = arrangement.voices.findIndex(v => v.id === armedVoiceId);
+      if (livePitchTrace.length > 0 && livePitchTraceVoiceId && playback.isRecording) {
+        // Use the tagged voiceId (not armedVoiceId) so the color is always
+        // correct even if armedVoiceId changes mid-render.
+        const voiceIndex = arrangement.voices.findIndex(v => v.id === livePitchTraceVoiceId);
         const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
         const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
 
@@ -1003,20 +1006,6 @@ export function Grid({
           });
         }
       }
-      ctx.restore();
-    }
-
-    // 3. Draw contours + nodes + playhead (these are part of the "main grid layer")
-    // IMPORTANT: When `onlyChords=true`, this component is being used as a dedicated chord-track overlay
-    // that sits on top of the main (masked) grid.
-    // In that mode, we must NOT draw contours/nodes/playhead, otherwise they won't receive the fade mask.
-    if (!onlyChords) {
-      // Clip to the visible grid rectangle so contour lines / nodes / playhead
-      // do not render past the left/right grid edge.
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(gridLeft, gridTop, gridWidth, gridHeight);
-      ctx.clip();
 
       // 3A. Draw contour lines for each voice — tiled
       ctx.save();
@@ -1200,7 +1189,7 @@ export function Grid({
       // Pop the clip rect.
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -1389,7 +1378,7 @@ export function Grid({
       let lastPointTime = -1;
 
       for (const point of trace) {
-        const isGap = point.frequency <= 0 || (lastPointTime !== -1 && point.time - lastPointTime > 150);
+        const isGap = !Number.isFinite(point.frequency) || point.frequency <= 0 || (lastPointTime !== -1 && point.time - lastPointTime > 150);
 
         if (isGap || point.confidence < 0.3) {
           if (started) {
@@ -1437,7 +1426,7 @@ export function Grid({
     // Live Head Flair (Pulse only, no particles)
     if (isLive) {
       const lastPoint = trace[trace.length - 1];
-      if (lastPoint && lastPoint.frequency > 0) {
+      if (lastPoint && Number.isFinite(lastPoint.frequency) && lastPoint.frequency > 0) {
         const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
         const t16 = lastPoint.time / sixteenthMs;
         const x = traceToX(t16);
@@ -1471,12 +1460,20 @@ export function Grid({
     }
   }
 
+  // Keep the latest draw() in a ref so the RAF loop never needs to restart.
+  // Restarting the RAF effect on every state change can leak multiple loops,
+  // which shows up as flicker (different stale closures drawing alternating frames).
+  const drawRef = useRef(draw);
+  useEffect(() => {
+    drawRef.current = draw;
+  }, [draw]);
+
   // Animation loop for smooth playhead movement
   useEffect(() => {
     let animationId: number;
 
     const animate = () => {
-      draw();
+      drawRef.current();
       animationId = requestAnimationFrame(animate);
     };
 
@@ -1485,17 +1482,17 @@ export function Grid({
     return () => {
       cancelAnimationFrame(animationId);
     };
-  }, [draw]);
+  }, []);
 
   // Handle resize
   useEffect(() => {
     const handleResize = () => {
-      draw();
+      drawRef.current();
     };
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [draw]);
+  }, []);
 
   /**
    * Handle canvas click for placing/removing nodes in create mode.

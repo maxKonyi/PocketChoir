@@ -111,6 +111,9 @@ export class PlaybackEngine {
   // Short fade used for transport start/stop/pause to prevent clicks.
   private readonly transportFadeSeconds: number = 0.02;
 
+  // Used to prevent re-scheduling loop boundary fades multiple times per loop.
+  private lastLoopBoundaryFadeLoopCount: number = -1;
+
   // Per-voice pan (stereo position) for each part.
   // We keep vocal panners as native WebAudio nodes because recorded audio uses WebAudio.
   private vocalPannerNodes: Map<string, StereoPannerNode> = new Map();
@@ -360,8 +363,32 @@ export class PlaybackEngine {
   }
 
   /**
+   * Apply a short fade-out to the last few milliseconds of an AudioBuffer.
+   * This modifies the actual sample data so the audio can never pop/click
+   * when it stops — whether at a loop boundary, auto-stop, or manual stop.
+   */
+  private applyTailFade(buffer: AudioBuffer, fadeSeconds: number = 0.015): void {
+    const fadeSamples = Math.min(
+      Math.floor(fadeSeconds * buffer.sampleRate),
+      buffer.length
+    );
+    if (fadeSamples <= 0) return;
+
+    // Apply a linear fade-out to the last `fadeSamples` of every channel.
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const data = buffer.getChannelData(ch);
+      const startIndex = data.length - fadeSamples;
+      for (let i = 0; i < fadeSamples; i++) {
+        // Linear ramp from 1.0 down to 0.0
+        data[startIndex + i] *= 1 - (i / fadeSamples);
+      }
+    }
+  }
+
+  /**
    * Set a recorded audio blob for a voice.
    * Decodes the blob into an AudioBuffer for fast playback.
+   * Automatically applies a tail fade to prevent pops at the end.
    */
   async setAudioRecording(voiceId: string, blob: Blob): Promise<void> {
     if (blob.size === 0) {
@@ -374,6 +401,11 @@ export class PlaybackEngine {
 
     try {
       const buffer = await AudioService.decodeAudioBlob(blob);
+
+      // Apply a fade-out to the very end of the buffer so it never pops
+      // when playback reaches the last sample (loop boundary, auto-stop, etc.).
+      this.applyTailFade(buffer, this.recordingFadeSeconds);
+
       this.audioBuffers.set(voiceId, buffer);
       console.log(`Audio recording loaded for voice ${voiceId}, duration: ${buffer.duration.toFixed(2)}s`);
 
@@ -525,7 +557,10 @@ export class PlaybackEngine {
    */
   cancelCountIn(): void {
     this.isCountingIn = false;
+    // Clear the pending recording trigger so a subsequent play() doesn't
+    // accidentally start a microphone recording from a stale request.
     this.recordingVoiceId = null;
+    this.onRecordingComplete = null;
   }
 
   /**
@@ -883,6 +918,12 @@ export class PlaybackEngine {
     this.isPlaying = false;
     this.isCountingIn = false;
 
+    // Clear any pending recording trigger so a subsequent play() doesn't
+    // accidentally start a microphone recording from a stale request.
+    // Without this, cancelling a count-in leaves the trigger armed.
+    this.recordingVoiceId = null;
+    this.onRecordingComplete = null;
+
     // Stop the update loop
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
@@ -1124,6 +1165,16 @@ export class PlaybackEngine {
   }
 
   /**
+   * Reset the loop counter back to 0 (first repetition).
+   * Called before recording starts so the playhead returns to the very
+   * beginning of the arrangement, not just the start of a later tile.
+   */
+  resetLoopCount(): void {
+    this.loopCount = 0;
+    this.lastLoopBoundaryFadeLoopCount = -1;
+  }
+
+  /**
    * Start the animation frame update loop.
    */
   private startUpdateLoop(): void {
@@ -1144,6 +1195,26 @@ export class PlaybackEngine {
         }
       }
 
+      // If we're approaching the end of the loop, schedule a quick fade-down of
+      // recorded audio right AT the loop boundary. This helps prevent clicks.
+      // We only do this once per loop iteration.
+      if (this.loopEnabled && this.loopCount !== this.lastLoopBoundaryFadeLoopCount) {
+        const msUntilLoopEnd = loopEndMs - currentMs;
+        if (msUntilLoopEnd > 0 && msUntilLoopEnd <= 60) {
+          const when = this.getAudioTimeForTimelineMs(loopEndMs);
+          for (const [voiceId, gainNode] of this.vocalGainNodes.entries()) {
+            const baseVolume = this.vocalVolumes.get(voiceId) ?? 0.8;
+            const targetVolume = this.isVocalAudible(voiceId) ? baseVolume : 0;
+
+            gainNode.gain.cancelScheduledValues(when);
+            gainNode.gain.setValueAtTime(targetVolume, when);
+            gainNode.gain.linearRampToValueAtTime(0, when + this.recordingFadeSeconds);
+          }
+
+          this.lastLoopBoundaryFadeLoopCount = this.loopCount;
+        }
+      }
+
       // Check for loop
       if (this.loopEnabled && currentMs >= loopEndMs) {
         // Loop back to start
@@ -1161,12 +1232,26 @@ export class PlaybackEngine {
         }
 
         // Loop audio recordings
+        // NOTE:
+        // We fade out recorded audio before stopping, then restart slightly AFTER
+        // the boundary. This avoids clicks when the loop ends exactly on a
+        // non-zero sample value.
         this.stopAudioSources();
-        this.startAudioSources(loopStartMs);
+        const restartDelayMs = Math.max(1, this.recordingFadeSeconds * 1000);
+        window.setTimeout(() => {
+          // Only restart if we are still playing (user may have stopped during the delay).
+          if (!this.isPlaying) return;
+          this.startAudioSources(loopStartMs);
+        }, restartDelayMs);
 
         // Increment the world-time loop counter so follow-mode visuals
         // keep scrolling forward instead of jumping back.
         this.loopCount += 1;
+
+        // Allow the next loop iteration to schedule its own loop-end fade.
+        // (We only schedule the fade when we're close to the loop end, so resetting
+        // this here is safe and prevents "only the first loop fades" bugs.)
+        this.lastLoopBoundaryFadeLoopCount = -1;
 
         // Re-prime and schedule notes from the loop start.
         this.primeSynthSchedulingFromPosition(this.loopStartT16);

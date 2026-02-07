@@ -40,6 +40,7 @@ export function useRecording() {
   const setLivePitchTrace = useAppStore((state) => state.setLivePitchTrace);
   const setRecording = useAppStore((state) => state.setRecording);
   const setPlaying = useAppStore((state) => state.setPlaying);
+  const setPosition = useAppStore((state) => state.setPosition);
   const setMicrophoneState = useAppStore((state) => state.setMicrophoneState);
   const recordingLagMs = useAppStore((state) => state.microphoneState.recordingLagMs);
 
@@ -51,8 +52,25 @@ export function useRecording() {
   const pitchTraceRef = useRef<PitchPoint[]>([]);     // Local trace storage (no React re-renders)
   const isRecordingRef = useRef<boolean>(false);
 
+  // Lock to prevent overlapping startRecording calls (rapid toggle protection).
+  const startInProgressRef = useRef<boolean>(false);
+
+  // Session counter: incremented every time startRecording is called.
+  // Pitch detection callbacks check this to discard results from stale sessions.
+  const recordingSessionRef = useRef<number>(0);
+
+  // Keep a ref copy of armedVoiceId so stopRecording always has the latest value,
+  // even when called from a stale closure (e.g. the Space key handler).
+  const armedVoiceIdRef = useRef<string | null>(armedVoiceId);
+  armedVoiceIdRef.current = armedVoiceId;
+
   // Throttle ref for live trace updates
   const lastTraceUpdateRef = useRef<number>(0);
+
+  // Timestamp when the current recording session actually started playback.
+  // Used to prevent the auto-stop effect from firing with stale store position
+  // during the first moments of a new recording session.
+  const recordingStartTimeRef = useRef<number>(0);
 
   /**
    * Initialize microphone access.
@@ -88,11 +106,26 @@ export function useRecording() {
    * @param keepPlaying - If true, playback continues after recording stops (for seamless looping)
    */
   const stopRecording = useCallback((keepPlaying: boolean = false) => {
-    if (!isRecordingRef.current || !armedVoiceId) return;
+    // Read the SHARED store state so this works no matter which hook
+    // instance calls it (App.tsx vs VoiceSidebar vs anywhere else).
+    // Instance-local refs (isRecordingRef) are unreliable because each
+    // useRecording() call creates its own independent set of refs.
+    const storeState = useAppStore.getState();
+    const isCurrentlyRecording = storeState.playback.isRecording;
+    const isCountingIn = playbackEngine.getIsCountingIn();
 
-    console.log(`Stopping recording for voice ${armedVoiceId}, keepPlaying: ${keepPlaying}`);
+    if (!isCurrentlyRecording && !isCountingIn && !startInProgressRef.current) return;
+
+    const voiceId = armedVoiceIdRef.current;
+    console.log(`Stopping recording for voice ${voiceId}, keepPlaying: ${keepPlaying}`);
+
+    // Reset all local refs.
     isRecordingRef.current = false;
+    startInProgressRef.current = false;
     playbackActuallyStartedRef.current = false;
+
+    // Cancel any pending count-in in the engine.
+    playbackEngine.cancelCountIn();
 
     // Stop pitch detection
     pitchDetectorRef.current?.stop();
@@ -107,7 +140,7 @@ export function useRecording() {
     if (!keepPlaying) {
       setPlaying(false);
     }
-  }, [armedVoiceId, setPlaying, setRecording]);
+  }, [setPlaying, setRecording]);
 
   /**
    * Start recording on the armed voice.
@@ -120,6 +153,33 @@ export function useRecording() {
       console.warn('No voice specified or no arrangement loaded');
       return false;
     }
+
+    // ── STEP 0: Tear down anything from a previous session. ──
+    // Increment the session counter so any stale pitch callbacks are ignored.
+    recordingSessionRef.current += 1;
+    const thisSession = recordingSessionRef.current;
+
+    // Always stop the engine directly — no matter what state it's in.
+    // This is the most robust approach: we talk to the engine directly
+    // instead of relying on React state propagation (which is async and
+    // can race with other effects).
+    playbackEngine.stop();
+
+    // Also stop any in-progress pitch detection and microphone recording
+    // from a previous session.
+    pitchDetectorRef.current?.stop();
+    MicrophoneService.stopRecording();
+
+    // Reset local refs.
+    isRecordingRef.current = false;
+    startInProgressRef.current = true;
+    playbackActuallyStartedRef.current = false;
+
+    // Clear live trace immediately and tag it with the new voice being recorded.
+    // This sets livePitchTraceVoiceId so the Grid knows which voice the trace
+    // belongs to BEFORE any pitch data arrives.
+    pitchTraceRef.current = [];
+    setLivePitchTrace([], voiceId);
 
     // If this voice already has a take, immediately clear it BEFORE count-in begins.
     // This ensures the old audio + pitch trace disappear right away when you re-record.
@@ -135,17 +195,28 @@ export function useRecording() {
       await playbackEngine.setAudioRecording(voiceId, new Blob());
     }
 
+    // Bail out if a newer session started while we were clearing.
+    if (recordingSessionRef.current !== thisSession) return false;
+
     // Initialize microphone if not already done
     if (!pitchDetectorRef.current) {
       const success = await initMicrophone();
-      if (!success) return false;
+      if (!success) {
+        startInProgressRef.current = false;
+        return false;
+      }
     }
 
-    // Clear previous pitch trace
-    pitchTraceRef.current = [];
-    setLivePitchTrace([]);
+    // Bail out if a newer session started while we were initializing.
+    if (recordingSessionRef.current !== thisSession) {
+      startInProgressRef.current = false;
+      return false;
+    }
 
-    // Reset playhead to start of arrangement for consistent recording
+    // ── STEP 1: Rewind to the very beginning (first loop repetition). ──
+    // Reset the world-time loop counter so we start at repetition 0,
+    // not just the loop start point of whatever repetition we were on.
+    playbackEngine.resetLoopCount();
     playbackEngine.seek(0);
 
     // Reset timing state - wait for actual playback to start
@@ -153,9 +224,12 @@ export function useRecording() {
     isRecordingRef.current = true;
     lastTraceUpdateRef.current = 0;
 
-    // Set up pitch detection callback
+    // Set up pitch detection callback.
+    // The session check ensures that if startRecording is called again
+    // rapidly, stale callbacks from this session are silently discarded.
     pitchDetectorRef.current?.setCallback((result: PitchDetectionResult) => {
-      if (!isRecordingRef.current) return;
+      // Discard if this session has been superseded or stopped.
+      if (!isRecordingRef.current || recordingSessionRef.current !== thisSession) return;
 
       // Wait for playback to actually start before recording points
       if (!playbackActuallyStartedRef.current) {
@@ -197,6 +271,9 @@ export function useRecording() {
     const currentTrace = pitchTraceRef;
 
     playbackEngine.startRecordingVocal(currentVoiceId, async (vid, blob) => {
+      // Ignore if this session has been superseded.
+      if (recordingSessionRef.current !== thisSession) return;
+
       // Create the final recording object when recording stops
       const finalTrace = [...currentTrace.current];
       const recording: Recording = {
@@ -219,13 +296,29 @@ export function useRecording() {
       setLivePitchTrace([]);
     });
 
-    // Start playback
+    // ── STEP 2: Start playback (which triggers count-in then recording). ──
+    // CRITICAL: Reset the store position to 0 BEFORE setting isRecording/isPlaying.
+    // Without this, the auto-stop effect can see the old position (e.g. near loop end
+    // from a previous playback) and immediately fire stopRecording, killing the
+    // recording before it even starts. This was the root cause of "plays without
+    // recording" and "certain tracks have no pitch trace" bugs.
+    setPosition(0);
+
+    // Record the time so the auto-stop effect knows to ignore early position updates.
+    recordingStartTimeRef.current = performance.now();
+
+    // We set both flags in one go so the App.tsx effect sees a single
+    // transition (isPlaying: false→true, isRecording: false→true) and
+    // calls playbackEngine.play() exactly once.
     setRecording(true);
     setPlaying(true);
 
+    // Release the lock — the recording flow is now running.
+    startInProgressRef.current = false;
+
     console.log('Recording started for voice:', currentVoiceId);
     return true;
-  }, [armedVoiceId, arrangement, recordings, clearRecording, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, recordingLagMs]);
+  }, [armedVoiceId, arrangement, recordings, clearRecording, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, setPosition, recordingLagMs]);
 
   /**
    * Toggle recording state.
@@ -240,26 +333,36 @@ export function useRecording() {
 
   /**
    * Auto-stop recording at the end of the loop.
+   * IMPORTANT: We guard this with a 1-second grace period after recording starts.
+   * Without this, the effect can fire with stale store position from previous
+   * playback (e.g. near loop end) and kill the recording before it begins.
    */
   useEffect(() => {
-    if (playback.isRecording && playback.isPlaying) {
-      // Stop slightly before the exact loop end to ensure we don't start recording the loop start
-      if (playback.position >= playback.loopEnd - 0.2) {
-        console.log('Auto-stopping recording at loop end');
-        stopRecording(true); // Keep playing for seamless looping!
-      }
+    if (!playback.isRecording || !playback.isPlaying) return;
+
+    // Grace period: ignore position updates for 1 second after recording starts.
+    // This gives the engine time to start playback and send fresh position updates.
+    const elapsed = performance.now() - recordingStartTimeRef.current;
+    if (elapsed < 1000) return;
+
+    // Stop slightly before the exact loop end to ensure we don't start recording the loop start
+    if (playback.position >= playback.loopEnd - 0.2) {
+      console.log('Auto-stopping recording at loop end');
+      stopRecording(true); // Keep playing for seamless looping!
     }
   }, [playback.position, playback.loopEnd, playback.isRecording, playback.isPlaying, stopRecording]);
 
   /**
    * Clean up when playback stops externally.
+   * Uses the shared store state (not instance-local isRecordingRef) so this
+   * works correctly regardless of which useRecording() instance it runs in.
    */
   useEffect(() => {
-    if (!playback.isPlaying && isRecordingRef.current) {
-      // Playback stopped while recording - save the recording
+    if (!playback.isPlaying && playback.isRecording) {
+      // Playback stopped while recording — stop and save the recording.
       stopRecording();
     }
-  }, [playback.isPlaying, stopRecording]);
+  }, [playback.isPlaying, playback.isRecording, stopRecording]);
 
   /**
    * Clean up on unmount.
