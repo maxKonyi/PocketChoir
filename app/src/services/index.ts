@@ -6,7 +6,7 @@
 
 export { AudioService } from './AudioService';
 export { SynthVoice, createSynthVoice } from './SynthVoice';
-export { PitchDetector, createPitchDetector } from './PitchDetector';
+export { PitchDetector } from './PitchDetector';
 export type { PitchDetectionResult, PitchCallback } from './PitchDetector';
 export { MicrophoneService } from './MicrophoneService';
 export type { RecordingCompleteCallback } from './MicrophoneService';

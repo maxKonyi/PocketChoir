@@ -91,18 +91,3 @@ export interface Arrangement {
   author?: string;              // Creator name
   createdAt?: string;           // ISO date string
 }
-
-/**
- * Simplified arrangement info for library display.
- * Used in list views without loading full arrangement data.
- */
-export interface ArrangementInfo {
-  id: string;
-  title: string;
-  description?: string;
-  voiceCount: number;
-  bars: number;
-  tempo: number;
-  difficulty?: number;
-  tags?: string[];
-}

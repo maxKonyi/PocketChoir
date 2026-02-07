@@ -3,6 +3,7 @@ import { X, RotateCcw } from 'lucide-react';
 
 import { Panel } from '../ui/Panel';
 import { Slider } from '../ui/Slider';
+import { hexToRgb } from '../../utils/colors';
 
 /* ============================================================
    DEV CONTROLS (Hidden Menu)
@@ -57,27 +58,6 @@ const STORAGE_KEY = 'harmonySinging.devControls.v1';
 // Utility: keep numbers inside a safe range.
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
-}
-
-// Convert a hex string (#fff or #ffffff) into RGB numbers.
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const normalized = hex.replace('#', '').trim();
-
-  if (normalized.length === 3) {
-    const r = parseInt(normalized[0] + normalized[0], 16);
-    const g = parseInt(normalized[1] + normalized[1], 16);
-    const b = parseInt(normalized[2] + normalized[2], 16);
-    return { r, g, b };
-  }
-
-  if (normalized.length === 6) {
-    const r = parseInt(normalized.slice(0, 2), 16);
-    const g = parseInt(normalized.slice(2, 4), 16);
-    const b = parseInt(normalized.slice(4, 6), 16);
-    return { r, g, b };
-  }
-
-  return null;
 }
 
 // Convert a (hex color + opacity) into an rgba(...) string.

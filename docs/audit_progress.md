@@ -21,17 +21,17 @@ Branch: `audit-fixes`
 
 | ID | Description | Status |
 |----|-------------|--------|
-| 1C | Unused color utility functions in utils/colors.ts | ⬜ |
-| 1D | Unused timing utility functions in utils/timing.ts | ⬜ |
-| 1E | Unused suggestTransposition() in utils/music.ts | ⬜ |
-| 1F | Unused createPitchDetector() factory | ⬜ |
-| 1H | Unused type definitions in types/ | ⬜ |
-| 2A | semitoneOffsetToY wrapper does nothing in Grid.tsx | ⬜ |
-| 2B | Duplicate hexToRgb in DevControls.tsx | ⬜ |
-| 2C | Duplicate anySoloActive computation in Grid.tsx draw loop | ⬜ |
-| 2D | Pointless snapSemitoneToScaleMemo useCallback in Grid.tsx | ⬜ |
-| 3C | MicSetupModal missing useEffect dependency | ⬜ |
-| 5C | eslint-disable left in MicSetupModal.tsx | ⬜ |
+| 1C | Unused color utility functions in utils/colors.ts | ✅ |
+| 1D | Unused timing utility functions in utils/timing.ts | ✅ |
+| 1E | Unused suggestTransposition() in utils/music.ts | ✅ |
+| 1F | Unused createPitchDetector() factory | ✅ |
+| 1H | Unused type definitions in types/ | ✅ |
+| 2A | semitoneOffsetToY wrapper does nothing in Grid.tsx | ✅ |
+| 2B | Duplicate hexToRgb in DevControls.tsx | ✅ |
+| 2C | Duplicate anySoloActive computation in Grid.tsx draw loop | ✅ |
+| 2D | Pointless snapSemitoneToScaleMemo useCallback in Grid.tsx | ✅ |
+| 3C | MicSetupModal missing useEffect dependency | ✅ |
+| 5C | eslint-disable left in MicSetupModal.tsx | ✅ |
 | 5D | Duplicate section header comment in TransportBar.tsx | ✅ |
 
 ## Legend

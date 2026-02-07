@@ -19,33 +19,6 @@ export const DEFAULT_VOICE_COLORS = [
 ];
 
 /**
- * Get the color for a voice by index.
- * @param voiceIndex - 0-based voice index
- * @returns Object with color and glow color
- */
-export function getVoiceColor(voiceIndex: number): { color: string; glow: string } {
-  return DEFAULT_VOICE_COLORS[voiceIndex % DEFAULT_VOICE_COLORS.length];
-}
-
-/**
- * Get a CSS variable name for a voice color.
- * @param voiceIndex - 0-based voice index
- * @returns CSS variable name (e.g., "--voice-1")
- */
-export function getVoiceColorVar(voiceIndex: number): string {
-  return `--voice-${voiceIndex + 1}`;
-}
-
-/**
- * Get a CSS variable name for a voice glow color.
- * @param voiceIndex - 0-based voice index
- * @returns CSS variable name (e.g., "--voice-1-glow")
- */
-export function getVoiceGlowVar(voiceIndex: number): string {
-  return `--voice-${voiceIndex + 1}-glow`;
-}
-
-/**
  * Parse a hex color to RGB components.
  * @param hex - Hex color string (e.g., "#ff6b9d" or "ff6b9d")
  * @returns Object with r, g, b values (0-255)
@@ -79,39 +52,9 @@ export function hexToRgb(hex: string): { r: number; g: number; b: number } | nul
  * @param b - Blue (0-255)
  * @returns Hex color string (e.g., "#ff6b9d")
  */
-export function rgbToHex(r: number, g: number, b: number): string {
+function rgbToHex(r: number, g: number, b: number): string {
   const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0');
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
-
-/**
- * Create an RGBA color string from hex and alpha.
- * @param hex - Hex color string
- * @param alpha - Alpha value (0-1)
- * @returns RGBA color string
- */
-export function hexToRgba(hex: string, alpha: number): string {
-  const rgb = hexToRgb(hex);
-  if (!rgb) return `rgba(0, 0, 0, ${alpha})`;
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
-}
-
-/**
- * Lighten a color by a percentage.
- * @param hex - Hex color string
- * @param percent - Percentage to lighten (0-100)
- * @returns Lightened hex color
- */
-export function lightenColor(hex: string, percent: number): string {
-  const rgb = hexToRgb(hex);
-  if (!rgb) return hex;
-  
-  const factor = percent / 100;
-  const r = Math.min(255, rgb.r + (255 - rgb.r) * factor);
-  const g = Math.min(255, rgb.g + (255 - rgb.g) * factor);
-  const b = Math.min(255, rgb.b + (255 - rgb.b) * factor);
-  
-  return rgbToHex(r, g, b);
 }
 
 /**
@@ -135,7 +78,7 @@ export function darkenColor(hex: string, percent: number): string {
 /**
  * Available theme names.
  */
-export const THEME_NAMES = [
+const THEME_NAMES = [
   'default',        // Base purple theme
   'cosmic',         // Deeper cosmic purple
   'minimal-dark',   // Clean dark
@@ -145,23 +88,6 @@ export const THEME_NAMES = [
 ] as const;
 
 export type ThemeName = typeof THEME_NAMES[number];
-
-/**
- * Get a human-readable label for a theme.
- * @param theme - Theme name
- * @returns Display label
- */
-export function getThemeLabel(theme: ThemeName): string {
-  const labels: Record<ThemeName, string> = {
-    'default': 'Default',
-    'cosmic': 'Cosmic',
-    'minimal-dark': 'Minimal Dark',
-    'minimal-light': 'Minimal Light',
-    'sunset': 'Sunset',
-    'ocean': 'Ocean',
-  };
-  return labels[theme];
-}
 
 /**
  * Apply a theme to the document.
@@ -176,14 +102,3 @@ export function applyTheme(theme: ThemeName): void {
   }
 }
 
-/**
- * Get the currently applied theme.
- * @returns Current theme name
- */
-export function getCurrentTheme(): ThemeName {
-  const theme = document.documentElement.getAttribute('data-theme');
-  if (theme && THEME_NAMES.includes(theme as ThemeName)) {
-    return theme as ThemeName;
-  }
-  return 'default';
-}

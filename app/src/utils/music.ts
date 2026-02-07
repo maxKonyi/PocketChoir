@@ -282,9 +282,6 @@ export function getArrangementFrequencyRange(
  * Suggest a transposition that tries to fit the ENTIRE arrangement range
  * (lowest to highest note) inside the user's vocal range.
  *
- * This differs from `suggestTransposition()` which matches midpoints and can
- * still leave the arrangement too high or too low at the edges.
- *
  * @param arrangementRange - Min/max frequencies of arrangement
  * @param vocalRange - User's vocal range
  * @returns Suggested transposition in semitones
@@ -341,23 +338,3 @@ export function suggestTranspositionToFitRange(
   return bestShift;
 }
 
-/**
- * Suggest transposition to fit a vocal range.
- * @param arrangementRange - Min/max frequencies of arrangement
- * @param vocalRange - User's vocal range
- * @returns Suggested transposition in semitones
- */
-export function suggestTransposition(
-  arrangementRange: { minFreq: number; maxFreq: number },
-  vocalRange: { lowFrequency: number; highFrequency: number }
-): number {
-  const arrMidMidi = frequencyToMidi(
-    Math.sqrt(arrangementRange.minFreq * arrangementRange.maxFreq)
-  );
-  const vocalMidMidi = frequencyToMidi(
-    Math.sqrt(vocalRange.lowFrequency * vocalRange.highFrequency)
-  );
-
-  // Round to nearest semitone
-  return Math.round(vocalMidMidi - arrMidMidi);
-}

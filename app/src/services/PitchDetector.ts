@@ -430,14 +430,3 @@ export class PitchDetector {
     this.callback = null;
   }
 }
-
-/**
- * Factory function to create a new PitchDetector.
- * @param stream - MediaStream from getUserMedia
- * @returns Initialized PitchDetector
- */
-export function createPitchDetector(stream: MediaStream): PitchDetector {
-  const detector = new PitchDetector();
-  detector.initialize(stream);
-  return detector;
-}

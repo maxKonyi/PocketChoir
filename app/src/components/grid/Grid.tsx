@@ -39,20 +39,6 @@ interface GridProps {
   onlyChords?: boolean;
 }
 
-/**
- * Convert a chromatic semitone offset (relative to tonic) to Y position.
- */
-function semitoneOffsetToY(
-  semitoneOffset: number,
-  minSemitone: number,
-  maxSemitone: number,
-  gridTop: number,
-  gridHeight: number
-): number {
-  return semitoneToY(semitoneOffset, minSemitone, maxSemitone, gridTop, gridHeight);
-}
-
-
 
 /* ------------------------------------------------------------
    Helper Functions
@@ -392,13 +378,6 @@ export function Grid({
     };
   }, [mode, arrangement, chordLaneMouseXToT16, resizeChordBoundary]);
 
-  /**
-   * Find the closest in-scale ("legal") semitone to a raw semitone.
-   * The semitone values here are relative to the arrangement tonic (0 = tonic).
-   */
-  const snapSemitoneToScaleMemo = useCallback((rawSemitone: number, scaleType: string): number => {
-    return snapSemitoneToScale(scaleType, rawSemitone);
-  }, []);
 
   /**
    * Find the closest existing node to the mouse (pixel-based hit testing).
@@ -454,7 +433,7 @@ export function Grid({
         if (x < gridLeft - r || x > gridLeft + gridWidth + r) continue;
 
         const y = node.semi !== undefined
-          ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+          ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
           : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
         const dx = mouseX - x;
@@ -615,11 +594,11 @@ export function Grid({
       return { t16, deg: 1, octave: 0, semi: chromaticSemitone };
     }
 
-    const snappedSemitone = snapSemitoneToScaleMemo(rawSemitone, arrangement.scale);
+    const snappedSemitone = snapSemitoneToScale(arrangement.scale, rawSemitone);
     const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
 
     return { t16, deg, octave };
-  }, [arrangement, getPitchRange, snapSemitoneToScaleMemo, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT]);
+  }, [arrangement, getPitchRange, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Main drawing function.
@@ -965,6 +944,9 @@ export function Grid({
 
       ctx.lineJoin = 'round';
 
+      // Pre-compute once: is ANY voice soloed? Used by mute/solo logic below.
+      const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
+
       // 1. Draw recorded pitch traces (behind contours) — tiled across visible tiles
       for (const [voiceId, recording] of recordings.entries()) {
         // Skip drawing the saved trace for the voice currently being recorded.
@@ -980,7 +962,6 @@ export function Grid({
         const voiceState = voiceStates.find(v => v.voiceId === voiceId);
 
         // Recorded traces follow the VOX (vocal) mute/solo state.
-        const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
         const isVocalMuted = (voiceState?.vocalMuted ?? false) || (anySoloActive && !(voiceState?.vocalSolo ?? false));
 
         const voiceColor = isVocalMuted
@@ -1059,7 +1040,6 @@ export function Grid({
           const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
           // Contour lines follow the SYN (synth) mute/solo state.
-          const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
           const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
 
           // Get voice color
@@ -1108,7 +1088,6 @@ export function Grid({
           const voiceState = voiceStates.find(v => v.voiceId === voice.id);
 
           // Contour nodes follow the SYN (synth) mute/solo state.
-          const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
           const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
 
           const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
@@ -1128,7 +1107,7 @@ export function Grid({
             if (x < gridLeft - 20 || x > gridLeft + gridWidth + 20) continue;
 
             const y = node.semi !== undefined
-              ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+              ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
               : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
             // Draw node glow - only if not muted
@@ -1190,7 +1169,7 @@ export function Grid({
               const previewWorldT = preview.t16 + kStart * loopLengthT;
               const px = wToX(previewWorldT);
               const py = preview.semi !== undefined
-                ? semitoneOffsetToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+                ? semitoneToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
                 : degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
               ctx.save();
@@ -1276,7 +1255,7 @@ export function Grid({
 
       const x = nodeToX(node.t16);
       const y = node.semi !== undefined
-        ? semitoneOffsetToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+        ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
         : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
 
       if (!inPhrase) {

@@ -7,7 +7,7 @@
    - Monitoring toggle
    ============================================================ */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Mic, Volume2, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Slider } from '../ui/Slider';
@@ -55,8 +55,6 @@ export function MicSetupModal() {
   const pitchDetectorRef = useRef<PitchDetector | null>(null);
   const isDetectingRef = useRef<'low' | 'high' | null>(null);
 
-  /* eslint-disable @typescript-eslint/no-unused-vars */
-  // const [pitchBuffer, setPitchBuffer] = useState<number[]>([]);
   const pitchBufferRef = useRef<number[]>([]); // Ref is better for loops
 
 
@@ -214,18 +212,11 @@ export function MicSetupModal() {
   };
 
   /**
-   * Initialize microphone when modal opens.
-   */
-  useEffect(() => {
-    if (isOpen) {
-      initializeMicrophone();
-    }
-  }, [isOpen]);
-
-  /**
    * Initialize microphone and get device list.
+   * Wrapped in useCallback so it can be a safe useEffect dependency.
+   * All captured values (setState, store actions, MicrophoneService) are stable references.
    */
-  const initializeMicrophone = async () => {
+  const initializeMicrophone = useCallback(async () => {
     setIsInitializing(true);
     setError(null);
 
@@ -258,7 +249,18 @@ export function MicSetupModal() {
     } finally {
       setIsInitializing(false);
     }
-  };
+    // All deps are stable React setState functions or Zustand actions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Initialize microphone when modal opens.
+   */
+  useEffect(() => {
+    if (isOpen) {
+      initializeMicrophone();
+    }
+  }, [isOpen, initializeMicrophone]);
 
   /**
    * Start volume monitoring loop
