@@ -83,7 +83,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor }: VoiceControlProps) {
             }
           }}
           className={`
-            flex-1 flex items-center gap-1.5 px-2 py-1
+            flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1
             rounded-full transition-all duration-200 cursor-pointer
             ${isRecording
               ? 'ring-2 ring-white shadow-[0_0_15px_rgba(239,68,68,0.5)] scale-[1.02]'
@@ -238,10 +238,9 @@ export function VoiceSidebar() {
     // Container defines the "safe zone" for centering.
     // Top is pinned below the TopBar (approx 5rem / 80px).
     // Bottom uses `bottom-32` to clear the transport bar area.
-    <div className="absolute left-6 top-20 bottom-32 flex flex-col items-start pointer-events-none z-20 w-fit">
+    <div className="absolute left-6 top-0 bottom-0 pt-[9rem] pb-24 flex flex-col items-start justify-center pointer-events-none z-20 w-fit">
       <div
         className="
-          my-auto
           flex flex-col gap-2.5 p-3 pb-4 pointer-events-auto
           glass-pane glass-sidebar glass-noise rounded-[2.5rem]
           shadow-2xl border border-white/10

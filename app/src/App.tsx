@@ -384,8 +384,10 @@ function App() {
 
       {/* Main grid visualization - background layer (masked lines/voices) */}
       {/* Extra top padding (pt-[7.5rem]) makes room for top bar + minimap above chord bar */}
-      <div className="absolute inset-0 pt-[9rem] pb-24 pl-44 pr-8 mask-vertical-fade">
-        <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
+      <div className="absolute inset-0 pt-[9rem] pb-24 pl-44 pr-8">
+        <div className="h-full w-full mask-vertical-fade">
+          <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
+        </div>
       </div>
 
       {/* Chord Track layer - floating on top, not masked */}

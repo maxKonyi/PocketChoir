@@ -17,6 +17,7 @@ import { playbackEngine } from '../../services/PlaybackEngine';
 import { degreeToSemitoneOffset } from '../../utils/music';
 import {
   visibleDurationT,
+  cameraLeftWorldT,
   worldTToLoopT,
   minimapRectWidth,
 } from '../../utils/followCamera';
@@ -52,6 +53,7 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
   // Store state
   const voiceStates = useAppStore((state) => state.voiceStates);
   const followMode = useAppStore((state) => state.followMode);
+  const loopEnabled = useAppStore((state) => state.playback.loopEnabled);
   const startMinimapDrag = useAppStore((state) => state.startMinimapDrag);
   const updatePendingWorldT = useAppStore((state) => state.updatePendingWorldT);
   const commitMinimapDrag = useAppStore((state) => state.commitMinimapDrag);
@@ -209,38 +211,61 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     }
 
     // ── Draw viewport rectangle ──
+    // The viewport rect must reflect exactly what content is visible in the
+    // main grid.  When the playhead is near t=0 the camera's left edge is
+    // negative (empty space), so we clamp to 0 and shrink the rect.
     const pxPerT = followMode.pxPerT;
     const currentWorldT = followMode.pendingWorldT !== null
       ? followMode.pendingWorldT
       : playbackEngine.getWorldPositionT16();
 
     // Derive the actual main grid pixel width from the stored minPxPerT floor.
-    // minPxPerT = gridWidth / loopLengthT, so gridWidth = minPxPerT * loopLengthT.
     const mainGridWidth = followMode.minPxPerT * loopLengthT;
     const visDur = visibleDurationT(mainGridWidth, pxPerT);
-    // Viewport rect width in minimap pixels
-    const vpWidth = minimapRectWidth(drawWidth, visDur, loopLengthT);
 
-    // Where is the center of the viewport in loop-space?
-    const loopT = worldTToLoopT(currentWorldT, loopLengthT);
-    const vpCenterX = drawLeft + (loopT / loopLengthT) * drawWidth;
+    // Camera edges in world time
+    const camLeft = cameraLeftWorldT(currentWorldT, mainGridWidth, pxPerT);
+    const camRight = camLeft + visDur;
+
+    // Clamp to content range.
+    // - Nothing exists before worldT = 0.
+    // - In one-shot mode, nothing exists after the arrangement end (loopLengthT).
+    // This makes the viewport shrink when either side is empty.
+    const effectiveLeft = Math.max(0, camLeft);
+    const effectiveRight = loopEnabled ? camRight : Math.min(loopLengthT, camRight);
+    const effectiveVisDur = Math.max(0, effectiveRight - effectiveLeft);
+
+    // Map effective range into minimap-space.
+    // In one-shot mode, we do NOT wrap (no tiling), so we clamp to [0, loopLengthT].
+    const clampedLeftT = loopEnabled
+      ? worldTToLoopT(effectiveLeft, loopLengthT)
+      : Math.max(0, Math.min(loopLengthT, effectiveLeft));
+    const vpWidth = minimapRectWidth(drawWidth, effectiveVisDur, loopLengthT);
+    const vpLeftX = drawLeft + (clampedLeftT / loopLengthT) * drawWidth;
+    const vpRightX = vpLeftX + vpWidth;
+
+    // Playhead position in minimap-space
+    const loopT = loopEnabled
+      ? worldTToLoopT(currentWorldT, loopLengthT)
+      : Math.max(0, Math.min(loopLengthT, currentWorldT));
 
     // Draw the viewport rectangle (may wrap around edges)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.lineWidth = 1.5;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
-
-    const vpLeftX = vpCenterX - vpWidth / 2;
-    const vpRightX = vpCenterX + vpWidth / 2;
+    // Only draw the fill (no stroke). The stroke edges can read as "extra playheads"
+    // during dragging / wrapping. The only strong vertical line should be the playhead.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.26)';
 
     if (vpWidth >= drawWidth) {
       // Viewport is as wide as the full minimap
       ctx.fillRect(drawLeft, drawTop, drawWidth, drawHeight);
-      ctx.strokeRect(drawLeft, drawTop, drawWidth, drawHeight);
+    } else if (!loopEnabled) {
+      // One-shot mode: never wrap. Clamp rect to the minimap bounds.
+      const clampedLeftPx = Math.max(drawLeft, Math.min(drawLeft + drawWidth, vpLeftX));
+      const clampedRightPx = Math.max(drawLeft, Math.min(drawLeft + drawWidth, vpRightX));
+      const w = Math.max(0, clampedRightPx - clampedLeftPx);
+      ctx.fillRect(clampedLeftPx, drawTop, w, drawHeight);
     } else if (vpLeftX >= drawLeft && vpRightX <= drawLeft + drawWidth) {
       // Viewport fits entirely within the minimap — no wrapping
       ctx.fillRect(vpLeftX, drawTop, vpWidth, drawHeight);
-      ctx.strokeRect(vpLeftX, drawTop, vpWidth, drawHeight);
     } else {
       // Viewport wraps around the edges — draw two rectangles
       if (vpLeftX < drawLeft) {
@@ -249,20 +274,16 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
         const rightPartWidth = vpWidth - leftPartWidth;
         // Right portion (start of viewport)
         ctx.fillRect(drawLeft + drawWidth - leftPartWidth, drawTop, leftPartWidth, drawHeight);
-        ctx.strokeRect(drawLeft + drawWidth - leftPartWidth, drawTop, leftPartWidth, drawHeight);
         // Left portion (main)
         ctx.fillRect(drawLeft, drawTop, rightPartWidth, drawHeight);
-        ctx.strokeRect(drawLeft, drawTop, rightPartWidth, drawHeight);
       } else {
         // Right portion wraps to the left side
         const rightOverflow = vpRightX - (drawLeft + drawWidth);
         const mainWidth = vpWidth - rightOverflow;
         // Main portion
         ctx.fillRect(vpLeftX, drawTop, mainWidth, drawHeight);
-        ctx.strokeRect(vpLeftX, drawTop, mainWidth, drawHeight);
         // Wrapped portion
         ctx.fillRect(drawLeft, drawTop, rightOverflow, drawHeight);
-        ctx.strokeRect(drawLeft, drawTop, rightOverflow, drawHeight);
       }
     }
 
@@ -275,7 +296,7 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     ctx.lineTo(playheadX, drawTop + drawHeight);
     ctx.stroke();
 
-  }, [arrangement, voiceStates, followMode.pxPerT, followMode.pendingWorldT, getPitchBounds]);
+  }, [arrangement, voiceStates, followMode.pxPerT, followMode.minPxPerT, followMode.pendingWorldT, loopEnabled, getPitchBounds]);
 
   // ── Animation loop ──
   useEffect(() => {

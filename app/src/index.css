@@ -380,15 +380,10 @@
 
 .mask-vertical-fade {
   mask-image: linear-gradient(to bottom,
-      transparent 150px,
-      black 250px,
-      black calc(100% - 250px),
-      transparent calc(100% - 150px));
-  -webkit-mask-image: linear-gradient(to bottom,
-      transparent 150px,
-      black 250px,
-      black calc(100% - 250px),
-      transparent calc(100% - 150px));
+      transparent 40px,
+      black 160px,
+      black calc(100% - 160px),
+      transparent calc(100% - 40px));
 }
 
 
