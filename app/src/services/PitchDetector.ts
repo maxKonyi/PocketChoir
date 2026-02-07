@@ -170,6 +170,10 @@ export class PitchDetector {
       this.animationFrameId = null;
     }
 
+    // Reset recording start time so the next start() with recordTrace=false
+    // doesn't accidentally accumulate trace data from a stale timestamp.
+    this.recordingStartTime = 0;
+
     // Return the recorded trace
     const trace = [...this.pitchTrace];
     this.pitchTrace = [];

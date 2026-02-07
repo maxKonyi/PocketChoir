@@ -297,27 +297,27 @@ export const sixPartStressTest: Arrangement = {
   voices: [
     {
       id: 'v1', name: 'Soprano 1', color: '#ff6b9d',
-      nodes: [{ t16: 0, deg: 1, octave: 1 }, { t16: 16, deg: 2, octave: 1 }, { t16: 32, deg: 3, octave: 1 }, { t16: 48, deg: 1, octave: 2 }, { t16: 64, deg: 1, term: true }]
+      nodes: [{ t16: 0, deg: 1, octave: 1 }, { t16: 16, deg: 2, octave: 1 }, { t16: 32, deg: 3, octave: 1 }, { t16: 48, deg: 1, octave: 2 }, { t16: 63, deg: 1, term: true }]
     },
     {
       id: 'v2', name: 'Soprano 2', color: '#4ecdc4',
-      nodes: [{ t16: 0, deg: 5 }, { t16: 16, deg: 6 }, { t16: 32, deg: 5 }, { t16: 48, deg: 7 }, { t16: 64, deg: 5, term: true }]
+      nodes: [{ t16: 0, deg: 5 }, { t16: 16, deg: 6 }, { t16: 32, deg: 5 }, { t16: 48, deg: 7 }, { t16: 63, deg: 5, term: true }]
     },
     {
       id: 'v3', name: 'Alto 1', color: '#ffe66d',
-      nodes: [{ t16: 0, deg: 3 }, { t16: 16, deg: 4 }, { t16: 32, deg: 3 }, { t16: 48, deg: 5 }, { t16: 64, deg: 3, term: true }]
+      nodes: [{ t16: 0, deg: 3 }, { t16: 16, deg: 4 }, { t16: 32, deg: 3 }, { t16: 48, deg: 5 }, { t16: 63, deg: 3, term: true }]
     },
     {
       id: 'v4', name: 'Alto 2', color: '#ff8c42',
-      nodes: [{ t16: 0, deg: 1 }, { t16: 16, deg: 2 }, { t16: 32, deg: 1 }, { t16: 48, deg: 3 }, { t16: 64, deg: 1, term: true }]
+      nodes: [{ t16: 0, deg: 1 }, { t16: 16, deg: 2 }, { t16: 32, deg: 1 }, { t16: 48, deg: 3 }, { t16: 63, deg: 1, term: true }]
     },
     {
       id: 'v5', name: 'Tenor', color: '#a78bfa',
-      nodes: [{ t16: 0, deg: 5, octave: -1 }, { t16: 16, deg: 4, octave: -1 }, { t16: 32, deg: 5, octave: -1 }, { t16: 48, deg: 1 }, { t16: 64, deg: 5, octave: -1, term: true }]
+      nodes: [{ t16: 0, deg: 5, octave: -1 }, { t16: 16, deg: 4, octave: -1 }, { t16: 32, deg: 5, octave: -1 }, { t16: 48, deg: 1 }, { t16: 63, deg: 5, octave: -1, term: true }]
     },
     {
       id: 'v6', name: 'Bass', color: '#34d399',
-      nodes: [{ t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 5, octave: -2 }, { t16: 32, deg: 1, octave: -1 }, { t16: 48, deg: 4, octave: -1 }, { t16: 64, deg: 1, octave: -1, term: true }]
+      nodes: [{ t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 5, octave: -2 }, { t16: 32, deg: 1, octave: -1 }, { t16: 48, deg: 4, octave: -1 }, { t16: 63, deg: 1, octave: -1, term: true }]
     },
   ],
   chords: [

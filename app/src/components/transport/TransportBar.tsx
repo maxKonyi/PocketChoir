@@ -16,7 +16,10 @@ import { playbackEngine } from '../../services/PlaybackEngine';
 
 function formatPosition(t16: number, timeSig: { numerator: number; denominator: number } = { numerator: 4, denominator: 4 }): string {
   const beatsPerBar = timeSig.numerator;
-  const sixteenthsPerBeat = 4;
+  // Calculate how many 16th notes fit in one beat based on the denominator.
+  // e.g. denominator=4 (quarter note beat) → 16/4 = 4 sixteenths per beat
+  // e.g. denominator=8 (eighth note beat)  → 16/8 = 2 sixteenths per beat
+  const sixteenthsPerBeat = 16 / timeSig.denominator;
   const sixteenthsPerBar = beatsPerBar * sixteenthsPerBeat;
 
   const bar = Math.floor(t16 / sixteenthsPerBar) + 1;
@@ -24,10 +27,6 @@ function formatPosition(t16: number, timeSig: { numerator: number; denominator: 
 
   return `${bar}:${beatInBar}`;
 }
-
-/* ------------------------------------------------------------
-   Component
-   ------------------------------------------------------------ */
 
 /* ------------------------------------------------------------
    Component

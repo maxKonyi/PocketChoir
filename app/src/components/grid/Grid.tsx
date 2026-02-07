@@ -9,7 +9,7 @@
    - Playhead
    ============================================================ */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Arrangement, Voice, PitchPoint, Chord } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
@@ -265,6 +265,7 @@ export function Grid({
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
   const updateNode = useAppStore((state) => state.updateNode);
   const transposition = useAppStore((state) => state.transposition);
+  const theme = useAppStore((state) => state.theme);
 
   // Follow-mode timeline state and actions
   const followMode = useAppStore((state) => state.followMode);
@@ -294,6 +295,38 @@ export function Grid({
 
   // Temporary drag state for resizing a boundary between two chord blocks.
   const chordBoundaryDragRef = useRef<{ leftChordIndex: number } | null>(null);
+
+  // ── Memoized vertical grid lines ──
+  // Only recompute when the arrangement's bar count or time signature changes.
+  // Previously this was called inside draw() on every frame (~60fps), allocating a new array each time.
+  const memoizedGridLines = useMemo(() => {
+    if (!arrangement) return [];
+    return generateGridLines(arrangement.bars, arrangement.timeSig);
+  }, [arrangement?.bars, arrangement?.timeSig.numerator, arrangement?.timeSig.denominator]);
+
+  // ── Cached CSS colors ──
+  // Reading CSS variables via getComputedStyle is expensive when done every frame.
+  // We cache all the colors here and only re-read when the theme or display settings change.
+  const cssColors = useMemo(() => {
+    return {
+      barLine:              getCssVar('--grid-line-bar')              || 'rgba(255, 255, 255, 0.15)',
+      beatLine:             getCssVar('--grid-line-beat')             || 'rgba(255, 255, 255, 0.08)',
+      subdivLine:           getCssVar('--grid-line-subdivision')      || 'rgba(255, 255, 255, 0.04)',
+      pitchLineTonic:       getCssVar('--grid-pitch-line-tonic')      || 'rgba(255, 255, 255, 0.35)',
+      pitchLine:            getCssVar('--grid-pitch-line')            || 'rgba(255, 255, 255, 0.05)',
+      playhead:             getCssVar('--playhead-color')             || '#ffffff',
+      text:                 getCssVar('--text-secondary')             || '#a8a3b8',
+      chordFillTop:         getCssVar('--chord-fill-top')             || '#5a4c80',
+      chordFillBottom:      getCssVar('--chord-fill-bottom')          || '#342656',
+      chordFillTensionTop:  getCssVar('--chord-fill-tension-top')     || '#8a2e47',
+      chordFillTensionBot:  getCssVar('--chord-fill-tension-bottom')  || '#4a1a28',
+      chordStroke:          getCssVar('--chord-stroke')               || 'rgba(255, 255, 255, 0.35)',
+      chordStrokeTension:   getCssVar('--chord-stroke-tension')       || 'rgba(255, 148, 180, 0.7)',
+      chordText:            getCssVar('--chord-text')                 || '#fefaff',
+      chordTextTension:     getCssVar('--chord-text-tension')         || '#ffe6ef',
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme, display]);
 
   // If the arrangement changes (or chord list is replaced), cancel any inline rename.
   useEffect(() => {
@@ -627,23 +660,22 @@ export function Grid({
     const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
     const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
 
-    // Get colors from CSS variables
-
-    const barLineColor = getCssVar('--grid-line-bar') || 'rgba(255, 255, 255, 0.15)';
-    const beatLineColor = getCssVar('--grid-line-beat') || 'rgba(255, 255, 255, 0.08)';
-    const subdivLineColor = getCssVar('--grid-line-subdivision') || 'rgba(255, 255, 255, 0.04)';
-    const pitchLineTonicColor = getCssVar('--grid-pitch-line-tonic') || 'rgba(255, 255, 255, 0.35)';
-    const pitchLineColor = getCssVar('--grid-pitch-line') || 'rgba(255, 255, 255, 0.05)';
-    const playheadColor = getCssVar('--playhead-color') || '#ffffff';
-    const textColor = getCssVar('--text-secondary') || '#a8a3b8';
-    const chordFillTop = getCssVar('--chord-fill-top') || '#5a4c80';
-    const chordFillBottom = getCssVar('--chord-fill-bottom') || '#342656';
-    const chordFillTensionTop = getCssVar('--chord-fill-tension-top') || '#8a2e47';
-    const chordFillTensionBottom = getCssVar('--chord-fill-tension-bottom') || '#4a1a28';
-    const chordStroke = getCssVar('--chord-stroke') || 'rgba(255, 255, 255, 0.35)';
-    const chordStrokeTension = getCssVar('--chord-stroke-tension') || 'rgba(255, 148, 180, 0.7)';
-    const chordText = getCssVar('--chord-text') || '#fefaff';
-    const chordTextTension = getCssVar('--chord-text-tension') || '#ffe6ef';
+    // Read colors from the cached CSS variables (refreshed only on theme/display change).
+    const barLineColor = cssColors.barLine;
+    const beatLineColor = cssColors.beatLine;
+    const subdivLineColor = cssColors.subdivLine;
+    const pitchLineTonicColor = cssColors.pitchLineTonic;
+    const pitchLineColor = cssColors.pitchLine;
+    const playheadColor = cssColors.playhead;
+    const textColor = cssColors.text;
+    const chordFillTop = cssColors.chordFillTop;
+    const chordFillBottom = cssColors.chordFillBottom;
+    const chordFillTensionTop = cssColors.chordFillTensionTop;
+    const chordFillTensionBottom = cssColors.chordFillTensionBot;
+    const chordStroke = cssColors.chordStroke;
+    const chordStrokeTension = cssColors.chordStrokeTension;
+    const chordText = cssColors.chordText;
+    const chordTextTension = cssColors.chordTextTension;
 
     // Canvas was already cleared above (in device pixels)
 
@@ -743,7 +775,8 @@ export function Grid({
 
       // ── Tiled vertical grid lines ──
       // Draw grid lines for every visible tile (seamless infinite looping).
-      const gridLines = generateGridLines(arrangement.bars, arrangement.timeSig);
+      // Uses the memoized array (only recomputed when bars/timeSig change).
+      const gridLines = memoizedGridLines;
 
       for (let k = kStart; k <= kEnd; k++) {
         for (const line of gridLines) {
@@ -911,7 +944,6 @@ export function Grid({
           ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
           ctx.shadowBlur = 6;
           ctx.fillText(chord.name, blockStartX + blockWidth / 2, blockY + blockHeight / 2);
-          ctx.stroke();
         }
       }
 
@@ -1189,7 +1221,7 @@ export function Grid({
       // Pop the clip rect.
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -1377,6 +1409,9 @@ export function Grid({
       let started = false;
       let lastPointTime = -1;
 
+      // Pre-compute once — this value is constant for every point in the trace.
+      const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
+
       for (const point of trace) {
         const isGap = !Number.isFinite(point.frequency) || point.frequency <= 0 || (lastPointTime !== -1 && point.time - lastPointTime > 150);
 
@@ -1392,7 +1427,6 @@ export function Grid({
           }
         }
 
-        const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
         const t16 = point.time / sixteenthMs;
         const x = traceToX(t16);
         const y = getPitchY(point.frequency);

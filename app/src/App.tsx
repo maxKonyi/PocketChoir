@@ -11,7 +11,7 @@ import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
 import { Grid } from './components/grid/Grid';
 import { Minimap } from './components/grid/Minimap';
-import { LibraryModal, MixerModal, MicSetupModal, RangeSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
+import { LibraryModal, MixerModal, MicSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
 import { BackgroundVideo } from './components/ui/BackgroundVideo';
 import { DevControls } from './components/dev/DevControls';
 import { useAppStore } from './stores/appStore';
@@ -40,7 +40,6 @@ function App() {
     state.isLibraryOpen ||
     state.isMixerOpen ||
     state.isMicSetupOpen ||
-    state.isRangeSetupOpen ||
     state.isDisplaySettingsOpen ||
     state.isSaveLoadOpen ||
     state.isCreateModalOpen
@@ -492,7 +491,6 @@ function App() {
       <LibraryModal />
       <MixerModal />
       <MicSetupModal />
-      <RangeSetupModal />
       <DisplaySettingsModal />
       <CreateArrangementModal />
 

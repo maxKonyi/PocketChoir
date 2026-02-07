@@ -230,7 +230,6 @@ interface AppState {
   isLibraryOpen: boolean;
   isMixerOpen: boolean;
   isMicSetupOpen: boolean;
-  isRangeSetupOpen: boolean;
   isDisplaySettingsOpen: boolean;
   isSaveLoadOpen: boolean;
   isCreateModalOpen: boolean;
@@ -349,7 +348,6 @@ interface AppActions {
   setLibraryOpen: (open: boolean) => void;
   setMixerOpen: (open: boolean) => void;
   setMicSetupOpen: (open: boolean) => void;
-  setRangeSetupOpen: (open: boolean) => void;
   setDisplaySettingsOpen: (open: boolean) => void;
   setSaveLoadOpen: (open: boolean) => void;
   setCreateModalOpen: (open: boolean) => void;
@@ -448,7 +446,6 @@ const initialState: AppState = {
   isLibraryOpen: false,
   isMixerOpen: false,
   isMicSetupOpen: false,
-  isRangeSetupOpen: false,
   isDisplaySettingsOpen: false,
   isSaveLoadOpen: false,
   isCreateModalOpen: false,
@@ -1410,7 +1407,6 @@ export const useAppStore = create<AppState & AppActions>()(
   setLibraryOpen: (open) => set({ isLibraryOpen: open }),
   setMixerOpen: (open) => set({ isMixerOpen: open }),
   setMicSetupOpen: (open) => set({ isMicSetupOpen: open }),
-  setRangeSetupOpen: (open) => set({ isRangeSetupOpen: open }),
   setDisplaySettingsOpen: (open) => set({ isDisplaySettingsOpen: open }),
   setSaveLoadOpen: (open) => set({ isSaveLoadOpen: open }),
   setCreateModalOpen: (open) => set({ isCreateModalOpen: open }),

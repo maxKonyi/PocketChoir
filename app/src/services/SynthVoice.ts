@@ -54,19 +54,20 @@ export class SynthVoice {
    * Initialize routing. Must be called after AudioService/Tone is ready.
    */
   initialize(): void {
-    // Define voice-specific parameters (from choir_ref)
-    let filterFreq = 1200;
-    let panVal = 0;
+    // Voice-specific filter frequency and stereo pan position.
+    // Spreads up to 6 voices across the stereo field with distinct timbres.
+    // Index mapping: 0=Soprano1, 1=Alto/Soprano2, 2=Tenor/Alto2, 3=Bass/Tenor2, 4=Voice5, 5=Voice6
+    const voiceSettings: [number, number][] = [
+      [1200,  0.0],   // 0 - Soprano 1: center, warm
+      [2000, -0.8],   // 1 - Alto:       left, brighter
+      [2500,  0.8],   // 2 - Tenor:      right, brightest
+      [1400, -0.4],   // 3 - Bass:       slight left, warm
+      [1800,  0.5],   // 4 - Voice 5:    slight right, mid-bright
+      [1600, -0.6],   // 5 - Voice 6:    left, mid
+    ];
 
-    // Match the voice-specific settings from choir_ref
-    // Logic: Soprano=0, Alto=1, Tenor=2, Bass=3
-    if (this.voiceIndex === 1) { // Alto
-      filterFreq = 2000;
-      panVal = -0.8;
-    } else if (this.voiceIndex === 2) { // Tenor
-      filterFreq = 2500;
-      panVal = 0.8;
-    }
+    // Fall back to center/warm if the voice index exceeds the table.
+    const [filterFreq, panVal] = voiceSettings[this.voiceIndex] ?? [1200, 0];
 
     this.filter.frequency.value = filterFreq;
     this.panner.pan.value = panVal;
