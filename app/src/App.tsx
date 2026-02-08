@@ -125,7 +125,17 @@ function App() {
    * Initialize playback engine when arrangement changes.
    */
   useEffect(() => {
-    if (arrangement && AudioService.isReady()) {
+    if (!arrangement) return;
+
+    // IMPORTANT:
+    // The Play-mode camera follows the PlaybackEngine world-time.
+    // So on arrangement switch we must reset the engine position immediately,
+    // even if audio hasn't been initialized yet.
+    playbackEngine.resetLoopCount();
+    playbackEngine.seek(0);
+    setPosition(0);
+
+    if (AudioService.isReady()) {
       playbackEngine.initialize(arrangement, {
         onPositionUpdate: (t16) => {
           setPosition(t16);
@@ -136,6 +146,18 @@ function App() {
       });
     }
   }, [arrangement?.id, setPosition]);
+
+  // When switching modes, make sure Play mode always starts from the beginning.
+  useEffect(() => {
+    if (mode !== 'play') return;
+    if (!arrangement) return;
+
+    // Always reset the engine position when entering Play mode.
+    // (This works even before audio is initialized; it just sets internal time state.)
+    playbackEngine.resetLoopCount();
+    playbackEngine.seek(0);
+    setPosition(0);
+  }, [mode, arrangement?.id, setPosition]);
 
   // Keep the playback engine's arrangement data in sync while editing.
   // This allows Create-mode edits (node placements) to be heard during playback
@@ -211,6 +233,14 @@ function App() {
 
         // Use count-in only when recording is active.
         const countInBars = (playback.isRecording && countIn.enabled) ? countIn.bars : 0;
+
+        // If the user pressed Play (not starting a recording), always restart from the beginning.
+        // This matches the "Play always starts at bar 1" expectation.
+        if (playJustStarted && !recordingJustStarted) {
+          playbackEngine.resetLoopCount();
+          playbackEngine.seek(0);
+        }
+
         playbackEngine.play(countInBars).then(() => {
           setCountInDisplay(null);
         });

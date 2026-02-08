@@ -312,6 +312,20 @@ export function Grid({
     };
   }, [mode]);
 
+  // While scrubbing in Play mode (right-click drag), prevent the browser context menu.
+  // If the mouse-up happens outside the canvas, the browser may try to open the menu anyway.
+  useEffect(() => {
+    if (mode !== 'play') return;
+    if (!followMode.isDraggingTimeline) return;
+
+    const preventContextMenu = (evt: MouseEvent) => {
+      evt.preventDefault();
+    };
+
+    window.addEventListener('contextmenu', preventContextMenu, true);
+    return () => window.removeEventListener('contextmenu', preventContextMenu, true);
+  }, [mode, followMode.isDraggingTimeline]);
+
   // Chord-track editor actions (Create mode)
   const enableChordTrack = useAppStore((state) => state.enableChordTrack);
   const disableChordTrack = useAppStore((state) => state.disableChordTrack);
@@ -1778,6 +1792,10 @@ export function Grid({
 
     // ── Play mode: start a timeline scrub/drag (seek-on-release) ──
     if (mode === 'play') {
+      // Prevent the browser context menu / drag behaviors while we use right-click for scrubbing.
+      if (e.button === 2) {
+        e.preventDefault();
+      }
       const currentWorldT = playbackEngine.getWorldPositionT16();
       dragStartRef.current = { startX: e.clientX, startWorldT: currentWorldT };
       startTimelineDrag();
@@ -2049,6 +2067,7 @@ export function Grid({
 
   // Follow-mode horizontal zoom action from the store
   const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
+  const setPxPerT = useAppStore((state) => state.setPxPerT);
   const setMinPxPerT = useAppStore((state) => state.setMinPxPerT);
   const setZoomLevel = useAppStore((state) => state.setZoomLevel);
 
@@ -2072,6 +2091,47 @@ export function Grid({
     return () => window.removeEventListener('resize', updateFloor);
   }, [arrangement, setMinPxPerT]);
 
+  useEffect(() => {
+    if (!arrangement) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const gridW = container.getBoundingClientRect().width - GRID_MARGIN.left - GRID_MARGIN.right;
+    const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
+    if (gridW <= 0 || loopLenT <= 0) return;
+    setPxPerT(gridW / loopLenT);
+  }, [arrangement?.id, setPxPerT]);
+
+  useEffect(() => {
+    if (mode !== 'play') return;
+    if (!arrangement) return;
+
+    let cancelled = false;
+
+    const tryFit = () => {
+      if (cancelled) return;
+      const container = containerRef.current;
+      if (!container) {
+        window.requestAnimationFrame(tryFit);
+        return;
+      }
+
+      const gridW = container.getBoundingClientRect().width - GRID_MARGIN.left - GRID_MARGIN.right;
+      const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
+      if (gridW <= 0 || loopLenT <= 0) {
+        window.requestAnimationFrame(tryFit);
+        return;
+      }
+
+      setMinPxPerT(gridW / loopLenT);
+      setPxPerT(gridW / loopLenT);
+    };
+
+    tryFit();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, arrangement?.id, setMinPxPerT, setPxPerT]);
+
   /**
    * Handle mouse wheel for horizontal zoom.
    * Scrolling up (or pinch-out) zooms in, scrolling down zooms out.
@@ -2083,7 +2143,17 @@ export function Grid({
     // In Create mode we support scroll/pan/zoom without stealing left-click.
     // We treat the wheel as a navigation control and prevent the page from scrolling.
     if (mode !== 'create') {
-      // Play mode: keep the existing Shift+wheel horizontal zoom behavior.
+      // Play mode:
+      // - Shift+Wheel: horizontal zoom
+      // - Alt+Shift+Wheel: vertical zoom
+      if (e.shiftKey && e.altKey) {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+        const next = Math.max(0.25, Math.min(6, display.zoomLevel * factor));
+        setZoomLevel(next);
+        return;
+      }
+
       if (!e.shiftKey) return;
       e.preventDefault();
       if (e.deltaY < 0) setHorizontalZoom('in');
@@ -2128,10 +2198,8 @@ export function Grid({
     adjustCreatePitchPanSemitones(e.deltaY * semitonesPerWheel);
   }, [arrangement, mode, setHorizontalZoom, followMode.pxPerT, setCreateCameraAndMaybeSeek, createView.cameraWorldT, adjustCreatePitchPanSemitones, display.zoomLevel, setZoomLevel]);
 
-  // Create-mode keyboard navigation + hotkeys
+  // Keyboard navigation + hotkeys
   useEffect(() => {
-    if (mode !== 'create') return;
-
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't fire while typing in inputs.
       const target = e.target as HTMLElement | null;
@@ -2143,6 +2211,22 @@ export function Grid({
           || (target as HTMLInputElement).type === 'text';
         if (isEditable) return;
       }
+
+      // Vertical zoom with [ and ] (works in both Play + Create)
+      if (e.key === '[') {
+        e.preventDefault();
+        setZoomLevel(Math.max(0.25, display.zoomLevel / 1.12));
+        return;
+      }
+
+      if (e.key === ']') {
+        e.preventDefault();
+        setZoomLevel(Math.min(6, display.zoomLevel * 1.12));
+        return;
+      }
+
+      // The rest of the navigation hotkeys are Create-mode only.
+      if (mode !== 'create') return;
 
       // Horizontal pan with arrow keys (hold Shift for bigger steps)
       const bigStep = 16;
@@ -2187,19 +2271,6 @@ export function Grid({
         return;
       }
 
-      // Vertical zoom with [ ]
-      if (e.key === '[') {
-        e.preventDefault();
-        setZoomLevel(Math.max(0.25, display.zoomLevel / 1.12));
-        return;
-      }
-
-      if (e.key === ']') {
-        e.preventDefault();
-        setZoomLevel(Math.min(6, display.zoomLevel * 1.12));
-        return;
-      }
-
       // Reset view (time + pitch pan) with 0
       if (e.key === '0') {
         e.preventDefault();
@@ -2210,14 +2281,13 @@ export function Grid({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, resetCreateView]);
+  }, [mode, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel]);
 
   // Prevent the browser context menu when right-clicking the grid.
   // (Right-click is used for panning in Create mode.)
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (mode !== 'create') return;
     e.preventDefault();
-  }, [mode]);
+  }, []);
 
   return (
     <div

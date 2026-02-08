@@ -616,6 +616,18 @@ export const useAppStore = create<AppState & AppActions>()(
       livePitchTrace: [],
       livePitchTraceVoiceId: null,
       armedVoiceId: null,
+      // Reset navigation/view state so a new arrangement starts "fresh".
+      // Horizontal zoom will be auto-fit by the Grid once it can measure the viewport.
+      followMode: {
+        ...get().followMode,
+        pxPerT: initialFollowModeState.pxPerT,
+        minPxPerT: initialFollowModeState.minPxPerT,
+        pendingWorldT: null,
+        isDraggingTimeline: false,
+        isDraggingMinimap: false,
+      },
+      createView: initialCreateViewState,
+      display: { ...get().display, zoomLevel: 1 },
       history: [],
       future: [],
       canUndo: false,
@@ -1592,7 +1604,39 @@ export const useAppStore = create<AppState & AppActions>()(
       };
     }
 
-    return { mode };
+    // Switching to Play mode should feel like starting fresh:
+    // - playhead back to the beginning
+    // - zoom back to a sensible "fit" baseline
+    // - clear any in-progress scrubs
+    return {
+      mode,
+
+      playback: {
+        ...state.playback,
+        isPlaying: false,
+        isRecording: false,
+        position: 0,
+        positionMs: 0,
+        loopEnabled: true,
+      },
+
+      // Reset follow-mode drag state and snap horizontal zoom back to the fit floor.
+      // (The Grid keeps minPxPerT up to date based on viewport width + arrangement length.)
+      followMode: {
+        ...state.followMode,
+        pendingWorldT: null,
+        isDraggingTimeline: false,
+        isDraggingMinimap: false,
+        pxPerT: state.followMode.minPxPerT,
+      },
+
+      // Reset vertical zoom to default.
+      display: {
+        ...state.display,
+        gridOpacity: 0.6,
+        zoomLevel: 1,
+      },
+    };
   }),
 
   // -- UI Modals --

@@ -160,6 +160,15 @@ export class PlaybackEngine {
    * @param config - Callbacks and configuration
    */
   initialize(arrangement: Arrangement, config: PlaybackConfig = {}): void {
+    // Selecting/loading a new arrangement should always reset playback state.
+    // Otherwise the Play-mode camera (which follows world time) will appear to
+    // "stay" at the previous arrangement's position.
+    this.stop();
+    this.resetLoopCount();
+    this.currentPositionMs = 0;
+    this.startPosition = 0;
+    this.startTime = 0;
+
     this.arrangement = arrangement;
     this.config = config;
     this.baseTempo = arrangement.tempo;
