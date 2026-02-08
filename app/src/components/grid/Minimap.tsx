@@ -241,8 +241,11 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
       ? followMode.pendingWorldT
       : playbackEngine.getWorldPositionT16();
 
-    // Derive the actual main grid pixel width from the stored minPxPerT floor.
-    const mainGridWidth = followMode.minPxPerT * loopLengthT;
+    // Use the real measured main-grid viewport width (stored by Grid.tsx).
+    // Fallback: if it's not measured yet (0), approximate using the old minPxPerT method.
+    const mainGridWidth = followMode.viewportWidthPx > 0
+      ? followMode.viewportWidthPx
+      : (followMode.minPxPerT * loopLengthT);
     const visDur = visibleDurationT(mainGridWidth, pxPerT);
 
     // Camera edges in world time
@@ -319,7 +322,7 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     ctx.lineTo(playheadX, drawTop + drawHeight);
     ctx.stroke();
 
-  }, [arrangement, voiceStates, followMode.pxPerT, followMode.minPxPerT, followMode.pendingWorldT, loopEnabled, getPitchBounds]);
+  }, [arrangement, voiceStates, followMode.pxPerT, followMode.minPxPerT, followMode.viewportWidthPx, followMode.pendingWorldT, loopEnabled, getPitchBounds]);
 
   // ── Animation loop ──
   useEffect(() => {

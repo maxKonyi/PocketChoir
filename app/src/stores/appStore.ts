@@ -71,7 +71,8 @@ interface DisplaySettings {
  */
 interface FollowModeState {
   pxPerT: number;                  // Pixels per 16th note (horizontal zoom). Higher = more zoomed in.
-  minPxPerT: number;               // Floor for pxPerT so max zoom-out = exactly one loop visible.
+  minPxPerT: number;               // Floor for pxPerT so max zoom-out is limited (computed by Grid).
+  viewportWidthPx: number;         // Actual drawable width of the main grid (CSS px, margins removed). Used by minimap to compute the viewport correctly.
   pendingWorldT: number | null;    // During a drag/scrub, the pending seek position. null = not dragging.
   isDraggingTimeline: boolean;     // True while the user is dragging the main timeline view.
   isDraggingMinimap: boolean;      // True while the user is dragging inside the minimap.
@@ -365,6 +366,7 @@ interface AppActions {
   // Follow-mode timeline
   setPxPerT: (pxPerT: number) => void;
   setMinPxPerT: (minPxPerT: number) => void;
+  setFollowViewportWidthPx: (viewportWidthPx: number) => void;
   setHorizontalZoom: (direction: 'in' | 'out') => void;
   startTimelineDrag: () => void;
   updatePendingWorldT: (worldT: number) => void;
@@ -462,6 +464,7 @@ const initialDisplaySettings: DisplaySettings = {
 const initialFollowModeState: FollowModeState = {
   pxPerT: 10,
   minPxPerT: 0.5,
+  viewportWidthPx: 0,
   pendingWorldT: null,
   isDraggingTimeline: false,
   isDraggingMinimap: false,
@@ -623,6 +626,7 @@ export const useAppStore = create<AppState & AppActions>()(
         ...get().followMode,
         pxPerT: initialFollowModeState.pxPerT,
         minPxPerT: initialFollowModeState.minPxPerT,
+        viewportWidthPx: initialFollowModeState.viewportWidthPx,
         pendingWorldT: null,
         isDraggingTimeline: false,
         isDraggingMinimap: false,
@@ -1456,6 +1460,19 @@ export const useAppStore = create<AppState & AppActions>()(
     const clamped = Math.max(minPxPerT, state.followMode.pxPerT);
     return { followMode: { ...state.followMode, minPxPerT, pxPerT: clamped } };
   }),
+
+  /**
+   * Store the actual drawable width of the main grid.
+   *
+   * We keep this in the store so other components (like the minimap) can
+   * compute the camera viewport correctly without guessing based on zoom floors.
+   */
+  setFollowViewportWidthPx: (viewportWidthPx) => set((state) => ({
+    followMode: {
+      ...state.followMode,
+      viewportWidthPx: Math.max(0, viewportWidthPx),
+    },
+  })),
 
   setHorizontalZoom: (direction) => set((state) => {
     const factor = direction === 'in' ? 1.15 : 1 / 1.15;

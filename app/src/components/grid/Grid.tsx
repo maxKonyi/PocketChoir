@@ -2147,11 +2147,12 @@ export function Grid({
   const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
   const setPxPerT = useAppStore((state) => state.setPxPerT);
   const setMinPxPerT = useAppStore((state) => state.setMinPxPerT);
+  const setFollowViewportWidthPx = useAppStore((state) => state.setFollowViewportWidthPx);
   const setZoomLevel = useAppStore((state) => state.setZoomLevel);
 
   /**
    * Keep the store's minPxPerT floor in sync with the current grid width and arrangement.
-   * This ensures max zoom-out always shows exactly one full loop.
+   * This ensures max zoom-out can show up to 2 full loops worth of time.
    * Called on mount, resize, and arrangement change.
    */
   useEffect(() => {
@@ -2162,12 +2163,16 @@ export function Grid({
       const gridW = container.getBoundingClientRect().width - GRID_MARGIN.left - GRID_MARGIN.right;
       const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
       if (loopLenT <= 0) return;
-      setMinPxPerT(gridW / loopLenT);
+      // Store the true viewport width so the minimap can compute the viewport rectangle accurately.
+      setFollowViewportWidthPx(gridW);
+
+      // Allow zooming out further than "fit 1 loop" by setting the zoom-out floor to "fit 2 loops".
+      setMinPxPerT(gridW / (loopLenT * 2));
     };
     updateFloor();
     window.addEventListener('resize', updateFloor);
     return () => window.removeEventListener('resize', updateFloor);
-  }, [arrangement, setMinPxPerT]);
+  }, [arrangement, setMinPxPerT, setFollowViewportWidthPx]);
 
   useEffect(() => {
     if (!arrangement) return;
@@ -2200,7 +2205,11 @@ export function Grid({
         return;
       }
 
-      setMinPxPerT(gridW / loopLenT);
+      // Keep the minimap in sync with the true grid viewport width.
+      setFollowViewportWidthPx(gridW);
+
+      // Zoom-out floor: allow up to 2 loops visible.
+      setMinPxPerT(gridW / (loopLenT * 2));
       setPxPerT(gridW / loopLenT);
     };
 
@@ -2208,7 +2217,7 @@ export function Grid({
     return () => {
       cancelled = true;
     };
-  }, [mode, arrangement?.id, setMinPxPerT, setPxPerT]);
+  }, [mode, arrangement?.id, setMinPxPerT, setPxPerT, setFollowViewportWidthPx]);
 
   /**
    * Handle mouse wheel for horizontal zoom.
