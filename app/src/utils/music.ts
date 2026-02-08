@@ -258,7 +258,7 @@ export function getArrangementFrequencyRange(
   for (const voice of voices) {
     for (const node of voice.nodes) {
       const freq = scaleDegreeToFrequency(
-        node.deg,
+        node.deg ?? 0,
         tonic,
         scaleType,
         baseOctave,

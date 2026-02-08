@@ -11,7 +11,7 @@
  */
 export interface Node {
   t16: number;      // Time position in 16th-note steps from start (0 = beginning)
-  deg: number;      // Scale degree (1-7 for basic scale, can extend for chromatic)
+  deg?: number;     // Scale degree (1-7 for basic scale, can extend for chromatic). Required unless `semi` is provided.
   octave?: number;  // Octave offset from default (0 = default, -1 = down, +1 = up)
   semi?: number;    // Optional: chromatic semitone offset from tonic (0 = tonic). If set, this overrides deg/octave.
   term?: boolean;   // If true, this node ends the current phrase (next node starts new phrase)

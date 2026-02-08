@@ -548,7 +548,7 @@ export function Grid({
 
         const y = node.semi !== undefined
           ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-          : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+          : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
         const dx = mouseX - x;
         const dy = mouseY - y;
@@ -592,7 +592,7 @@ export function Grid({
       for (const node of voice.nodes) {
         const semitone = node.semi !== undefined
           ? node.semi
-          : degreeToSemitoneOffset(node.deg, node.octave || 0, arr.scale);
+          : degreeToSemitoneOffset(node.deg ?? 0, node.octave || 0, arr.scale);
         minSemi = Math.min(minSemi, semitone);
         maxSemi = Math.max(maxSemi, semitone);
       }
@@ -1242,7 +1242,7 @@ export function Grid({
 
             const y = node.semi !== undefined
               ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-              : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+              : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
             // Draw node glow - only if not muted
             if (display.glowIntensity > 0 && !isSynthMuted) {
@@ -1290,7 +1290,7 @@ export function Grid({
             ctx.font = 'bold 12px system-ui';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(node.semi !== undefined ? semitoneToLabel(node.semi) : String(node.deg), x, y + 0.5);
+            ctx.fillText(node.semi !== undefined ? semitoneToLabel(node.semi) : String(node.deg ?? 0), x, y + 0.5);
           }
 
           // Create mode hover preview ("phantom" node) — only draw once (not per tile)
@@ -1390,7 +1390,7 @@ export function Grid({
       const x = nodeToX(node.t16);
       const y = node.semi !== undefined
         ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-        : degreeToY(node.deg, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
+        : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
 
       if (!inPhrase) {
         ctx.moveTo(x, y);
@@ -1927,7 +1927,7 @@ export function Grid({
       playbackEngine.previewSynthAttack(voiceId, deg, octave, semi);
     };
 
-    const attackDeg = existingNode?.term ? existingNode.deg : snapped.deg;
+    const attackDeg = existingNode?.term ? (existingNode.deg ?? 0) : snapped.deg;
     const attackOct = existingNode?.term ? (existingNode.octave || 0) : snapped.octave;
     const attackSemi = existingNode?.term ? existingNode.semi : snapped.semi;
 
@@ -1935,7 +1935,7 @@ export function Grid({
       attack(attackDeg, attackOct, attackSemi);
     } else {
       // Queue the attack until audio is ready, but only if the user is still holding the mouse.
-      pendingAuditionAttackRef.current = { voiceId, deg: attackDeg, octave: attackOct, semi: attackSemi };
+      pendingAuditionAttackRef.current = { voiceId, deg: attackDeg ?? 0, octave: attackOct, semi: attackSemi };
       void ensureAudioAndEngineReadyForPreview().then(() => {
         const pending = pendingAuditionAttackRef.current;
         if (!pending) return;
@@ -2053,7 +2053,7 @@ export function Grid({
         const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
         const originalNode = voice?.nodes.find((n) => n.t16 === dragState.originalT16);
         if (originalNode?.term) {
-          playbackEngine.previewSynthGlide(voiceId, originalNode.deg, originalNode.octave || 0, originalNode.semi);
+          playbackEngine.previewSynthGlide(voiceId, originalNode.deg ?? 0, originalNode.octave || 0, originalNode.semi);
         } else {
           playbackEngine.previewSynthGlide(voiceId, snapped.deg, snapped.octave, snapped.semi);
         }
@@ -2081,7 +2081,7 @@ export function Grid({
           return;
         }
 
-        updateNode(dragState.voiceId, dragState.originalT16, clampedT16, originalNode.deg, originalNode.octave || 0, true, originalNode.semi);
+        updateNode(dragState.voiceId, dragState.originalT16, clampedT16, originalNode.deg ?? 0, originalNode.octave || 0, true, originalNode.semi);
         setDragState({ ...dragState, originalT16: clampedT16 });
         return;
       }

@@ -76,7 +76,7 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
         if (node.term) continue;
         const semi = node.semi !== undefined
           ? node.semi
-          : degreeToSemitoneOffset(node.deg, node.octave || 0, arrangement.scale);
+          : degreeToSemitoneOffset(node.deg ?? 0, node.octave || 0, arrangement.scale);
         minSemi = Math.min(minSemi, semi);
         maxSemi = Math.max(maxSemi, semi);
       }
@@ -209,7 +209,7 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
 
         const semi = node.semi !== undefined
           ? node.semi
-          : degreeToSemitoneOffset(node.deg, node.octave || 0, arrangement.scale);
+          : degreeToSemitoneOffset(node.deg ?? 0, node.octave || 0, arrangement.scale);
 
         const x = tToX(node.t16);
         const y = semiToY(semi);

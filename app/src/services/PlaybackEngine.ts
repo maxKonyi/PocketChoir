@@ -675,7 +675,7 @@ export class PlaybackEngine {
       return;
     }
 
-    const freq = this.getPreviewFrequency(activeNode.deg, activeNode.octave || 0, activeNode.semi);
+    const freq = this.getPreviewFrequency(activeNode.deg ?? 0, activeNode.octave || 0, activeNode.semi);
 
     // If already playing, glide; otherwise attack.
     if (synth.getIsPlaying()) {
@@ -1481,7 +1481,7 @@ export class PlaybackEngine {
 
     // Otherwise use scale-degree mapping.
     let freq = scaleDegreeToFrequency(
-      node.deg,
+      node.deg ?? 0,
       this.arrangement.tonic,
       this.arrangement.scale,
       4,
