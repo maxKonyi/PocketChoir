@@ -53,6 +53,8 @@ class MicrophoneServiceClass {
   private recordingLagMs: number = 0;
   private recordingLagIsManual: boolean = false;
 
+  private lowLatencyPitch: boolean = false;
+
   /**
    * Request microphone permission and initialize.
    * @returns Promise that resolves when microphone is ready
@@ -172,6 +174,10 @@ class MicrophoneServiceClass {
     this.recordingLagIsManual = isManual;
   }
 
+  setLowLatencyPitch(enabled: boolean): void {
+    this.lowLatencyPitch = enabled;
+  }
+
   private estimateRecordingLagIfPossible(): void {
     if (this.recordingLagIsManual) return;
     if (!this.stream) return;
@@ -250,6 +256,14 @@ class MicrophoneServiceClass {
    */
   getProcessedStream(): MediaStream | null {
     return this.recordingDest ? this.recordingDest.stream : this.stream;
+  }
+
+  /**
+   * Get the internal processed audio node for analysis (metering).
+   * This taps the same signal chain that monitoring and recording use.
+   */
+  getProcessedNodeForAnalysis(): AudioNode | null {
+    return this.inputGainNode;
   }
 
   /**
@@ -393,6 +407,7 @@ class MicrophoneServiceClass {
       inputGain: this.inputGainNode?.gain.value ?? 1.0,
       monitoring: this.isMonitoring,
       isRecording: this.isRecording,
+      lowLatencyPitch: this.lowLatencyPitch,
       recordingLagMs: this.recordingLagMs,
       recordingLagIsManual: this.recordingLagIsManual,
     };

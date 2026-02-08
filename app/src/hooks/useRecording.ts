@@ -43,6 +43,7 @@ export function useRecording() {
   const setPosition = useAppStore((state) => state.setPosition);
   const setMicrophoneState = useAppStore((state) => state.setMicrophoneState);
   const recordingLagMs = useAppStore((state) => state.microphoneState.recordingLagMs);
+  const lowLatencyPitch = useAppStore((state) => state.microphoneState.lowLatencyPitch);
 
   // Refs for services
   const pitchDetectorRef = useRef<PitchDetector | null>(null);
@@ -88,6 +89,7 @@ export function useRecording() {
       if (stream) {
         // Initialize pitch detector with the stream
         const detector = new PitchDetector();
+        detector.setLowLatencyMode(lowLatencyPitch);
         detector.initialize(stream);
         pitchDetectorRef.current = detector;
       }
@@ -99,7 +101,7 @@ export function useRecording() {
       alert('Could not access microphone. Please check permissions.');
       return false;
     }
-  }, [setMicrophoneState]);
+  }, [setMicrophoneState, lowLatencyPitch]);
 
   /**
    * Stop recording and save the result.
@@ -206,6 +208,9 @@ export function useRecording() {
         return false;
       }
     }
+
+    // Re-apply in case the user toggled low-latency mode since the detector was created.
+    pitchDetectorRef.current?.setLowLatencyMode(lowLatencyPitch);
 
     // Bail out if a newer session started while we were initializing.
     if (recordingSessionRef.current !== thisSession) {
@@ -318,7 +323,7 @@ export function useRecording() {
 
     console.log('Recording started for voice:', currentVoiceId);
     return true;
-  }, [armedVoiceId, arrangement, recordings, clearRecording, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, setPosition, recordingLagMs]);
+  }, [armedVoiceId, arrangement, recordings, clearRecording, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, setPosition, recordingLagMs, lowLatencyPitch]);
 
   /**
    * Toggle recording state.

@@ -25,6 +25,10 @@ export interface MicrophoneState {
   monitoring: boolean;      // Whether to play mic input back to user
   isRecording: boolean;     // Whether currently recording
 
+  // If true, the pitch detector uses a smaller analysis window + less smoothing.
+  // This makes the live trace feel more immediate, but can be a bit more jittery.
+  lowLatencyPitch: boolean;
+
   // Recording sync compensation.
   // If your recorded claps land late during playback, increase this value.
   // Positive values skip a small amount from the start of the recording so it plays earlier.

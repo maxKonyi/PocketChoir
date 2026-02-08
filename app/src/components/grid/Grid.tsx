@@ -1523,6 +1523,15 @@ export function Grid({
       let started = false;
       let lastPointTime = -1;
 
+      // Keep track of the last point we actually drew.
+      // We use this to "extend" the trace line to the playhead when the live head
+      // glow is pinned there (headXOverride). This avoids a visible gap between the
+      // end of the line and the glow tip, at the cost of briefly holding the last
+      // known pitch until the next detected pitch point arrives.
+      let lastDrawnX = 0;
+      let lastDrawnY = 0;
+      let hasLastDrawn = false;
+
       // Pre-compute once — this value is constant for every point in the trace.
       const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
 
@@ -1551,10 +1560,19 @@ export function Grid({
         } else {
           ctx.lineTo(x, y);
         }
+
+        lastDrawnX = x;
+        lastDrawnY = y;
+        hasLastDrawn = true;
         lastPointTime = point.time;
       }
 
       if (started) {
+        // If this is the live trace and the head is pinned to the playhead X,
+        // extend the final segment so the line stays attached to the head glow.
+        if (headXOverride !== undefined && hasLastDrawn && headXOverride > lastDrawnX) {
+          ctx.lineTo(headXOverride, lastDrawnY);
+        }
         ctx.stroke();
       }
       ctx.restore();

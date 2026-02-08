@@ -424,6 +424,7 @@ const initialMicrophoneState: MicrophoneState = {
   inputGain: 1.0,
   monitoring: false,
   isRecording: false,
+  lowLatencyPitch: false,
   recordingLagMs: 0,
   recordingLagIsManual: false,
 };

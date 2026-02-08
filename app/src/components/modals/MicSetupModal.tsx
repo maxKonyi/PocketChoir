@@ -37,9 +37,16 @@ export function MicSetupModal() {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [volumeLevel, setVolumeLevel] = useState(0);
   const [recordingLagMs, setRecordingLagMs] = useState(0);
   const [isCalibratingLag, setIsCalibratingLag] = useState(false);
+
+  const [lowLatencyPitch, setLowLatencyPitch] = useState(false);
+
+  // Mic level meter refs (DOM-based updates so we don't re-render 60 times/second)
+  const meterFillRef = useRef<HTMLDivElement | null>(null);
+  const meterLevelRef = useRef(0);
+  const meterLastUiUpdateMsRef = useRef(0);
+  const meterBufferRef = useRef<Float32Array | null>(null);
 
   // Range detection state
   const vocalRange = useAppStore((state) => state.vocalRange);
@@ -293,6 +300,33 @@ export function MicSetupModal() {
       AudioService.fadeTransportGain(1, 0.02);
 
       await MicrophoneService.initialize();
+
+      // IMPORTANT:
+      // The Zustand store is persisted to localStorage, but MicrophoneService is an
+      // in-memory singleton that resets on page reload.
+      // Here we re-apply the user's saved mic settings from the store so the mic
+      // service (and the level meter / monitoring) matches what you last selected.
+      const persisted = useAppStore.getState().microphoneState;
+      if (persisted.selectedDeviceId) {
+        try {
+          await MicrophoneService.selectDevice(persisted.selectedDeviceId);
+        } catch {
+          // If the device no longer exists, we fall back to browser default below.
+        }
+      }
+      if (typeof persisted.inputGain === 'number') {
+        MicrophoneService.setInputGain(persisted.inputGain);
+      }
+      if (typeof persisted.monitoring === 'boolean') {
+        MicrophoneService.setMonitoring(persisted.monitoring);
+      }
+      if (typeof persisted.lowLatencyPitch === 'boolean') {
+        MicrophoneService.setLowLatencyPitch(persisted.lowLatencyPitch);
+      }
+      if (typeof persisted.recordingLagMs === 'number') {
+        MicrophoneService.setRecordingLagMs(persisted.recordingLagMs, persisted.recordingLagIsManual ?? false);
+      }
+
       const deviceList = await MicrophoneService.refreshDevices();
       setDevices(deviceList);
 
@@ -304,6 +338,7 @@ export function MicSetupModal() {
       setInputGain(ms.inputGain ?? 1.0);
       setIsMonitoring(ms.monitoring ?? false);
       setRecordingLagMs(ms.recordingLagMs ?? 0);
+      setLowLatencyPitch(ms.lowLatencyPitch ?? false);
 
       setMicrophoneState({
         available: true,
@@ -311,6 +346,7 @@ export function MicSetupModal() {
         selectedDeviceId: selected,
         inputGain: ms.inputGain ?? 1.0,
         monitoring: ms.monitoring ?? false,
+        lowLatencyPitch: ms.lowLatencyPitch ?? false,
         recordingLagMs: ms.recordingLagMs ?? 0,
         recordingLagIsManual: ms.recordingLagIsManual ?? false,
       });
@@ -347,77 +383,162 @@ export function MicSetupModal() {
    * Start volume monitoring loop
    */
   useEffect(() => {
-    if (!isOpen || !microphoneState.available) return;
-
-    if (!AudioService.isReady()) return;
-    void AudioService.resume();
-    AudioService.fadeTransportGain(1, 0.02);
+    // Don't attach the meter while we're still initializing/switching devices.
+    // Otherwise we can connect to the temporary/default stream and then the real
+    // selected device replaces it, leaving the meter reading silence.
+    if (!isOpen || !microphoneState.available || isInitializing) return;
 
     let mounted = true;
 
-    // Set up analysis
-    // We use the RAW stream for pitch + meter so you see your true interface level.
-    const stream = MicrophoneService.getStream();
-    if (stream) {
-      const ctx = AudioService.getContext();
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.7;
-      source.connect(analyser);
+    // Local handles so we can reliably tear them down in cleanup even if refs change.
+    let localSource: MediaStreamAudioSourceNode | null = null;
+    let localAnalyser: AnalyserNode | null = null;
+    let localTapGain: GainNode | null = null;
+    let localTapInput: AudioNode | null = null;
 
-      analyserSourceRef.current = source;
-      analyserRef.current = analyser;
+    const ensureReady = async () => {
+      try {
+        if (!AudioService.isReady()) {
+          await AudioService.initialize();
+        }
+        await AudioService.resume();
+        AudioService.fadeTransportGain(1, 0.02);
+
+        // Ensure mic stream exists; if not, initialize it.
+        if (!MicrophoneService.getStream()) {
+          await MicrophoneService.initialize();
+        }
+      } catch {
+        // If anything fails here, we just skip the meter (the UI will show mic error elsewhere).
+      }
+    };
+
+    const setupMeter = async () => {
+      await ensureReady();
+      if (!mounted) return;
+
+      const ctx = AudioService.getContext();
+      localAnalyser = ctx.createAnalyser();
+      localAnalyser.fftSize = 2048;
+
+      // We do our own smoothing; keep analyser smoothing low.
+      localAnalyser.smoothingTimeConstant = 0;
+
+      // Prefer the processed node (same signal path as monitoring/recording).
+      // Important: we NEVER disconnect the processed node itself in cleanup.
+      const rawStream = MicrophoneService.getStream();
+      const processedStream = MicrophoneService.getProcessedStream();
+      const processedNode = MicrophoneService.getProcessedNodeForAnalysis?.() ?? null;
+
+      if (processedNode) {
+        localTapGain = ctx.createGain();
+        localTapGain.gain.value = 1;
+        localTapInput = processedNode;
+        processedNode.connect(localTapGain);
+        localTapGain.connect(localAnalyser);
+      } else if (processedStream) {
+        localSource = ctx.createMediaStreamSource(processedStream);
+        localSource.connect(localAnalyser);
+      } else if (rawStream) {
+        localSource = ctx.createMediaStreamSource(rawStream);
+        localSource.connect(localAnalyser);
+      } else {
+        return; // nothing to analyze
+      }
+
+      analyserSourceRef.current = localSource;
+      analyserRef.current = localAnalyser;
       audioContextRef.current = ctx;
-    }
+
+      // Kick the volume loop once we know we have a live analyser.
+      updateVolume();
+    };
 
     const updateVolume = () => {
       if (!mounted) return;
 
       if (analyserRef.current && audioContextRef.current) {
-        const bufferLength = analyserRef.current.fftSize;
-        const timeData = new Float32Array(bufferLength);
+        const analyser = analyserRef.current;
+        const bufferLength = analyser.fftSize;
 
-        analyserRef.current.getFloatTimeDomainData(timeData);
-
-        // Calculate RMS from time domain.
-        // This is closer to what you see in interface software than frequency-bin averages.
-        let rmsSum = 0;
-        for (let i = 0; i < timeData.length; i++) {
-          const v = timeData[i];
-          rmsSum += v * v;
+        if (!meterBufferRef.current || meterBufferRef.current.length !== bufferLength) {
+          meterBufferRef.current = new Float32Array(bufferLength);
         }
-        const rms = Math.sqrt(rmsSum / timeData.length);
 
-        // Convert to dBFS-ish scale so it doesn't instantly pin at 100.
-        // Typical voice RMS tends to sit well below 0dB.
-        const db = 20 * Math.log10(rms + 1e-8);
+        const timeData = meterBufferRef.current;
+        analyser.getFloatTimeDomainData(timeData as any);
 
-        // Map -60dB..-6dB to 0..100
-        const normalized = (db + 60) / 54;
-        const target = Math.max(0, Math.min(100, normalized * 100));
+        // Peak meter (0.0..1.0). Peak 0.5 is treated as 0dB reference, per your interface.
+        let peak = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          const a = Math.abs(timeData[i]);
+          if (a > peak) peak = a;
+        }
 
-        // Smooth so the meter rises/falls naturally.
-        setVolumeLevel((prev) => (prev * 0.85) + (target * 0.15));
+        // Convert to dB relative to peak=0.5.
+        // 0dB means "full" on the meter.
+        const minDb = -60;
+        const db = peak > 0 ? 20 * Math.log10(peak / 0.5) : minDb;
+        const clampedDb = Math.max(minDb, Math.min(0, db));
+        const peakTarget = ((clampedDb - minDb) / (0 - minDb)) * 100;
+
+        // Attack/release smoothing so it feels stable but responsive.
+        const current = meterLevelRef.current;
+        const alpha = peakTarget > current ? 0.6 : 0.2;
+        const next = current + (peakTarget - current) * alpha;
+        meterLevelRef.current = next;
+
+        // Update the DOM at ~30fps (cheap and consistent).
+        const nowMs = performance.now();
+        if (nowMs - meterLastUiUpdateMsRef.current >= 33) {
+          meterLastUiUpdateMsRef.current = nowMs;
+          if (meterFillRef.current) {
+            meterFillRef.current.style.width = `${next}%`;
+            if (next >= 95) meterFillRef.current.style.backgroundColor = '#ff5151';
+            else if (next >= 85) meterFillRef.current.style.backgroundColor = '#ffb347';
+            else meterFillRef.current.style.backgroundColor = 'var(--accent-primary)';
+          }
+        }
 
       }
       volumeRaf.current = requestAnimationFrame(updateVolume);
     };
 
-    updateVolume();
+    void setupMeter();
 
     return () => {
       mounted = false;
       if (volumeRaf.current) cancelAnimationFrame(volumeRaf.current);
+
+      // Disconnect whichever nodes we created.
+      localSource?.disconnect();
+
+      // If we tapped the processed node, only disconnect our tap node.
+      // Never call disconnect() on the shared processed node itself.
+      if (localTapInput && localTapGain) {
+        try {
+          localTapInput.disconnect(localTapGain);
+        } catch {
+          // Ignore disconnect errors; browser implementations vary.
+        }
+      }
+      localTapGain?.disconnect();
+      localAnalyser?.disconnect();
 
       analyserSourceRef.current?.disconnect();
       analyserRef.current?.disconnect();
       analyserSourceRef.current = null;
       analyserRef.current = null;
       audioContextRef.current = null;
-      setVolumeLevel(0);
+
+      meterLevelRef.current = 0;
+      meterLastUiUpdateMsRef.current = 0;
+      if (meterFillRef.current) {
+        meterFillRef.current.style.width = '0%';
+        meterFillRef.current.style.backgroundColor = 'var(--accent-primary)';
+      }
     };
-  }, [isOpen, microphoneState.available, microphoneState.selectedDeviceId]);
+  }, [isOpen, microphoneState.available, microphoneState.selectedDeviceId, isInitializing]);
 
 
   /**
@@ -447,6 +568,7 @@ export function MicSetupModal() {
         const stream = MicrophoneService.getProcessedStream();
         if (stream) {
           const detector = new PitchDetector();
+          detector.setLowLatencyMode(lowLatencyPitch);
           detector.initialize(stream);
           pitchDetectorRef.current = detector;
         }
@@ -568,6 +690,16 @@ export function MicSetupModal() {
     setMicrophoneState({ monitoring: newState });
   };
 
+  const handleLowLatencyToggle = () => {
+    const next = !lowLatencyPitch;
+    setLowLatencyPitch(next);
+    MicrophoneService.setLowLatencyPitch(next);
+    setMicrophoneState({ lowLatencyPitch: next });
+
+    // If we already have a pitch detector instance for range detection, apply immediately.
+    pitchDetectorRef.current?.setLowLatencyMode(next);
+  };
+
   /**
    * Handle close.
    */
@@ -641,6 +773,7 @@ export function MicSetupModal() {
                 value={selectedDevice || ''}
                 onChange={(e) => handleDeviceChange(e.target.value)}
                 disabled={isInitializing || devices.length === 0}
+                style={{ backgroundColor: 'var(--button-bg)', color: 'var(--text-primary)' }}
                 className="
                   flex-1 px-3 py-2
                   bg-[var(--button-bg)]
@@ -651,10 +784,14 @@ export function MicSetupModal() {
                 "
               >
                 {devices.length === 0 ? (
-                  <option>No devices found</option>
+                  <option className="bg-[var(--button-bg)] text-[var(--text-primary)]">No devices found</option>
                 ) : (
                   devices.map((device) => (
-                    <option key={device.deviceId} value={device.deviceId}>
+                    <option
+                      key={device.deviceId}
+                      value={device.deviceId}
+                      className="bg-[var(--button-bg)] text-[var(--text-primary)]"
+                    >
                       {device.label} {device.isDefault ? '(Default)' : ''}
                     </option>
                   ))
@@ -713,6 +850,29 @@ export function MicSetupModal() {
             </button>
           </div>
 
+          {/* Low latency pitch */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-[var(--text-secondary)]">
+                Low latency pitch
+              </span>
+            </div>
+            <button
+              onClick={handleLowLatencyToggle}
+              className={
+                `relative w-12 h-6 rounded-full transition-colors ${lowLatencyPitch ? 'bg-[var(--accent-primary)]' : 'bg-[var(--button-bg)]'}`
+              }
+              aria-label="Toggle low latency pitch"
+              type="button"
+            >
+              <span
+                className={
+                  `absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${lowLatencyPitch ? 'translate-x-6' : ''}`
+                }
+              />
+            </button>
+          </div>
+
           {/* Recording sync */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -738,12 +898,17 @@ export function MicSetupModal() {
             />
           </div>
 
-          {/* Status indicator + Volume Meter */}
-          <div className="flex items-center gap-4 text-sm">
-            <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+          {/* Level meter */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[var(--text-secondary)]">Mic Level</span>
+              <span className="text-xs text-[var(--text-muted)]">0dB ≈ peak 0.5</span>
+            </div>
+            <div className="relative h-2 w-full rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
               <div
-                className="h-full bg-[var(--accent-primary)] transition-all duration-75"
-                style={{ width: `${volumeLevel}%` }}
+                ref={meterFillRef}
+                className="h-full transition-all duration-75"
+                style={{ width: '0%', backgroundColor: 'var(--accent-primary)' }}
               />
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -761,6 +926,7 @@ export function MicSetupModal() {
               </span>
             </div>
           </div>
+
           {/* Range Setup */}
           <div className="space-y-3 pt-4 border-t border-white/5">
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">Vocal Range</h3>

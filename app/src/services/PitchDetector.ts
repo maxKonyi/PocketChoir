@@ -58,6 +58,8 @@ export class PitchDetector {
   private jumpCounter: number = 0;
   private pendingMidi: number | null = null;
 
+  private lowLatencyMode: boolean = false;
+
   // Last detected pitch (for legacy compatibility)
   private lastFrequency: number = 0;
 
@@ -100,7 +102,7 @@ export class PitchDetector {
     // Create analyser node for frequency analysis
     // Using larger FFT size for better low-frequency resolution (from reference)
     this.analyser = ctx.createAnalyser();
-    this.analyser.fftSize = 4096; // Larger for better bass detection
+    this.analyser.fftSize = this.lowLatencyMode ? 2048 : 4096;
     this.analyser.smoothingTimeConstant = 0; // We do our own smoothing
 
     // Connect microphone to analyser (but not to output - we don't want feedback)
@@ -110,6 +112,20 @@ export class PitchDetector {
     this.dataBuffer = new Float32Array(this.analyser.fftSize);
 
     console.log('PitchDetector initialized with improved smoothing');
+  }
+
+  setLowLatencyMode(enabled: boolean): void {
+    this.lowLatencyMode = enabled;
+
+    // Low latency mode trades some stability/accuracy for responsiveness.
+    // - Smaller FFT window reduces analysis delay.
+    // - Smaller median filter reduces smoothing delay.
+    this.medianSize = enabled ? 3 : 7;
+
+    if (this.analyser) {
+      this.analyser.fftSize = enabled ? 2048 : 4096;
+      this.dataBuffer = new Float32Array(this.analyser.fftSize);
+    }
   }
 
   /**
