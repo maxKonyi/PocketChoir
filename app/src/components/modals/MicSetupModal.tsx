@@ -64,6 +64,8 @@ export function MicSetupModal() {
   const analyserSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
+  const calibrationStopRef = useRef<(() => void) | null>(null);
+
   // Keep a ref in sync with state so async callbacks always see the latest value.
   useEffect(() => {
     isDetectingRef.current = isDetecting;
@@ -107,107 +109,170 @@ export function MicSetupModal() {
 
   const calibrateRecordingLag = async () => {
     if (isCalibratingLag) return;
+    // Don't start calibration while the app is recording a take.
+    // Calibration needs to "listen" to your claps without fighting MediaRecorder.
     if (MicrophoneService.getIsRecording()) return;
-
     setIsCalibratingLag(true);
     setError(null);
 
     try {
+      // Make sure audio is running so the clicks are audible.
+      if (!AudioService.isReady()) {
+        await AudioService.initialize();
+      }
+      await AudioService.resume();
+      AudioService.fadeTransportGain(1, 0.02);
+
+      // Make sure the mic stream exists so we can analyze clap peaks in real time.
       await MicrophoneService.initialize();
 
-      const ctx = AudioService.getContext();
-      // Capture the audio clock time we consider "recording start" for this calibration.
-      // We use this as the reference so our expected click times remain stable even
-      // after async work (decodeAudioData, etc.).
-      const recordStartCtxTime = ctx.currentTime;
-      const tempo = 120;
-      const beatDurationSec = 60 / tempo;
-      const beatsToTest = 6;
-      const leadInSec = 0.6;
-
-      // We schedule clicks on the AudioContext clock for tight timing.
-      const startClickTime = recordStartCtxTime + 0.1;
-
-      const blob: Blob = await new Promise((resolve, reject) => {
-        MicrophoneService.startRecording((b) => resolve(b));
-
-        for (let i = 0; i < beatsToTest; i++) {
-          const t = startClickTime + leadInSec + (i * beatDurationSec);
-          playCalibrationClick(t);
-        }
-
-        const totalSec = leadInSec + (beatsToTest * beatDurationSec) + 0.4;
-        window.setTimeout(() => {
-          try {
-            MicrophoneService.stopRecording();
-          } catch (e) {
-            reject(e);
-          }
-        }, Math.ceil(totalSec * 1000));
-      });
-
-      const buffer = await AudioService.decodeAudioBlob(blob);
-      const data = buffer.getChannelData(0);
-      const sr = buffer.sampleRate;
-
-      // Find overall max so we can ignore empty/quiet windows.
-      let globalMax = 0;
-      for (let i = 0; i < data.length; i++) {
-        const v = Math.abs(data[i]);
-        if (v > globalMax) globalMax = v;
-      }
-
-      const lags: number[] = [];
-      for (let i = 0; i < beatsToTest; i++) {
-        // We schedule clicks at (startClickTime + leadInSec + i*beatDurationSec).
-        // The recording starts at "now", so expected positions in the recorded
-        // buffer should include the startClickTime offset.
-        const expectedClickTime = startClickTime + leadInSec + (i * beatDurationSec);
-        const expectedSec = expectedClickTime - recordStartCtxTime;
-        const windowStartSec = Math.max(0, expectedSec - 0.12);
-        const windowEndSec = Math.min(buffer.duration, expectedSec + 0.25);
-
-        const startIdx = Math.floor(windowStartSec * sr);
-        const endIdx = Math.min(data.length - 1, Math.floor(windowEndSec * sr));
-
-        let max = 0;
-        let maxIdx = startIdx;
-        for (let j = startIdx; j <= endIdx; j++) {
-          const v = Math.abs(data[j]);
-          if (v > max) {
-            max = v;
-            maxIdx = j;
-          }
-        }
-
-        // Require a meaningful peak.
-        if (globalMax > 0 && max >= globalMax * 0.1) {
-          const peakSec = maxIdx / sr;
-          const lagSec = peakSec - expectedSec;
-          if (Number.isFinite(lagSec)) {
-            lags.push(lagSec);
-          }
-        }
-      }
-
-      if (lags.length === 0) {
-        setError('Calibration failed. Try clapping louder/closer to the mic.');
+      const stream = MicrophoneService.getStream();
+      if (!stream) {
+        setError('Microphone not available.');
         return;
       }
 
-      // Use median lag for robustness.
-      lags.sort((a, b) => a - b);
-      const medianLagSec = lags[Math.floor(lags.length / 2)];
-      const lagMs = Math.max(0, Math.min(500, Math.round(medianLagSec * 1000)));
+      const ctx = AudioService.getContext();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0;
+      source.connect(analyser);
 
-      setRecordingLagMs(lagMs);
-      MicrophoneService.setRecordingLagMs(lagMs, true);
-      setMicrophoneState({ recordingLagMs: lagMs, recordingLagIsManual: true });
+      const timeData = new Float32Array(analyser.fftSize);
+
+      const tempo = 120;
+      const beatDurationSec = 60 / tempo;
+      const leadInSec = 0.5;
+      const clicksToScheduleAheadSec = 0.25;
+      const maxCalibrationSec = 12;
+      const minClapsNeeded = 4;
+
+      const clickTimes: number[] = [];
+      const lagsSec: number[] = [];
+
+      let nextClickTime = ctx.currentTime + leadInSec;
+      let rafId: number | null = null;
+      let timeoutId: number | null = null;
+      let lastPeakTime = -1;
+      let wasAbove = false;
+      let lastMatchedClickIndex = -1;
+
+      const stop = () => {
+        if (rafId !== null) cancelAnimationFrame(rafId);
+        rafId = null;
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        timeoutId = null;
+        try {
+          source.disconnect();
+        } catch {
+        }
+        try {
+          analyser.disconnect();
+        } catch {
+        }
+        if (calibrationStopRef.current === stop) {
+          calibrationStopRef.current = null;
+        }
+      };
+
+      calibrationStopRef.current = stop;
+
+      const finishIfPossible = () => {
+        if (lagsSec.length < minClapsNeeded) return false;
+
+        const sorted = [...lagsSec].sort((a, b) => a - b);
+        const medianLagSec = sorted[Math.floor(sorted.length / 2)];
+        const lagMs = Math.max(0, Math.min(500, Math.round(medianLagSec * 1000)));
+
+        setRecordingLagMs(lagMs);
+        MicrophoneService.setRecordingLagMs(lagMs, true);
+        setMicrophoneState({ recordingLagMs: lagMs, recordingLagIsManual: true });
+        return true;
+      };
+
+      const scheduleClicks = () => {
+        const now = ctx.currentTime;
+        while (nextClickTime < now + clicksToScheduleAheadSec) {
+          clickTimes.push(nextClickTime);
+          playCalibrationClick(nextClickTime);
+          nextClickTime += beatDurationSec;
+        }
+      };
+
+      const detectPeaks = () => {
+        scheduleClicks();
+
+        analyser.getFloatTimeDomainData(timeData);
+
+        let peak = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          const v = Math.abs(timeData[i]);
+          if (v > peak) peak = v;
+        }
+
+        const above = peak > 0.25;
+        const now = ctx.currentTime;
+        const canTrigger = lastPeakTime < 0 || (now - lastPeakTime) > 0.18;
+
+        if (above && !wasAbove && canTrigger) {
+          lastPeakTime = now;
+
+          let bestIndex = -1;
+          let bestDt = Infinity;
+          for (let i = lastMatchedClickIndex + 1; i < clickTimes.length; i++) {
+            const dt = now - clickTimes[i];
+            if (dt < -0.05) break;
+            if (dt >= -0.05 && dt <= beatDurationSec) {
+              const abs = Math.abs(dt);
+              if (abs < bestDt) {
+                bestDt = abs;
+                bestIndex = i;
+              }
+            }
+          }
+
+          if (bestIndex >= 0) {
+            lastMatchedClickIndex = bestIndex;
+            const lag = now - clickTimes[bestIndex];
+            if (Number.isFinite(lag)) {
+              lagsSec.push(lag);
+
+              if (finishIfPossible()) {
+                stop();
+                setIsCalibratingLag(false);
+                return;
+              }
+            }
+          }
+        }
+
+        wasAbove = above;
+        rafId = requestAnimationFrame(detectPeaks);
+      };
+
+      timeoutId = window.setTimeout(() => {
+        const ok = finishIfPossible();
+        stop();
+        if (!ok) {
+          setError('Calibration failed. Try clapping louder/closer to the mic.');
+        }
+        setIsCalibratingLag(false);
+      }, Math.ceil(maxCalibrationSec * 1000));
+
+      detectPeaks();
     } catch (e) {
       console.error('Lag calibration failed:', e);
       setError('Calibration failed.');
-    } finally {
+      if (calibrationStopRef.current) {
+        calibrationStopRef.current();
+        calibrationStopRef.current = null;
+      }
       setIsCalibratingLag(false);
+    } finally {
+      if (!calibrationStopRef.current) {
+        setIsCalibratingLag(false);
+      }
     }
   };
 
@@ -221,6 +286,12 @@ export function MicSetupModal() {
     setError(null);
 
     try {
+      if (!AudioService.isReady()) {
+        await AudioService.initialize();
+      }
+      await AudioService.resume();
+      AudioService.fadeTransportGain(1, 0.02);
+
       await MicrophoneService.initialize();
       const deviceList = await MicrophoneService.refreshDevices();
       setDevices(deviceList);
@@ -262,11 +333,25 @@ export function MicSetupModal() {
     }
   }, [isOpen, initializeMicrophone]);
 
+  useEffect(() => {
+    if (isOpen) return;
+
+    if (calibrationStopRef.current) {
+      calibrationStopRef.current();
+      calibrationStopRef.current = null;
+      setIsCalibratingLag(false);
+    }
+  }, [isOpen]);
+
   /**
    * Start volume monitoring loop
    */
   useEffect(() => {
     if (!isOpen || !microphoneState.available) return;
+
+    if (!AudioService.isReady()) return;
+    void AudioService.resume();
+    AudioService.fadeTransportGain(1, 0.02);
 
     let mounted = true;
 
@@ -332,7 +417,7 @@ export function MicSetupModal() {
       audioContextRef.current = null;
       setVolumeLevel(0);
     };
-  }, [isOpen, microphoneState.available]);
+  }, [isOpen, microphoneState.available, microphoneState.selectedDeviceId]);
 
 
   /**
@@ -487,6 +572,12 @@ export function MicSetupModal() {
    * Handle close.
    */
   const handleClose = () => {
+    if (calibrationStopRef.current) {
+      calibrationStopRef.current();
+      calibrationStopRef.current = null;
+      setIsCalibratingLag(false);
+    }
+
     // If we were listening for a range note, stop cleanly.
     setIsDetecting(null);
     pitchBufferRef.current = [];

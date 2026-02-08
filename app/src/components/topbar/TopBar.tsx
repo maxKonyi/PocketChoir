@@ -8,6 +8,7 @@
 import { Library, Mic, Eye, Palette, Download, Sliders } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { applyTheme, type ThemeName } from '../../utils/colors';
+import { AudioService } from '../../services/AudioService';
 
 /* ------------------------------------------------------------
    Theme options for the dropdown
@@ -168,7 +169,21 @@ export function TopBar() {
 
         {/* Mic Setup */}
         <button
-          onClick={() => setMicSetupOpen(true)}
+          onClick={() => {
+            void (async () => {
+              try {
+                if (!AudioService.isReady()) {
+                  await AudioService.initialize();
+                }
+                await AudioService.resume();
+                AudioService.fadeTransportGain(1, 0.02);
+              } catch (e) {
+                console.warn('Failed to initialize audio for Mic Setup:', e);
+              }
+            })();
+
+            setMicSetupOpen(true);
+          }}
           aria-label="Microphone Setup"
           className="
             p-2.5 rounded-xl

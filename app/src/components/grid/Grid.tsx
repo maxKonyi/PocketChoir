@@ -1120,6 +1120,17 @@ export function Grid({
         const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
         const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
 
+        // The playhead is always at the horizontal center of the grid area.
+        // We pin the glow "tip" of the live pitch trace to this X while recording,
+        // so it always visually matches the playhead even if pitch callbacks arrive late.
+        const playheadX = gridLeft + gridWidth / 2;
+
+        // Identify which tile the playhead is currently in, so we only draw ONE head flare.
+        // (The trace itself still renders on every tile so looping looks continuous.)
+        const playheadTile = loopLengthT > 0
+          ? Math.floor(Math.max(0, worldT) / loopLengthT)
+          : 0;
+
         // Draw the same live trace for each visible tile.
         // Because the live trace time axis starts at 0 for the recording,
         // drawing it with `worldTimeOffset = k * loopLengthT` makes the trace
@@ -1131,13 +1142,14 @@ export function Grid({
             color: traceColor,
             lineWidth: 10,
             opacity: 0.8,
-            isLive: true,
+            isLive: k === playheadTile,
             effectiveTonicMidi,
             minSemitone,
             maxSemitone,
             worldTimeOffset: tileOffset,
             camLeft,
             pxPerT,
+            headXOverride: k === playheadTile ? playheadX : undefined,
           });
         }
       }
@@ -1471,12 +1483,13 @@ export function Grid({
       worldTimeOffset: number;
       camLeft: number;
       pxPerT: number;
+      headXOverride?: number;
     }
   ) {
     if (trace.length < 2) return;
 
     const { color, lineWidth, opacity, isLive, effectiveTonicMidi, minSemitone, maxSemitone,
-            worldTimeOffset, camLeft: optCamLeft, pxPerT: optPxPerT } = options;
+            worldTimeOffset, camLeft: optCamLeft, pxPerT: optPxPerT, headXOverride } = options;
 
     // Helper: convert a local t16 to screen X via world time
     const traceToX = (localT16: number) =>
@@ -1564,7 +1577,7 @@ export function Grid({
       if (lastPoint && Number.isFinite(lastPoint.frequency) && lastPoint.frequency > 0) {
         const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
         const t16 = lastPoint.time / sixteenthMs;
-        const x = traceToX(t16);
+        const x = headXOverride ?? traceToX(t16);
         const y = getPitchY(lastPoint.frequency);
 
         ctx.save();
