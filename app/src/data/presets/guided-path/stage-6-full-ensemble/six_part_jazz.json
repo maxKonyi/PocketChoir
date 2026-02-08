@@ -1,0 +1,435 @@
+{
+  "id": "arr_custom_1770586993317",
+  "title": "Six-Part Jazz",
+  "description": "Custom arrangement",
+  "tonic": "E",
+  "scale": "major",
+  "tempo": 80,
+  "bars": 4,
+  "timeSig": {
+    "numerator": 4,
+    "denominator": 4
+  },
+  "voices": [
+    {
+      "id": "v1",
+      "name": "Voice 1",
+      "color": "#ff6b9d",
+      "nodes": [
+        {
+          "t16": 0,
+          "deg": 1,
+          "octave": 0
+        },
+        {
+          "t16": 4,
+          "deg": 3,
+          "octave": 0
+        },
+        {
+          "t16": 8,
+          "deg": 2,
+          "octave": 0
+        },
+        {
+          "t16": 20,
+          "deg": 5,
+          "octave": 0
+        },
+        {
+          "t16": 28,
+          "deg": 5,
+          "octave": 0,
+          "term": true
+        },
+        {
+          "t16": 32,
+          "deg": 5,
+          "octave": 0
+        },
+        {
+          "t16": 38,
+          "deg": 4,
+          "octave": 0
+        },
+        {
+          "t16": 40,
+          "deg": 3,
+          "octave": 0
+        },
+        {
+          "t16": 44,
+          "deg": 1,
+          "octave": 0
+        },
+        {
+          "t16": 48,
+          "deg": 3,
+          "octave": 0
+        },
+        {
+          "t16": 62,
+          "deg": 3,
+          "octave": 0,
+          "term": true
+        }
+      ]
+    },
+    {
+      "id": "v2",
+      "name": "Voice 2",
+      "color": "#4ecdc4",
+      "nodes": [
+        {
+          "t16": 0,
+          "deg": 1,
+          "octave": 0
+        },
+        {
+          "t16": 2,
+          "deg": 7,
+          "octave": -1
+        },
+        {
+          "t16": 4,
+          "deg": 6,
+          "octave": -1
+        },
+        {
+          "t16": 6,
+          "deg": 1,
+          "octave": 0
+        },
+        {
+          "t16": 8,
+          "deg": 7,
+          "octave": -1
+        },
+        {
+          "t16": 16,
+          "deg": 1,
+          "octave": 0
+        },
+        {
+          "t16": 28,
+          "deg": 1,
+          "octave": 0,
+          "term": true
+        },
+        {
+          "t16": 32,
+          "deg": 3,
+          "octave": 0
+        },
+        {
+          "t16": 38,
+          "deg": 2,
+          "octave": 0
+        },
+        {
+          "t16": 40,
+          "deg": 1,
+          "octave": 0
+        },
+        {
+          "t16": 44,
+          "deg": 6,
+          "octave": -1
+        },
+        {
+          "t16": 48,
+          "deg": 1,
+          "octave": 0
+        },
+        {
+          "t16": 54,
+          "deg": 2,
+          "octave": 0
+        },
+        {
+          "t16": 56,
+          "deg": 7,
+          "octave": -1
+        },
+        {
+          "t16": 62,
+          "deg": 7,
+          "octave": -1,
+          "term": true
+        }
+      ]
+    },
+    {
+      "id": "v3",
+      "name": "Voice 3",
+      "color": "#ffe66d",
+      "nodes": [
+        {
+          "t16": 0,
+          "deg": 5,
+          "octave": -1
+        },
+        {
+          "t16": 8,
+          "deg": 5,
+          "octave": -1
+        },
+        {
+          "t16": 12,
+          "deg": 6,
+          "octave": -1
+        },
+        {
+          "t16": 16,
+          "deg": 6,
+          "octave": -1
+        },
+        {
+          "t16": 20,
+          "deg": 1,
+          "octave": 0,
+          "semi": -4
+        },
+        {
+          "t16": 28,
+          "deg": 1,
+          "octave": 0,
+          "semi": -4,
+          "term": true
+        },
+        {
+          "t16": 32,
+          "deg": 1,
+          "octave": 0
+        },
+        {
+          "t16": 38,
+          "deg": 7,
+          "octave": -1
+        },
+        {
+          "t16": 40,
+          "deg": 6,
+          "octave": -1
+        },
+        {
+          "t16": 42,
+          "deg": 5,
+          "octave": -1
+        },
+        {
+          "t16": 48,
+          "deg": 6,
+          "octave": -1
+        },
+        {
+          "t16": 56,
+          "deg": 1,
+          "octave": 0,
+          "semi": -4
+        },
+        {
+          "t16": 62,
+          "deg": 1,
+          "octave": 0,
+          "semi": -4,
+          "term": true
+        }
+      ]
+    },
+    {
+      "id": "v4",
+      "name": "Voice 4",
+      "color": "#ff8c42",
+      "nodes": [
+        {
+          "t16": 0,
+          "deg": 3,
+          "octave": -1
+        },
+        {
+          "t16": 20,
+          "deg": 3,
+          "octave": -1
+        },
+        {
+          "t16": 28,
+          "deg": 3,
+          "octave": -1,
+          "term": true
+        },
+        {
+          "t16": 32,
+          "deg": 7,
+          "octave": -1
+        },
+        {
+          "t16": 36,
+          "deg": 6,
+          "octave": -1
+        },
+        {
+          "t16": 38,
+          "deg": 5,
+          "octave": -1
+        },
+        {
+          "t16": 40,
+          "deg": 4,
+          "octave": -1
+        },
+        {
+          "t16": 48,
+          "deg": 4,
+          "octave": -1
+        },
+        {
+          "t16": 62,
+          "deg": 4,
+          "octave": -1,
+          "term": true
+        }
+      ]
+    },
+    {
+      "id": "v5",
+      "name": "Voice 5",
+      "color": "#a78bfa",
+      "nodes": [
+        {
+          "t16": 0,
+          "deg": 1,
+          "octave": -1
+        },
+        {
+          "t16": 8,
+          "deg": 7,
+          "octave": -2
+        },
+        {
+          "t16": 16,
+          "deg": 1,
+          "octave": -1
+        },
+        {
+          "t16": 20,
+          "deg": 2,
+          "octave": -1
+        },
+        {
+          "t16": 28,
+          "deg": 2,
+          "octave": -1,
+          "term": true
+        },
+        {
+          "t16": 32,
+          "deg": 3,
+          "octave": -1
+        },
+        {
+          "t16": 40,
+          "deg": 1,
+          "octave": -1
+        },
+        {
+          "t16": 48,
+          "deg": 2,
+          "octave": -1
+        },
+        {
+          "t16": 62,
+          "deg": 2,
+          "octave": -1,
+          "term": true
+        }
+      ]
+    },
+    {
+      "id": "v6",
+      "name": "Voice 6",
+      "color": "#34d399",
+      "nodes": [
+        {
+          "t16": 0,
+          "deg": 1,
+          "octave": -2
+        },
+        {
+          "t16": 8,
+          "deg": 3,
+          "octave": -2
+        },
+        {
+          "t16": 28,
+          "deg": 3,
+          "octave": -2,
+          "term": true
+        },
+        {
+          "t16": 32,
+          "deg": 6,
+          "octave": -2
+        },
+        {
+          "t16": 40,
+          "deg": 4,
+          "octave": -2
+        },
+        {
+          "t16": 48,
+          "deg": 2,
+          "octave": -2
+        },
+        {
+          "t16": 56,
+          "deg": 5,
+          "octave": -2
+        },
+        {
+          "t16": 62,
+          "deg": 5,
+          "octave": -2,
+          "term": true
+        }
+      ]
+    }
+  ],
+  "chords": [
+    {
+      "t16": 0,
+      "duration16": 8,
+      "name": "E"
+    },
+    {
+      "t16": 8,
+      "duration16": 12,
+      "name": "G#m7"
+    },
+    {
+      "t16": 20,
+      "duration16": 12,
+      "name": "G#7(#5,#9)"
+    },
+    {
+      "t16": 32,
+      "duration16": 8,
+      "name": "C#m9"
+    },
+    {
+      "t16": 40,
+      "duration16": 8,
+      "name": "Amaj9"
+    },
+    {
+      "t16": 48,
+      "duration16": 8,
+      "name": "F#m9"
+    },
+    {
+      "t16": 56,
+      "duration16": 8,
+      "name": "B13(b9)"
+    }
+  ]
+}

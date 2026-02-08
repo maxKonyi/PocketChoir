@@ -34,7 +34,7 @@ export class SynthVoice {
       oscillator: { type: "triangle" },
       envelope: { attack: 0.01, decay: 0.1, sustain: 0.8, release: 0.2 },
       volume: -10,
-      portamento: 0.1
+      portamento: 0.05
     });
 
     this.filter = new Tone.Filter({

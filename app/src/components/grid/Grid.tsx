@@ -238,8 +238,35 @@ export function Grid({
   const arrangementFromStore = useAppStore((state) => state.arrangement);
   const arrangement = arrangementFromStore || arrangementProp;
 
-  const playback = useAppStore((state) => state.playback);
+  // Subscribe only to the playback flags this component actually uses.
+  // Subscribing to the entire playback object would re-render the Grid on every
+  // position tick (which can be ~60fps), even though the canvas draw loop already
+  // runs every animation frame.
+  const isPlaying = useAppStore((state) => state.playback.isPlaying);
+  const isRecording = useAppStore((state) => state.playback.isRecording);
+  const loopEnabled = useAppStore((state) => state.playback.loopEnabled);
   const setPosition = useAppStore((state) => state.setPosition);
+
+  // Throttle UI position updates during normal playback.
+  // See App.tsx for the same reasoning: 60fps store writes force React work.
+  // While recording, we keep full-rate updates so auto-stop logic stays precise.
+  const lastUiPositionUpdateMsRef = useRef<number>(0);
+  const onEnginePositionUpdate = useCallback((t16: number) => {
+    const storeState = useAppStore.getState();
+    const currentlyRecording = storeState.playback.isRecording;
+
+    if (currentlyRecording) {
+      setPosition(t16);
+      return;
+    }
+
+    const nowMs = performance.now();
+    const UI_POSITION_THROTTLE_MS = 33; // ~30fps
+    if (nowMs - lastUiPositionUpdateMsRef.current < UI_POSITION_THROTTLE_MS) return;
+
+    lastUiPositionUpdateMsRef.current = nowMs;
+    setPosition(t16);
+  }, [setPosition]);
 
   // If audio isn't initialized yet, we queue the first preview attack until it is.
   // This prevents the first click/drag in Create mode from being silent.
@@ -256,9 +283,7 @@ export function Grid({
       await AudioService.initialize();
       if (arrangement) {
         playbackEngine.initialize(arrangement, {
-          onPositionUpdate: (t16) => {
-            setPosition(t16);
-          },
+          onPositionUpdate: onEnginePositionUpdate,
         });
       }
     })().finally(() => {
@@ -266,7 +291,7 @@ export function Grid({
     });
 
     return audioInitPromiseRef.current;
-  }, [arrangement, setPosition]);
+  }, [arrangement, onEnginePositionUpdate]);
   const voiceStates = useAppStore((state) => state.voiceStates);
   const livePitchTrace = useAppStore((state) => state.livePitchTrace);
   const livePitchTraceVoiceId = useAppStore((state) => state.livePitchTraceVoiceId);
@@ -308,18 +333,18 @@ export function Grid({
     setCreateCameraWorldT(nextWorldT);
 
     // If we are not actively playing, keep engine position aligned with the camera.
-    if (!playback.isPlaying) {
+    if (!isPlaying) {
       playbackEngine.seekWorld(nextWorldT);
     }
-  }, [setCreateCameraWorldT, playback.isPlaying]);
+  }, [setCreateCameraWorldT, isPlaying]);
 
   // When you stop playback in Create mode, snap the camera to the current engine position
   // so you can immediately edit what you just heard.
   useEffect(() => {
     if (mode !== 'create') return;
-    if (playback.isPlaying) return;
+    if (isPlaying) return;
     setCreateCameraWorldT(playbackEngine.getWorldPositionT16());
-  }, [mode, playback.isPlaying, setCreateCameraWorldT]);
+  }, [mode, isPlaying, setCreateCameraWorldT]);
 
   // If the mouse is released outside the canvas, we still need to stop the right-click pan.
   // Without this, the grid can get "stuck" in panning mode.
@@ -448,7 +473,7 @@ export function Grid({
     // - When playing we must use the engine's *world* time (monotonic) so the chord lane
     //   stays aligned across loops.
     // - playback.position is loop-relative and would visually "jump".
-    const worldT = playback.isPlaying
+    const worldT = isPlaying
       ? playbackEngine.getWorldPositionT16()
       : createView.cameraWorldT;
     const camLeft = cameraLeftWorldT(worldT, rect.width, pxPerTVal);
@@ -458,7 +483,7 @@ export function Grid({
     const { tLocal } = resolveToCanonical(clickWorldT, totalT16);
 
     return Math.max(0, Math.min(totalT16, Math.round(tLocal)));
-  }, [arrangement, followMode.pxPerT, playback.isPlaying, createView.cameraWorldT]);
+  }, [arrangement, followMode.pxPerT, isPlaying, createView.cameraWorldT]);
 
   /**
    * Install global mouse listeners while dragging a chord boundary.
@@ -525,7 +550,7 @@ export function Grid({
     const pxPerTVal = followMode.pxPerT;
     const loopLen = arrangement.bars * arrangement.timeSig.numerator * 4;
     const currentWorldT = mode === 'create'
-      ? (playback.isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+      ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
       : (followMode.pendingWorldT !== null
         ? followMode.pendingWorldT
         : playbackEngine.getWorldPositionT16());
@@ -559,7 +584,7 @@ export function Grid({
     }
 
     return null;
-  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, playback.isPlaying]);
+  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, isPlaying]);
 
   /**
    * Convert a snapped semitone into (deg, octaveOffset) for storage in the arrangement.
@@ -716,7 +741,7 @@ export function Grid({
     const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
 
     return { t16, deg, octave };
-  }, [arrangement, getPitchRange, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, playback.isPlaying]);
+  }, [arrangement, getPitchRange, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, isPlaying]);
 
   /**
    * Main drawing function.
@@ -800,7 +825,7 @@ export function Grid({
     // - Play mode follows playback (or pending drag)
     // - Create mode uses the independent camera position
     const worldT = mode === 'create'
-      ? (playback.isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+      ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
       : (followMode.pendingWorldT !== null
         ? followMode.pendingWorldT
         : playbackEngine.getWorldPositionT16());
@@ -814,7 +839,6 @@ export function Grid({
 
     // Which tile indices overlap the visible range (forward-only, clamped >= 0).
     // In one-shot mode (loopEnabled=false), only draw tile 0 — no tiling.
-    const loopEnabled = playback.loopEnabled;
     const [kStart, kEnd] = loopEnabled
       ? getTileRange(camLeft, viewEnd, loopLengthT)
       : [0, 0] as [number, number];
@@ -1075,7 +1099,7 @@ export function Grid({
         // The live trace (drawn below) replaces it during recording.
         // Without this, both traces render simultaneously, causing flickering
         // and wrong-color artifacts.
-        if (playback.isRecording && voiceId === livePitchTraceVoiceId) continue;
+        if (isRecording && voiceId === livePitchTraceVoiceId) continue;
 
         const voiceIndex = arrangement.voices.findIndex(v => v.id === voiceId);
         if (voiceIndex === -1) continue;
@@ -1113,7 +1137,7 @@ export function Grid({
       // This is important in Loop mode so that, as the next repetition (bar 1) scrolls
       // into view near the end of the current loop, you can also see the beginning of
       // the pitch trace you are currently recording.
-      if (livePitchTrace.length > 0 && livePitchTraceVoiceId && playback.isRecording) {
+      if (livePitchTrace.length > 0 && livePitchTraceVoiceId && isRecording) {
         // Use the tagged voiceId (not armedVoiceId) so the color is always
         // correct even if armedVoiceId changes mid-render.
         const voiceIndex = arrangement.voices.findIndex(v => v.id === livePitchTraceVoiceId);
@@ -1334,7 +1358,7 @@ export function Grid({
       // Pop the clip rect.
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, createView.cameraWorldT, playback.isPlaying]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, createView.cameraWorldT, isPlaying, loopEnabled]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -2531,7 +2555,7 @@ export function Grid({
                       return containerRect.width - GRID_MARGIN.left - GRID_MARGIN.right;
                     })();
 
-                    const worldT = playback.isPlaying
+                    const worldT = isPlaying
                       ? playbackEngine.getWorldPositionT16()
                       : createView.cameraWorldT;
 
@@ -2539,7 +2563,7 @@ export function Grid({
                     const visDur = visibleDurationT(laneWidth, pxPerTVal);
                     const viewEnd = camLeft + visDur;
 
-                    const [kStart, kEnd] = playback.loopEnabled
+                    const [kStart, kEnd] = loopEnabled
                       ? getTileRange(camLeft, viewEnd, totalT16)
                       : [0, 0] as [number, number];
 

@@ -53,6 +53,32 @@ function App() {
   // Count-in visual state
   const [countInDisplay, setCountInDisplay] = useState<number | null>(null);
 
+  // Throttle UI position updates during normal playback.
+  // The engine emits position updates every animation frame (~60fps).
+  // Writing those into the Zustand store at 60fps forces many React components
+  // (including BOTH Grid layers) to re-render at 60fps, which can cause stutter.
+  //
+  // IMPORTANT:
+  // - While recording, we do NOT throttle because auto-stop logic depends on
+  //   receiving the near-end position before the loop wraps.
+  const lastUiPositionUpdateMsRef = useRef<number>(0);
+  const onEnginePositionUpdate = (t16: number) => {
+    const storeState = useAppStore.getState();
+    const isRecording = storeState.playback.isRecording;
+
+    if (isRecording) {
+      setPosition(t16);
+      return;
+    }
+
+    const nowMs = performance.now();
+    const UI_POSITION_THROTTLE_MS = 33; // ~30fps
+    if (nowMs - lastUiPositionUpdateMsRef.current < UI_POSITION_THROTTLE_MS) return;
+
+    lastUiPositionUpdateMsRef.current = nowMs;
+    setPosition(t16);
+  };
+
   // Track the previous transport flags so we can tell the difference between:
   // - starting playback
   // - starting recording (which may want count-in)
@@ -84,9 +110,7 @@ function App() {
         // This also ensures panning defaults + mixer settings can apply immediately.
         if (arrangement && !playbackEngine.getIsPlaying()) {
           playbackEngine.initialize(arrangement, {
-            onPositionUpdate: (t16) => {
-              setPosition(t16);
-            },
+            onPositionUpdate: onEnginePositionUpdate,
           });
         }
 
@@ -137,9 +161,7 @@ function App() {
 
     if (AudioService.isReady()) {
       playbackEngine.initialize(arrangement, {
-        onPositionUpdate: (t16) => {
-          setPosition(t16);
-        },
+        onPositionUpdate: onEnginePositionUpdate,
         onLoop: () => {
           console.log('Loop');
         },
@@ -201,9 +223,7 @@ function App() {
       if (!playbackEngine.getIsPlaying() && !AudioService.isReady()) {
         await AudioService.initialize();
         playbackEngine.initialize(arrangement, {
-          onPositionUpdate: (t16) => {
-            setPosition(t16);
-          },
+          onPositionUpdate: onEnginePositionUpdate,
           onCountIn: (beat, total) => {
             // Show count-in visual feedback
             setCountInDisplay(total - beat + 1);
