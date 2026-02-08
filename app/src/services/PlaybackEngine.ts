@@ -708,6 +708,11 @@ export class PlaybackEngine {
     // Ensure the audio context is running (safe to call inside a user gesture).
     void AudioService.resume();
 
+    // Preview auditioning should be audible even when transport playback is stopped.
+    // stop()/pause() fade the shared transport gain to 0 to prevent clicks.
+    // play() fades it back up, but preview notes can happen while not playing.
+    AudioService.fadeTransportGain(1, this.transportFadeSeconds);
+
     const freq = this.getPreviewFrequency(deg, octaveOffset, semi);
     previewSynth.noteOn(freq);
 
@@ -735,6 +740,8 @@ export class PlaybackEngine {
 
     const wasPlaying = this.previewSynthIsPlaying.get(voiceId) ?? false;
     if (!wasPlaying) {
+      // Ensure the shared transport output is audible for preview notes.
+      AudioService.fadeTransportGain(1, this.transportFadeSeconds);
       previewSynth.noteOn(freq);
       const nowMs = window.performance.now();
       this.previewSynthIsPlaying.set(voiceId, true);

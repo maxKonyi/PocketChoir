@@ -16,6 +16,7 @@ import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMid
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 import { darkenColor } from '../../utils/colors';
 import { playbackEngine } from '../../services/PlaybackEngine';
+import { AudioService } from '../../services/AudioService';
 import {
   cameraLeftWorldT,
   visibleDurationT,
@@ -238,6 +239,34 @@ export function Grid({
   const arrangement = arrangementFromStore || arrangementProp;
 
   const playback = useAppStore((state) => state.playback);
+  const setPosition = useAppStore((state) => state.setPosition);
+
+  // If audio isn't initialized yet, we queue the first preview attack until it is.
+  // This prevents the first click/drag in Create mode from being silent.
+  const pendingAuditionAttackRef = useRef<{ voiceId: string; deg: number; octave: number; semi?: number } | null>(null);
+
+  // Prevent double-initializing audio/engine if the user clicks rapidly.
+  const audioInitPromiseRef = useRef<Promise<void> | null>(null);
+
+  const ensureAudioAndEngineReadyForPreview = useCallback((): Promise<void> => {
+    if (AudioService.isReady()) return Promise.resolve();
+    if (audioInitPromiseRef.current) return audioInitPromiseRef.current;
+
+    audioInitPromiseRef.current = (async () => {
+      await AudioService.initialize();
+      if (arrangement) {
+        playbackEngine.initialize(arrangement, {
+          onPositionUpdate: (t16) => {
+            setPosition(t16);
+          },
+        });
+      }
+    })().finally(() => {
+      audioInitPromiseRef.current = null;
+    });
+
+    return audioInitPromiseRef.current;
+  }, [arrangement, setPosition]);
   const voiceStates = useAppStore((state) => state.voiceStates);
   const livePitchTrace = useAppStore((state) => state.livePitchTrace);
   const livePitchTraceVoiceId = useAppStore((state) => state.livePitchTraceVoiceId);
@@ -1862,10 +1891,26 @@ export function Grid({
 
     // Start the synth preview note (rings while the mouse is held down).
     auditionRef.current = { voiceId };
-    if (existingNode?.term) {
-      playbackEngine.previewSynthAttack(voiceId, existingNode.deg, existingNode.octave || 0, existingNode.semi);
+
+    const attack = (deg: number, octave: number, semi?: number) => {
+      playbackEngine.previewSynthAttack(voiceId, deg, octave, semi);
+    };
+
+    const attackDeg = existingNode?.term ? existingNode.deg : snapped.deg;
+    const attackOct = existingNode?.term ? (existingNode.octave || 0) : snapped.octave;
+    const attackSemi = existingNode?.term ? existingNode.semi : snapped.semi;
+
+    if (AudioService.isReady()) {
+      attack(attackDeg, attackOct, attackSemi);
     } else {
-      playbackEngine.previewSynthAttack(voiceId, snapped.deg, snapped.octave, snapped.semi);
+      // Queue the attack until audio is ready, but only if the user is still holding the mouse.
+      pendingAuditionAttackRef.current = { voiceId, deg: attackDeg, octave: attackOct, semi: attackSemi };
+      void ensureAudioAndEngineReadyForPreview().then(() => {
+        const pending = pendingAuditionAttackRef.current;
+        if (!pending) return;
+        if (auditionRef.current?.voiceId !== pending.voiceId) return;
+        attack(pending.deg, pending.octave, pending.semi);
+      });
     }
 
     if (existingNode) {
@@ -2063,6 +2108,8 @@ export function Grid({
       playbackEngine.previewSynthRelease(audition.voiceId);
       auditionRef.current = null;
     }
+
+    pendingAuditionAttackRef.current = null;
   }, [dragState, mode, addNode, arrangement, followMode.isDraggingTimeline, followMode.pendingWorldT, commitTimelineDrag]);
 
   // Follow-mode horizontal zoom action from the store
