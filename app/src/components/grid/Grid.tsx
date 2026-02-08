@@ -259,11 +259,62 @@ export function Grid({
   const updatePendingWorldT = useAppStore((state) => state.updatePendingWorldT);
   const commitTimelineDrag = useAppStore((state) => state.commitTimelineDrag);
 
+  // Create-mode view state and actions
+  const createView = useAppStore((state) => state.createView);
+  const setCreateCameraWorldT = useAppStore((state) => state.setCreateCameraWorldT);
+  const adjustCreatePitchPanSemitones = useAppStore((state) => state.adjustCreatePitchPanSemitones);
+  const resetCreateView = useAppStore((state) => state.resetCreateView);
+
   // Ref to track drag start position for scrub gestures
   const dragStartRef = useRef<{ startX: number; startWorldT: number } | null>(null);
 
+  // Ref to track right-click panning in Create mode
+  const rightDragRef = useRef<{ startX: number; startWorldT: number } | null>(null);
+
+  /**
+   * Set the Create-mode camera, and (when paused) also scrub the playback engine
+   * so playback starts from what you are looking at.
+   */
+  const setCreateCameraAndMaybeSeek = useCallback((nextWorldT: number) => {
+    setCreateCameraWorldT(nextWorldT);
+
+    // If we are not actively playing, keep engine position aligned with the camera.
+    if (!playback.isPlaying) {
+      playbackEngine.seekWorld(nextWorldT);
+    }
+  }, [setCreateCameraWorldT, playback.isPlaying]);
+
+  // When you stop playback in Create mode, snap the camera to the current engine position
+  // so you can immediately edit what you just heard.
+  useEffect(() => {
+    if (mode !== 'create') return;
+    if (playback.isPlaying) return;
+    setCreateCameraWorldT(playbackEngine.getWorldPositionT16());
+  }, [mode, playback.isPlaying, setCreateCameraWorldT]);
+
+  // If the mouse is released outside the canvas, we still need to stop the right-click pan.
+  // Without this, the grid can get "stuck" in panning mode.
+  useEffect(() => {
+    if (mode !== 'create') return;
+
+    const stopRightPan = () => {
+      if (rightDragRef.current) {
+        rightDragRef.current = null;
+      }
+    };
+
+    window.addEventListener('mouseup', stopRightPan);
+    window.addEventListener('blur', stopRightPan);
+
+    return () => {
+      window.removeEventListener('mouseup', stopRightPan);
+      window.removeEventListener('blur', stopRightPan);
+    };
+  }, [mode]);
+
   // Chord-track editor actions (Create mode)
   const enableChordTrack = useAppStore((state) => state.enableChordTrack);
+  const disableChordTrack = useAppStore((state) => state.disableChordTrack);
   const setChordName = useAppStore((state) => state.setChordName);
   const splitChordAt = useAppStore((state) => state.splitChordAt);
   const resizeChordBoundary = useAppStore((state) => state.resizeChordBoundary);
@@ -275,6 +326,7 @@ export function Grid({
 
   // Hover-based split marker (Create mode chord editing)
   const [hoverSplitT16, setHoverSplitT16] = useState<number | null>(null);
+  const [hoverSplitScreenX, setHoverSplitScreenX] = useState<number | null>(null);
 
   // DOM ref for the chord lane overlay (used for boundary-drag hit testing).
   const chordLaneRef = useRef<HTMLDivElement | null>(null);
@@ -319,6 +371,7 @@ export function Grid({
     setEditingChordIndex(null);
     setEditingChordName('');
     setHoverSplitT16(null);
+    setHoverSplitScreenX(null);
   }, [arrangement?.id]);
 
   /**
@@ -342,11 +395,27 @@ export function Grid({
     if (!lane) return null;
 
     const rect = lane.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const pct = Math.max(0, Math.min(1, x / rect.width));
     const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-    return Math.round(pct * totalT16);
-  }, [arrangement]);
+
+    // Chord lane is aligned with the grid's drawing area (same left/right margins),
+    // so we use the same camera math as the canvas to map pixels -> world time.
+    const pxPerTVal = followMode.pxPerT;
+
+    // IMPORTANT:
+    // - When playing we must use the engine's *world* time (monotonic) so the chord lane
+    //   stays aligned across loops.
+    // - playback.position is loop-relative and would visually "jump".
+    const worldT = playback.isPlaying
+      ? playbackEngine.getWorldPositionT16()
+      : createView.cameraWorldT;
+    const camLeft = cameraLeftWorldT(worldT, rect.width, pxPerTVal);
+
+    const screenX = clientX - rect.left;
+    const clickWorldT = screenXToWorldT(screenX, camLeft, pxPerTVal);
+    const { tLocal } = resolveToCanonical(clickWorldT, totalT16);
+
+    return Math.max(0, Math.min(totalT16, Math.round(tLocal)));
+  }, [arrangement, followMode.pxPerT, playback.isPlaying, createView.cameraWorldT]);
 
   /**
    * Install global mouse listeners while dragging a chord boundary.
@@ -409,12 +478,14 @@ export function Grid({
 
     const hitRadius = 14;
 
-    // ── Follow-mode: compute camera to position nodes on screen ──
+    // ── Compute camera to position nodes on screen ──
     const pxPerTVal = followMode.pxPerT;
     const loopLen = arrangement.bars * arrangement.timeSig.numerator * 4;
-    const currentWorldT = followMode.pendingWorldT !== null
-      ? followMode.pendingWorldT
-      : playbackEngine.getWorldPositionT16();
+    const currentWorldT = mode === 'create'
+      ? (playback.isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+      : (followMode.pendingWorldT !== null
+        ? followMode.pendingWorldT
+        : playbackEngine.getWorldPositionT16());
     const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
     const visDur = visibleDurationT(gridWidth, pxPerTVal);
     const [kStart, kEnd] = getTileRange(camLeft, camLeft + visDur, loopLen);
@@ -445,7 +516,7 @@ export function Grid({
     }
 
     return null;
-  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT]);
+  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, playback.isPlaying]);
 
   /**
    * Convert a snapped semitone into (deg, octaveOffset) for storage in the arrangement.
@@ -527,8 +598,10 @@ export function Grid({
     const zoomedRange = anchor.paddedRangeSemitones / zoomFactor;
 
     // Calculate final min/max centered on the arrangement anchor
-    const finalMin = Math.floor(anchor.centerSemitone - zoomedRange / 2);
-    const finalMax = Math.ceil(anchor.centerSemitone + zoomedRange / 2);
+    // In Create mode we allow vertical panning (pitchPanSemitones) without changing the anchor.
+    const pitchPan = mode === 'create' ? createView.pitchPanSemitones : 0;
+    const finalMin = Math.floor(anchor.centerSemitone - zoomedRange / 2 + pitchPan);
+    const finalMax = Math.ceil(anchor.centerSemitone + zoomedRange / 2 + pitchPan);
 
     // Calculate frequency range (using MIDI-based calculation)
     // Get the MIDI pitch of the arrangement's tonic at base octave 4
@@ -542,7 +615,7 @@ export function Grid({
     const maxFreq = midiToFrequency(effectiveTonicMidi + finalMax);
 
     return { minSemitone: finalMin, maxSemitone: finalMax, minFreq, maxFreq, effectiveTonicMidi };
-  }, [arrangement, display.zoomLevel, pitchRangeAnchor, computePitchRangeAnchor, transposition]);
+  }, [arrangement, display.zoomLevel, pitchRangeAnchor, computePitchRangeAnchor, transposition, mode, createView.pitchPanSemitones]);
 
   /**
    * Given a mouse event, compute the nearest legal grid point for Create mode.
@@ -572,11 +645,13 @@ export function Grid({
     const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
     const { minSemitone, maxSemitone } = getPitchRange();
 
-    // ── Follow-mode: convert screen X → world time → canonical local t16 ──
+    // ── Convert screen X → world time → canonical local t16 ──
     const pxPerTVal = followMode.pxPerT;
-    const currentWorldT = followMode.pendingWorldT !== null
-      ? followMode.pendingWorldT
-      : playbackEngine.getWorldPositionT16();
+    const currentWorldT = mode === 'create'
+      ? createView.cameraWorldT
+      : (followMode.pendingWorldT !== null
+        ? followMode.pendingWorldT
+        : playbackEngine.getWorldPositionT16());
     const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
 
     // Screen X (relative to grid left) → world time
@@ -598,7 +673,7 @@ export function Grid({
     const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
 
     return { t16, deg, octave };
-  }, [arrangement, getPitchRange, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT]);
+  }, [arrangement, getPitchRange, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, playback.isPlaying]);
 
   /**
    * Main drawing function.
@@ -678,10 +753,14 @@ export function Grid({
     // Horizontal zoom: pixels per 16th note
     const pxPerT = followMode.pxPerT;
 
-    // Current world time: use pendingWorldT during a drag, otherwise read from the engine.
-    const worldT = followMode.pendingWorldT !== null
-      ? followMode.pendingWorldT
-      : playbackEngine.getWorldPositionT16();
+    // World time at the playhead (viewport center):
+    // - Play mode follows playback (or pending drag)
+    // - Create mode uses the independent camera position
+    const worldT = mode === 'create'
+      ? (playback.isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+      : (followMode.pendingWorldT !== null
+        ? followMode.pendingWorldT
+        : playbackEngine.getWorldPositionT16());
 
     // Camera left edge in world time (may be negative near the start).
     const camLeft = cameraLeftWorldT(worldT, gridWidth, pxPerT);
@@ -1200,7 +1279,7 @@ export function Grid({
       // Pop the clip rect.
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, playback.isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, createView.cameraWorldT, playback.isPlaying]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -1688,6 +1767,15 @@ export function Grid({
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!arrangement) return;
 
+    // ── Create mode: right-click drag pans the timeline (horizontal scroll) ──
+    // This keeps left-click free for node placement/editing.
+    if (mode === 'create' && e.button === 2) {
+      e.preventDefault();
+      const startWorldT = createView.cameraWorldT;
+      rightDragRef.current = { startX: e.clientX, startWorldT };
+      return;
+    }
+
     // ── Play mode: start a timeline scrub/drag (seek-on-release) ──
     if (mode === 'play') {
       const currentWorldT = playbackEngine.getWorldPositionT16();
@@ -1746,6 +1834,9 @@ export function Grid({
     if (existingNode && e.shiftKey) {
       removeNode(voiceId, existingNode.t16);
       placingNewNodeRef.current = null;
+
+      // If a right-click pan was in progress, cancel it.
+      rightDragRef.current = null;
       auditionRef.current = null;
       playbackEngine.previewSynthRelease(voiceId);
       return;
@@ -1791,6 +1882,17 @@ export function Grid({
    */
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!arrangement) return;
+
+    // ── Create mode: continue right-click pan (horizontal scroll) ──
+    if (mode === 'create' && rightDragRef.current) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const dx = e.clientX - rightDragRef.current.startX;
+      const dT = dragPixelsToTimeDelta(dx, followMode.pxPerT);
+      setCreateCameraAndMaybeSeek(rightDragRef.current.startWorldT + dT);
+      return;
+    }
 
     // ── Play mode: update pending world time during a drag ──
     if (mode === 'play' && followMode.isDraggingTimeline && dragStartRef.current) {
@@ -1948,6 +2050,7 @@ export function Grid({
   // Follow-mode horizontal zoom action from the store
   const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
   const setMinPxPerT = useAppStore((state) => state.setMinPxPerT);
+  const setZoomLevel = useAppStore((state) => state.setZoomLevel);
 
   /**
    * Keep the store's minPxPerT floor in sync with the current grid width and arrangement.
@@ -1975,16 +2078,146 @@ export function Grid({
    * Uses Shift as the modifier key to avoid conflicting with browser Ctrl+scroll zoom.
    */
   const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
-    // Only zoom when Shift is held (Ctrl conflicts with browser zoom)
-    if (!e.shiftKey) return;
-    e.preventDefault();
+    if (!arrangement) return;
 
-    if (e.deltaY < 0) {
-      setHorizontalZoom('in');
-    } else if (e.deltaY > 0) {
-      setHorizontalZoom('out');
+    // In Create mode we support scroll/pan/zoom without stealing left-click.
+    // We treat the wheel as a navigation control and prevent the page from scrolling.
+    if (mode !== 'create') {
+      // Play mode: keep the existing Shift+wheel horizontal zoom behavior.
+      if (!e.shiftKey) return;
+      e.preventDefault();
+      if (e.deltaY < 0) setHorizontalZoom('in');
+      if (e.deltaY > 0) setHorizontalZoom('out');
+      return;
     }
-  }, [setHorizontalZoom]);
+
+    // Create mode:
+    // - Wheel: vertical pan (pitch)
+    // - Alt+Wheel: horizontal pan (time)
+    // - Shift+Wheel: horizontal zoom
+    // - Alt+Shift+Wheel: vertical zoom (pitch zoom)
+
+    // Vertical zoom uses Alt+Shift so we don't fight the browser Ctrl+wheel zoom.
+    if (e.shiftKey && e.altKey) {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const next = Math.max(0.25, Math.min(6, display.zoomLevel * factor));
+      setZoomLevel(next);
+      return;
+    }
+
+    if (e.shiftKey) {
+      e.preventDefault();
+      if (e.deltaY < 0) setHorizontalZoom('in');
+      if (e.deltaY > 0) setHorizontalZoom('out');
+      return;
+    }
+
+    // Alt (or trackpad horizontal scroll) pans time.
+    const wantsHorizontalPan = e.altKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+    if (wantsHorizontalPan) {
+      e.preventDefault();
+      const dT = dragPixelsToTimeDelta(e.deltaX, followMode.pxPerT);
+      setCreateCameraAndMaybeSeek(createView.cameraWorldT + dT);
+      return;
+    }
+
+    // Default: vertical pan in semitone space.
+    e.preventDefault();
+    const semitonesPerWheel = 0.03;
+    adjustCreatePitchPanSemitones(e.deltaY * semitonesPerWheel);
+  }, [arrangement, mode, setHorizontalZoom, followMode.pxPerT, setCreateCameraAndMaybeSeek, createView.cameraWorldT, adjustCreatePitchPanSemitones, display.zoomLevel, setZoomLevel]);
+
+  // Create-mode keyboard navigation + hotkeys
+  useEffect(() => {
+    if (mode !== 'create') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't fire while typing in inputs.
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        const isEditable = target.isContentEditable
+          || tag === 'INPUT'
+          || tag === 'TEXTAREA'
+          || (target as HTMLInputElement).type === 'text';
+        if (isEditable) return;
+      }
+
+      // Horizontal pan with arrow keys (hold Shift for bigger steps)
+      const bigStep = 16;
+      const smallStep = 4;
+      const step = e.shiftKey ? bigStep : smallStep;
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setCreateCameraAndMaybeSeek(createView.cameraWorldT - step);
+        return;
+      }
+
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setCreateCameraAndMaybeSeek(createView.cameraWorldT + step);
+        return;
+      }
+
+      // Vertical pan with W/S (hold Shift for bigger steps)
+      if (e.key.toLowerCase() === 'w') {
+        e.preventDefault();
+        adjustCreatePitchPanSemitones(1 * (e.shiftKey ? 4 : 1));
+        return;
+      }
+
+      if (e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        adjustCreatePitchPanSemitones(-1 * (e.shiftKey ? 4 : 1));
+        return;
+      }
+
+      // Horizontal zoom with +/-
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault();
+        setHorizontalZoom('in');
+        return;
+      }
+
+      if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        setHorizontalZoom('out');
+        return;
+      }
+
+      // Vertical zoom with [ ]
+      if (e.key === '[') {
+        e.preventDefault();
+        setZoomLevel(Math.max(0.25, display.zoomLevel / 1.12));
+        return;
+      }
+
+      if (e.key === ']') {
+        e.preventDefault();
+        setZoomLevel(Math.min(6, display.zoomLevel * 1.12));
+        return;
+      }
+
+      // Reset view (time + pitch pan) with 0
+      if (e.key === '0') {
+        e.preventDefault();
+        resetCreateView();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mode, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, resetCreateView]);
+
+  // Prevent the browser context menu when right-clicking the grid.
+  // (Right-click is used for panning in Create mode.)
+  const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (mode !== 'create') return;
+    e.preventDefault();
+  }, [mode]);
 
   return (
     <div
@@ -2032,24 +2265,29 @@ export function Grid({
             }}
             onMouseLeave={() => {
               setHoverSplitT16(null);
+              setHoverSplitScreenX(null);
             }}
             onMouseMove={(e) => {
               if (!arrangement.chords || arrangement.chords.length === 0) {
                 setHoverSplitT16(null);
+                setHoverSplitScreenX(null);
                 return;
               }
               if (editingChordIndex !== null) {
                 setHoverSplitT16(null);
+                setHoverSplitScreenX(null);
                 return;
               }
               if (chordBoundaryDragRef.current) {
                 setHoverSplitT16(null);
+                setHoverSplitScreenX(null);
                 return;
               }
 
               const rect = chordLaneRef.current?.getBoundingClientRect();
               if (!rect) {
                 setHoverSplitT16(null);
+                setHoverSplitScreenX(null);
                 return;
               }
 
@@ -2060,9 +2298,11 @@ export function Grid({
               const inTopHoverZone = yFromVisualTop >= -6 && yFromVisualTop <= 2;
               if (!inTopHoverZone) {
                 setHoverSplitT16(null);
+                setHoverSplitScreenX(null);
                 return;
               }
 
+              setHoverSplitScreenX(e.clientX - rect.left);
               setHoverSplitT16(chordLaneMouseXToT16(e.clientX));
             }}
             onClick={(e) => {
@@ -2091,128 +2331,169 @@ export function Grid({
                 </button>
               ) : (
                 <>
+                  <button
+                    type="button"
+                    className="absolute -right-10 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-[var(--text-muted)] hover:text-red-300 hover:bg-red-500/10 hover:border-red-500/20 transition-colors pointer-events-auto"
+                    title="Disable Chord Track"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      disableChordTrack();
+                    }}
+                  >
+                    🗑
+                  </button>
+
                   {/* Hover split marker */}
-                  {hoverSplitT16 !== null && (() => {
-                    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-                    const leftPct = (hoverSplitT16 / totalT16) * 100;
-                    return (
-                      <div
-                        className="absolute top-0 h-full"
-                        style={{
-                          left: `${leftPct}%`,
-                          transform: 'translateX(-50%)',
-                          pointerEvents: 'none',
-                        }}
-                      >
-                        <div className="absolute left-1/2 top-0 -translate-x-1/2 w-px h-full bg-white/25" />
-                        <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full border border-white/20 bg-white/10 text-[var(--text-primary)] text-[12px] font-black flex items-center justify-center cursor-pointer">
-                          +
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Chord blocks */}
-                  {arrangement.chords!.map((chord, idx) => {
-                  const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-                  const leftPct = (chord.t16 / totalT16) * 100;
-                  const widthPct = (chord.duration16 / totalT16) * 100;
-                  const isEditing = editingChordIndex === idx;
-                  const isDiatonicChord = isChordDiatonic(chord, arrangement);
-
-                  return (
+                  {hoverSplitT16 !== null && hoverSplitScreenX !== null && (
                     <div
-                      key={`${chord.t16}-${idx}`}
-                      className="absolute top-0 h-full rounded-lg border border-white/10"
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${widthPct}%`,
-                        background: isDiatonicChord
-                          ? `linear-gradient(to bottom, var(--chord-fill-top), var(--chord-fill-bottom))`
-                          : `linear-gradient(to bottom, var(--chord-fill-tension-top), var(--chord-fill-tension-bottom))`,
-                        borderColor: isDiatonicChord ? 'var(--chord-stroke)' : 'var(--chord-stroke-tension)',
-                      }}
-                      title="Shift+click to delete. Drag edges to stretch or overwrite."
-                      onDoubleClick={(evt) => {
-                        // Double-click focuses the inline rename input for the clicked chord.
-                        evt.stopPropagation();
-                        setEditingChordIndex(idx);
-                        setEditingChordName(chord.name);
-                      }}
-                      onClick={(evt) => {
-                        // Shift+click removes the chord without needing an X button.
-                        evt.stopPropagation();
-                        if (evt.shiftKey) {
-                          deleteChord(idx);
-                        }
-                      }}
-                    >
-                      <div className="absolute inset-0 flex items-center justify-center px-2">
-                        {isEditing ? (
-                          <input
-                            value={editingChordName}
-                            autoFocus
-                            className={`w-full bg-transparent text-center text-xs font-bold outline-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
-                            onChange={(evt) => setEditingChordName(evt.target.value)}
-                            onBlur={() => commitChordNameEdit()}
-                            onKeyDown={(evt) => {
-                              if (evt.key === 'Enter') {
-                                commitChordNameEdit();
-                              }
-                              if (evt.key === 'Escape') {
-                                setEditingChordIndex(null);
-                              }
-                            }}
-                            onClick={(evt) => evt.stopPropagation()}
-                          />
-                        ) : (
-                          <span
-                            className={`text-xs font-bold select-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
-                            style={{ textShadow: '0 2px 6px rgba(0,0,0,0.35)' }}
-                            title="Double-click to rename. Hover near the top and click to split."
-                          >
-                            {chord.name}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* Boundary resize handles (between chords) */}
-                {arrangement.chords!.slice(0, -1).map((chord, idx) => {
-                  const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-                  const boundaryT16 = chord.t16 + chord.duration16;
-                  const boundaryPct = (boundaryT16 / totalT16) * 100;
-                  return (
-                    <div
-                      key={`boundary-${idx}-${boundaryT16}`}
                       className="absolute top-0 h-full"
                       style={{
-                        left: `calc(${boundaryPct}% - 6px)`,
-                        width: 12,
-                        cursor: 'col-resize',
-                      }}
-                      title="Drag to resize chord boundary"
-                      onMouseDown={(evt) => {
-                        evt.preventDefault();
-                        evt.stopPropagation();
-                        chordBoundaryDragRef.current = { leftChordIndex: idx };
-                      }}
-                      onClick={(evt) => {
-                        evt.stopPropagation();
+                        left: hoverSplitScreenX,
+                        transform: 'translateX(-50%)',
+                        pointerEvents: 'none',
                       }}
                     >
-                      <div className="mx-auto h-full w-px bg-white/20" />
+                      <div className="absolute left-1/2 top-0 -translate-x-1/2 w-px h-full bg-white/25" />
+                      <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full border border-white/20 bg-white/10 text-[var(--text-primary)] text-[12px] font-black flex items-center justify-center cursor-pointer">
+                        +
+                      </div>
                     </div>
-                  );
-                })}
+                  )}
+
+                  {/* Chord blocks (synced to grid camera + zoom) */}
+                  {(() => {
+                    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+                    const pxPerTVal = followMode.pxPerT;
+
+                    // Width of the chord lane's visible area (same as the grid drawing width).
+                    const laneWidth = (() => {
+                      const laneRect = chordLaneRef.current?.getBoundingClientRect();
+                      if (laneRect) return laneRect.width;
+                      const containerRect = containerRef.current?.getBoundingClientRect();
+                      if (!containerRect) return 0;
+                      return containerRect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+                    })();
+
+                    const worldT = playback.isPlaying
+                      ? playbackEngine.getWorldPositionT16()
+                      : createView.cameraWorldT;
+
+                    const camLeft = cameraLeftWorldT(worldT, laneWidth, pxPerTVal);
+                    const visDur = visibleDurationT(laneWidth, pxPerTVal);
+                    const viewEnd = camLeft + visDur;
+
+                    const [kStart, kEnd] = playback.loopEnabled
+                      ? getTileRange(camLeft, viewEnd, totalT16)
+                      : [0, 0] as [number, number];
+
+                    const blocks: React.ReactNode[] = [];
+
+                    for (let k = kStart; k <= kEnd; k++) {
+                      const tileOffsetWorld = k * totalT16;
+
+                      for (let idx = 0; idx < arrangement.chords!.length; idx++) {
+                        const chord = arrangement.chords![idx];
+                        const drawWorldT = chord.t16 + tileOffsetWorld;
+                        if (drawWorldT < 0) continue;
+
+                        const leftPx = worldTToScreenX(drawWorldT, camLeft, pxPerTVal);
+                        const widthPx = Math.max(1, chord.duration16 * pxPerTVal);
+
+                        // Cull blocks far outside the lane to reduce DOM work.
+                        if (leftPx > laneWidth + 200 || leftPx + widthPx < -200) continue;
+
+                        const isEditing = editingChordIndex === idx;
+                        const isDiatonicChord = isChordDiatonic(chord, arrangement);
+
+                        blocks.push(
+                          <div
+                            key={`${k}-${chord.t16}-${idx}`}
+                            className="absolute top-0 h-full rounded-lg border border-white/10"
+                            style={{
+                              left: leftPx,
+                              width: widthPx,
+                              background: isDiatonicChord
+                                ? `linear-gradient(to bottom, var(--chord-fill-top), var(--chord-fill-bottom))`
+                                : `linear-gradient(to bottom, var(--chord-fill-tension-top), var(--chord-fill-tension-bottom))`,
+                              borderColor: isDiatonicChord ? 'var(--chord-stroke)' : 'var(--chord-stroke-tension)',
+                            }}
+                            title="Shift+click to delete. Drag edges to stretch or overwrite."
+                            onDoubleClick={(evt) => {
+                              evt.stopPropagation();
+                              setEditingChordIndex(idx);
+                              setEditingChordName(chord.name);
+                            }}
+                            onClick={(evt) => {
+                              evt.stopPropagation();
+                              if (evt.shiftKey) {
+                                deleteChord(idx);
+                              }
+                            }}
+                          >
+                            <div className="absolute inset-0 flex items-center justify-center px-2">
+                              {isEditing ? (
+                                <input
+                                  value={editingChordName}
+                                  autoFocus
+                                  className={`w-full bg-transparent text-center text-xs font-bold outline-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
+                                  onChange={(evt) => setEditingChordName(evt.target.value)}
+                                  onBlur={() => commitChordNameEdit()}
+                                  onKeyDown={(evt) => {
+                                    if (evt.key === 'Enter') {
+                                      evt.preventDefault();
+                                      commitChordNameEdit();
+                                    }
+                                    if (evt.key === 'Escape') {
+                                      evt.preventDefault();
+                                      setEditingChordIndex(null);
+                                      setEditingChordName('');
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                <span className={`text-xs font-bold ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}>
+                                  {chord.name}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Resize handles: only meaningful on the canonical chord track (tile 0) */}
+                            {k === 0 && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="absolute left-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
+                                  title="Drag to resize"
+                                  onMouseDown={(evt) => {
+                                    evt.stopPropagation();
+                                    chordBoundaryDragRef.current = { leftChordIndex: idx - 1 };
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  className="absolute right-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
+                                  title="Drag to resize"
+                                  onMouseDown={(evt) => {
+                                    evt.stopPropagation();
+                                    chordBoundaryDragRef.current = { leftChordIndex: idx };
+                                  }}
+                                />
+                              </>
+                            )}
+                          </div>
+                        );
+                      }
+                    }
+
+                    return blocks;
+                  })()}
+
                 </>
-              )}
+                )}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
       <canvas
         ref={canvasRef}
@@ -2227,6 +2508,7 @@ export function Grid({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
+        onContextMenu={handleContextMenu}
         onMouseLeave={() => {
           hoverPreviewRef.current = null;
           handleMouseUp();

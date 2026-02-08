@@ -77,6 +77,30 @@ interface FollowModeState {
   isDraggingMinimap: boolean;      // True while the user is dragging inside the minimap.
 }
 
+/**
+ * Create-mode view state.
+ *
+ * Create mode needs independent navigation (pan/scroll + zoom) that does NOT
+ * steal left-click away from node placement/editing.
+ */
+interface CreateViewState {
+  cameraWorldT: number;          // Camera center position in world-time (16th notes, monotonic)
+  pitchPanSemitones: number;     // Vertical pan offset (semitones relative to the arrangement anchor)
+}
+
+/**
+ * When editing an arrangement's parameters, these are the supported fields.
+ * (We intentionally keep this scoped to the essentials: title, tempo, length, key, scale, time signature.)
+ */
+export type ArrangementParamsUpdate = {
+  title: string;
+  tempo: number;
+  tonic: string;
+  scale: Arrangement['scale'];
+  bars: number;
+  timeSig: { numerator: number; denominator: number };
+};
+
 
 
 interface ArrangementSnapshot {
@@ -242,6 +266,14 @@ interface AppState {
 
   // Follow-mode timeline
   followMode: FollowModeState;
+
+  // Create-mode navigation view
+  createView: CreateViewState;
+
+  // Create arrangement modal
+  // - 'create': create a new arrangement
+  // - 'edit': edit params of the currently loaded arrangement (while in Create mode)
+  createModalMode: 'create' | 'edit';
 }
 
 /**
@@ -275,10 +307,14 @@ interface AppActions {
 
   // Create mode - chord track editing
   enableChordTrack: () => void;
+  disableChordTrack: () => void;
   setChordName: (chordIndex: number, name: string) => void;
   splitChordAt: (t16: number) => void;
   resizeChordBoundary: (leftChordIndex: number, newBoundaryT16: number) => void;
   deleteChord: (chordIndex: number) => void;
+
+  // Create mode - arrangement parameter editing
+  updateArrangementParams: (update: ArrangementParamsUpdate) => void;
 
   // Voice controls
   setVoiceSynthVolume: (voiceId: string, volume: number) => void;
@@ -338,6 +374,13 @@ interface AppActions {
   commitMinimapDrag: () => void;
   cancelMinimapDrag: () => void;
 
+  // Create-mode navigation
+  setCreateCameraWorldT: (worldT: number) => void;
+  adjustCreateCameraWorldT: (deltaWorldT: number) => void;
+  setCreatePitchPanSemitones: (semitones: number) => void;
+  adjustCreatePitchPanSemitones: (deltaSemitones: number) => void;
+  resetCreateView: () => void;
+
   // Theme
   setTheme: (theme: ThemeName) => void;
 
@@ -351,6 +394,7 @@ interface AppActions {
   setDisplaySettingsOpen: (open: boolean) => void;
   setSaveLoadOpen: (open: boolean) => void;
   setCreateModalOpen: (open: boolean) => void;
+  setCreateModalMode: (mode: 'create' | 'edit') => void;
 
   // Utility
   initializeVoiceStates: (voices: Voice[]) => void;
@@ -422,6 +466,11 @@ const initialFollowModeState: FollowModeState = {
   isDraggingMinimap: false,
 };
 
+const initialCreateViewState: CreateViewState = {
+  cameraWorldT: 0,
+  pitchPanSemitones: 0,
+};
+
 
 
 const initialState: AppState = {
@@ -454,6 +503,8 @@ const initialState: AppState = {
   canUndo: false,
   canRedo: false,
   followMode: initialFollowModeState,
+  createView: initialCreateViewState,
+  createModalMode: 'create',
 };
 
 /* ------------------------------------------------------------
@@ -883,6 +934,79 @@ export const useAppStore = create<AppState & AppActions>()(
       arrangement: {
         ...state.arrangement,
         chords: get().normalizeChordTrack(defaults, totalT16),
+      },
+    };
+  }),
+
+  /**
+   * Disable chord track by removing all chord blocks.
+   * The UI will show the "Enable Chord Track" button again.
+   */
+  disableChordTrack: () => set((state) => {
+    if (!state.arrangement) return state;
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+    return {
+      ...historyUpdate,
+      arrangement: {
+        ...state.arrangement,
+        chords: [],
+      },
+    };
+  }),
+
+  /**
+   * Update arrangement parameters while staying in Create mode.
+   *
+   * IMPORTANT:
+   * - We do NOT call setArrangement() here because that resets voice states/recordings/history.
+   * - We keep voice nodes, but clamp any nodes that fall beyond the new arrangement length.
+   * - If a chord track exists, we normalize it so it covers the new full timeline.
+   */
+  updateArrangementParams: (update) => set((state) => {
+    if (!state.arrangement) return state;
+
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
+    const prev = state.arrangement;
+    const nextBars = Math.max(1, Math.min(32, Math.round(update.bars)));
+    const nextTempo = Math.max(40, Math.min(240, Math.round(update.tempo)));
+    const nextTimeSigNum = Math.max(2, Math.min(12, Math.round(update.timeSig.numerator)));
+    const nextTimeSigDen = update.timeSig.denominator;
+    const nextTotalT16 = nextBars * nextTimeSigNum * 4;
+
+    const nextVoices: Voice[] = prev.voices.map((v) => ({
+      ...v,
+      nodes: v.nodes.filter((n) => n.t16 <= nextTotalT16),
+    }));
+
+    let nextChords = prev.chords;
+    if (nextChords && nextChords.length > 0) {
+      nextChords = get().normalizeChordTrack(nextChords, nextTotalT16);
+    }
+
+    const nextArrangement: Arrangement = {
+      ...prev,
+      title: update.title,
+      tempo: nextTempo,
+      tonic: update.tonic,
+      scale: update.scale,
+      bars: nextBars,
+      timeSig: { numerator: nextTimeSigNum, denominator: nextTimeSigDen },
+      voices: nextVoices,
+      chords: nextChords,
+    };
+
+    const nextPosition = Math.max(0, Math.min(state.playback.position, nextTotalT16));
+
+    return {
+      ...historyUpdate,
+      arrangement: nextArrangement,
+      playback: {
+        ...state.playback,
+        loopEnd: nextTotalT16,
+        position: nextPosition,
       },
     };
   }),
@@ -1397,11 +1521,79 @@ export const useAppStore = create<AppState & AppActions>()(
     },
   })),
 
+  // -- Create-mode navigation --
+
+  setCreateCameraWorldT: (worldT) => set((state) => {
+    const clampedMin = 0;
+
+    // In one-shot mode we clamp to the end of the arrangement so you can't pan forever.
+    const totalT16 = state.arrangement
+      ? state.arrangement.bars * state.arrangement.timeSig.numerator * 4
+      : 0;
+    const clampedMax = state.playback.loopEnabled ? Number.POSITIVE_INFINITY : totalT16;
+
+    const next = Math.max(clampedMin, Math.min(clampedMax, worldT));
+    return { createView: { ...state.createView, cameraWorldT: next } };
+  }),
+
+  adjustCreateCameraWorldT: (deltaWorldT) => set((state) => {
+    const current = state.createView.cameraWorldT;
+    const next = current + deltaWorldT;
+
+    const clampedMin = 0;
+    const totalT16 = state.arrangement
+      ? state.arrangement.bars * state.arrangement.timeSig.numerator * 4
+      : 0;
+    const clampedMax = state.playback.loopEnabled ? Number.POSITIVE_INFINITY : totalT16;
+
+    const clamped = Math.max(clampedMin, Math.min(clampedMax, next));
+    return { createView: { ...state.createView, cameraWorldT: clamped } };
+  }),
+
+  setCreatePitchPanSemitones: (semitones) => set((state) => {
+    const clamped = Math.max(-72, Math.min(72, semitones));
+    return { createView: { ...state.createView, pitchPanSemitones: clamped } };
+  }),
+
+  adjustCreatePitchPanSemitones: (deltaSemitones) => set((state) => {
+    const next = state.createView.pitchPanSemitones + deltaSemitones;
+    const clamped = Math.max(-72, Math.min(72, next));
+    return { createView: { ...state.createView, pitchPanSemitones: clamped } };
+  }),
+
+  resetCreateView: () => set({ createView: initialCreateViewState }),
+
   // -- Theme --
   setTheme: (theme) => set({ theme }),
 
   // -- Mode --
-  setMode: (mode) => set({ mode }),
+  setMode: (mode) => set((state) => {
+    if (mode === 'create') {
+      return {
+        mode,
+
+        // Create mode defaults:
+        // - One-shot (no looping)
+        // - Slightly higher grid opacity for composition
+        playback: {
+          ...state.playback,
+          loopEnabled: false,
+        },
+        display: {
+          ...state.display,
+          gridOpacity: 0.75,
+        },
+
+        // Reset the vertical pan so the pitch view starts centered.
+        createView: {
+          ...state.createView,
+          pitchPanSemitones: 0,
+        },
+      };
+    }
+
+    return { mode };
+  }),
 
   // -- UI Modals --
   setLibraryOpen: (open) => set({ isLibraryOpen: open }),
@@ -1410,6 +1602,7 @@ export const useAppStore = create<AppState & AppActions>()(
   setDisplaySettingsOpen: (open) => set({ isDisplaySettingsOpen: open }),
   setSaveLoadOpen: (open) => set({ isSaveLoadOpen: open }),
   setCreateModalOpen: (open) => set({ isCreateModalOpen: open }),
+  setCreateModalMode: (mode) => set({ createModalMode: mode }),
 
   // -- Utility --
   initializeVoiceStates: (voices) => {

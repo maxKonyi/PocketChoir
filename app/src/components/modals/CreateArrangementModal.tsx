@@ -5,7 +5,7 @@
    Allows setting: title, tempo, key, time signature, bars, voices
    ============================================================ */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Plus, Trash2, Music } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import type { Arrangement, ScaleType } from '../../types';
@@ -47,13 +47,18 @@ interface DraftVoice {
 export function CreateArrangementModal() {
   // Get state and actions from store
   const isOpen = useAppStore((state) => state.mode === 'create' && state.isCreateModalOpen);
+  const createModalMode = useAppStore((state) => state.createModalMode);
+  const arrangement = useAppStore((state) => state.arrangement);
   const setCreateModalOpen = useAppStore((state) => state.setCreateModalOpen);
   const setArrangement = useAppStore((state) => state.setArrangement);
+  const updateArrangementParams = useAppStore((state) => state.updateArrangementParams);
   const setMode = useAppStore((state) => state.setMode);
+
+  const isEditing = createModalMode === 'edit' && !!arrangement;
 
   // Form state
   const [title, setTitle] = useState('New Arrangement');
-  const [tempo, setTempo] = useState(80);
+  const [tempoText, setTempoText] = useState('80');
   const [tonic, setTonic] = useState('C');
   const [scale, setScale] = useState<ScaleType>('major');
   const [bars, setBars] = useState(4);
@@ -62,6 +67,48 @@ export function CreateArrangementModal() {
   const [voices, setVoices] = useState<DraftVoice[]>([
     { id: 'v1', name: 'Voice 1', color: VOICE_COLORS[0] },
   ]);
+
+  // When the modal opens, initialize the form:
+  // - Create mode: use defaults
+  // - Edit mode: pre-fill from the current arrangement
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (isEditing && arrangement) {
+      setTitle(arrangement.title);
+      setTempoText(String(arrangement.tempo));
+      setTonic(arrangement.tonic);
+      setScale(arrangement.scale);
+      setBars(arrangement.bars);
+      setTimeSigNum(arrangement.timeSig.numerator);
+      setTimeSigDen(arrangement.timeSig.denominator);
+
+      // We keep the voices UI in sync so the form always reflects the arrangement,
+      // even though editing voices is not the main goal of the "edit params" flow.
+      setVoices(arrangement.voices.map((v) => ({ id: v.id, name: v.name, color: v.color })));
+      return;
+    }
+
+    // Defaults for creating a new arrangement
+    setTitle('New Arrangement');
+    setTempoText('80');
+    setTonic('C');
+    setScale('major');
+    setBars(4);
+    setTimeSigNum(4);
+    setTimeSigDen(4);
+    setVoices([{ id: 'v1', name: 'Voice 1', color: VOICE_COLORS[0] }]);
+  }, [isOpen, isEditing, arrangement?.id]);
+
+  /**
+   * Parse + clamp tempo text into a valid BPM number.
+   * We do this on blur and on save/create so the input doesn't "fight" the user's typing.
+   */
+  const parseTempo = (text: string, fallback: number) => {
+    const n = parseInt(text, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(40, Math.min(240, n));
+  };
 
   // Don't render if not open
   if (!isOpen) return null;
@@ -102,6 +149,8 @@ export function CreateArrangementModal() {
   const handleCreate = () => {
     // Generate unique ID
     const id = `arr_custom_${Date.now()}`;
+
+    const tempo = parseTempo(tempoText, 80);
     
     // Create empty arrangement with specified parameters
     const arrangement: Arrangement = {
@@ -131,12 +180,34 @@ export function CreateArrangementModal() {
     setCreateModalOpen(false);
   };
 
+  const handleSaveEdits = () => {
+    if (!arrangement) return;
+
+    const tempo = parseTempo(tempoText, arrangement.tempo);
+
+    updateArrangementParams({
+      title,
+      tempo,
+      tonic,
+      scale,
+      bars,
+      timeSig: { numerator: timeSigNum, denominator: timeSigDen },
+    });
+
+    setCreateModalOpen(false);
+  };
+
   /**
    * Cancel and close modal.
    */
   const handleCancel = () => {
     setCreateModalOpen(false);
-    setMode('play');
+
+    // If the user is canceling a *new* arrangement, we exit Create mode.
+    // If they were just editing params, we keep them in Create mode.
+    if (!isEditing) {
+      setMode('play');
+    }
   };
 
   return (
@@ -165,7 +236,7 @@ export function CreateArrangementModal() {
           <div className="flex items-center gap-2">
             <Music className="text-[var(--accent-primary)]" size={20} />
             <h2 className="text-lg font-semibold text-[var(--text-primary)]">
-              Create New Arrangement
+              {isEditing ? 'Edit Arrangement' : 'Create New Arrangement'}
             </h2>
           </div>
           <button
@@ -203,9 +274,14 @@ export function CreateArrangementModal() {
                 Tempo (BPM)
               </label>
               <input
-                type="number"
-                value={tempo}
-                onChange={(e) => setTempo(Math.max(40, Math.min(200, parseInt(e.target.value) || 80)))}
+                type="text"
+                inputMode="numeric"
+                value={tempoText}
+                onChange={(e) => setTempoText(e.target.value)}
+                onBlur={() => {
+                  const fallback = arrangement?.tempo ?? 80;
+                  setTempoText(String(parseTempo(tempoText, fallback)));
+                }}
                 className="
                   w-full px-3 py-2 rounded-lg
                   bg-[var(--button-bg)] text-[var(--text-primary)]
@@ -308,66 +384,68 @@ export function CreateArrangementModal() {
           </div>
 
           {/* Voices */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-sm text-[var(--text-secondary)]">
-                Voices ({voices.length}/6)
-              </label>
-              <button
-                onClick={handleAddVoice}
-                disabled={voices.length >= 6}
-                className="
-                  flex items-center gap-1 px-2 py-1 rounded-lg text-xs
-                  bg-[var(--accent-primary)] text-white
-                  hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed
-                "
-              >
-                <Plus size={12} />
-                Add Voice
-              </button>
-            </div>
-            
-            <div className="space-y-2">
-              {voices.map((voice) => (
-                <div 
-                  key={voice.id}
-                  className="flex items-center gap-2 p-2 rounded-lg bg-white/5"
+          {!isEditing && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-[var(--text-secondary)]">
+                  Voices ({voices.length}/6)
+                </label>
+                <button
+                  onClick={handleAddVoice}
+                  disabled={voices.length >= 6}
+                  className="
+                    flex items-center gap-1 px-2 py-1 rounded-lg text-xs
+                    bg-[var(--accent-primary)] text-white
+                    hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed
+                  "
                 >
-                  {/* Color indicator */}
+                  <Plus size={12} />
+                  Add Voice
+                </button>
+              </div>
+              
+              <div className="space-y-2">
+                {voices.map((voice) => (
                   <div 
-                    className="w-4 h-4 rounded-full"
-                    style={{ backgroundColor: voice.color }}
-                  />
-                  
-                  {/* Name input */}
-                  <input
-                    type="text"
-                    value={voice.name}
-                    onChange={(e) => handleVoiceNameChange(voice.id, e.target.value)}
-                    className="
-                      flex-1 px-2 py-1 rounded
-                      bg-transparent text-[var(--text-primary)] text-sm
-                      border border-transparent
-                      focus:outline-none focus:border-[var(--border-color)]
-                    "
-                  />
-                  
-                  {/* Delete button */}
-                  <button
-                    onClick={() => handleRemoveVoice(voice.id)}
-                    disabled={voices.length <= 1}
-                    className="
-                      p-1 rounded text-[var(--text-muted)]
-                      hover:text-red-400 hover:bg-red-500/10
-                      disabled:opacity-30 disabled:cursor-not-allowed
-                    "
+                    key={voice.id}
+                    className="flex items-center gap-2 p-2 rounded-lg bg-white/5"
                   >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
+                    {/* Color indicator */}
+                    <div 
+                      className="w-4 h-4 rounded-full"
+                      style={{ backgroundColor: voice.color }}
+                    />
+                    
+                    {/* Name input */}
+                    <input
+                      type="text"
+                      value={voice.name}
+                      onChange={(e) => handleVoiceNameChange(voice.id, e.target.value)}
+                      className="
+                        flex-1 px-2 py-1 rounded
+                        bg-transparent text-[var(--text-primary)] text-sm
+                        border border-transparent
+                        focus:outline-none focus:border-[var(--border-color)]
+                      "
+                    />
+                    
+                    {/* Delete button */}
+                    <button
+                      onClick={() => handleRemoveVoice(voice.id)}
+                      disabled={voices.length <= 1}
+                      className="
+                        p-1 rounded text-[var(--text-muted)]
+                        hover:text-red-400 hover:bg-red-500/10
+                        disabled:opacity-30 disabled:cursor-not-allowed
+                      "
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -383,14 +461,14 @@ export function CreateArrangementModal() {
             Cancel
           </button>
           <button
-            onClick={handleCreate}
+            onClick={isEditing ? handleSaveEdits : handleCreate}
             className="
               px-4 py-2 rounded-lg
               bg-[var(--accent-primary)] text-white
               hover:brightness-110
             "
           >
-            Create & Edit
+            {isEditing ? 'Save' : 'Create & Edit'}
           </button>
         </div>
       </div>

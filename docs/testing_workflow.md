@@ -84,7 +84,7 @@ If anything fails here, stop and fix before doing deeper tests.
   - If your browser asks, allow microphone.
 
 - **Device list refresh**
-  - Click refresh.
+  - Click refresh
   - Confirm the list updates (and no errors appear).
 
 - **Volume meter moves**

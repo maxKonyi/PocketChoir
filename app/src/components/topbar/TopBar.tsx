@@ -40,6 +40,7 @@ export function TopBar() {
   const setMode = useAppStore((state) => state.setMode);
   const setTheme = useAppStore((state) => state.setTheme);
   const setCreateModalOpen = useAppStore((state) => state.setCreateModalOpen);
+  const setCreateModalMode = useAppStore((state) => state.setCreateModalMode);
 
   /**
    * Export the current arrangement as JSON file.
@@ -117,8 +118,18 @@ export function TopBar() {
       {/* Center - Library / Arrangement selector */}
       <div className="absolute left-1/2 -translate-x-1/2">
         <button
-          onClick={() => setLibraryOpen(true)}
-          aria-label="Open Library"
+          onClick={() => {
+            // In Create mode, clicking the arrangement name should edit the current arrangement
+            // (do not jump to the library / other arrangements).
+            if (mode === 'create' && arrangement) {
+              setCreateModalMode('edit');
+              setCreateModalOpen(true);
+              return;
+            }
+
+            setLibraryOpen(true);
+          }}
+          aria-label={mode === 'create' && arrangement ? 'Edit Arrangement' : 'Open Library'}
           className="
             flex items-center gap-2.5 px-5 py-2
             bg-[var(--button-bg)] text-[var(--text-primary)]
@@ -128,7 +139,7 @@ export function TopBar() {
             shadow-sm hover:shadow-[0_0_20px_-5px_var(--accent-primary-glow)]
             cursor-pointer group
           "
-          title="Open Library"
+          title={mode === 'create' && arrangement ? 'Edit Arrangement' : 'Open Library'}
         >
           <Library size={15} className="text-[var(--accent-primary)] group-hover:scale-110 transition-transform duration-200" />
           <span className="max-w-[280px] truncate">
@@ -254,6 +265,7 @@ export function TopBar() {
           </button>
           <button
             onClick={() => {
+              setCreateModalMode('create');
               setMode('create');
               setCreateModalOpen(true);
             }}
