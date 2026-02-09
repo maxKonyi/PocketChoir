@@ -33,8 +33,15 @@ function formatPosition(t16: number, timeSig: { numerator: number; denominator: 
    ------------------------------------------------------------ */
 
 export function TransportBar() {
-  // Get state from store
-  const playback = useAppStore((state) => state.playback);
+  // Get state from store.
+  // Subscribe to individual playback fields instead of the whole playback object.
+  // setPosition() fires ~30fps; subscribing to the whole object would re-render
+  // this component 30fps for fields it doesn't display (e.g. loopEnd, loopStart).
+  const pbPosition = useAppStore((state) => state.playback.position);
+  const pbIsPlaying = useAppStore((state) => state.playback.isPlaying);
+  const pbLoopEnabled = useAppStore((state) => state.playback.loopEnabled);
+  const pbMetronomeEnabled = useAppStore((state) => state.playback.metronomeEnabled);
+  const pbTempoMultiplier = useAppStore((state) => state.playback.tempoMultiplier);
   const arrangement = useAppStore((state) => state.arrangement);
 
   // actions
@@ -53,7 +60,7 @@ export function TransportBar() {
    * Handle play/pause toggle.
    */
   const handlePlayPause = () => {
-    setPlaying(!playback.isPlaying);
+    setPlaying(!pbIsPlaying);
   };
 
   /**
@@ -105,18 +112,18 @@ export function TransportBar() {
           min-w-[70px] text-center
           drop-shadow-[0_0_8px_rgba(255,255,255,0.15)]
         ">
-          {arrangement ? formatPosition(playback.position, arrangement.timeSig) : '--:--'}
+          {arrangement ? formatPosition(pbPosition, arrangement.timeSig) : '--:--'}
         </div>
 
         <div className="w-px h-8 bg-white/8" />
 
         {/* Metronome */}
         <button
-          onClick={() => setMetronomeEnabled(!playback.metronomeEnabled)}
+          onClick={() => setMetronomeEnabled(!pbMetronomeEnabled)}
           aria-label="Toggle Metronome"
           className={`
             w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer
-            ${playback.metronomeEnabled
+            ${pbMetronomeEnabled
               ? 'bg-blue-500/25 text-blue-300 shadow-[0_0_15px_-3px_rgba(59,130,246,0.4)] border border-blue-500/30'
               : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
             }
@@ -133,7 +140,7 @@ export function TransportBar() {
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className={playback.metronomeEnabled ? 'animate-pulse' : ''}
+            className={pbMetronomeEnabled ? 'animate-pulse' : ''}
           >
             <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
             <path d="M14.153 8.188l-.72 -3.236a2.493 2.493 0 0 0 -4.867 0l-3.025 13.614a2 2 0 0 0 1.952 2.434h7.014a2 2 0 0 0 1.952 -2.434l-.524 -2.357m-4.935 1.791l9 -13" />
@@ -166,7 +173,7 @@ export function TransportBar() {
           {/* Glow ring behind play button */}
           <div className={`
             absolute inset-[-4px] rounded-full transition-all duration-500
-            ${playback.isPlaying
+            ${pbIsPlaying
               ? 'bg-white/10 shadow-[0_0_30px_rgba(255,255,255,0.25)] animate-pulse'
               : 'bg-transparent'
             }
@@ -174,7 +181,7 @@ export function TransportBar() {
           <button
             onClick={handlePlayPause}
             disabled={!arrangement}
-            aria-label={playback.isPlaying ? 'Pause' : 'Play'}
+            aria-label={pbIsPlaying ? 'Pause' : 'Play'}
             className="
               relative w-14 h-14 rounded-full bg-white text-black
               flex items-center justify-center
@@ -184,18 +191,18 @@ export function TransportBar() {
               disabled:opacity-20 z-50 cursor-pointer
             "
           >
-            {playback.isPlaying ? <Pause size={24} /> : <Play size={24} className="ml-0.5" fill="currentColor" />}
+            {pbIsPlaying ? <Pause size={24} /> : <Play size={24} className="ml-0.5" fill="currentColor" />}
           </button>
         </div>
 
         {/* Loop */}
         <button
-          onClick={() => setLoopEnabled(!playback.loopEnabled)}
+          onClick={() => setLoopEnabled(!pbLoopEnabled)}
           disabled={!arrangement}
           aria-label="Toggle Loop"
           className={`
             w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer
-            ${playback.loopEnabled
+            ${pbLoopEnabled
               ? 'bg-[var(--accent-secondary)]/25 text-[var(--accent-secondary-light)] shadow-[0_0_15px_-3px_var(--accent-secondary-glow)] border border-[var(--accent-secondary)]/30'
               : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
             }
@@ -221,7 +228,7 @@ export function TransportBar() {
               aria-label={`Set playback speed to ${speed}x`}
               className={`
                 px-3 py-1.5 text-[10px] font-bold rounded-full transition-all duration-200 cursor-pointer
-                ${playback.tempoMultiplier === speed
+                ${pbTempoMultiplier === speed
                   ? 'bg-white/15 text-[var(--text-primary)] shadow-[0_0_10px_-3px_rgba(255,255,255,0.15)]'
                   : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-white/5'
                 }

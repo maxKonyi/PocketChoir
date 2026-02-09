@@ -28,7 +28,10 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
   const voiceState = useAppStore((state) =>
     state.voiceStates.find((v) => v.voiceId === voiceId)
   );
-  const playback = useAppStore((state) => state.playback);
+  // Subscribe to ONLY the playback field this component uses.
+  // Do NOT subscribe to the entire playback object — setPosition() fires ~30fps
+  // and would cause 6 VoiceSidebar instances to re-render every frame.
+  const pbIsRecording = useAppStore((state) => state.playback.isRecording);
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
   const hasRecording = useAppStore((state) => state.recordings.has(voiceId));
   const mode = useAppStore((state) => state.mode);
@@ -44,7 +47,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
 
   const isArmed = armedVoiceId === voiceId;
-  const isRecording = isArmed && playback.isRecording;
+  const isRecording = isArmed && pbIsRecording;
 
   const synthMuted = voiceState?.synthMuted ?? false;
   const synthSolo = voiceState?.synthSolo ?? false;

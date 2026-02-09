@@ -1704,6 +1704,10 @@ export const useArrangement = () => useAppStore((state) => state.arrangement);
 
 /**
  * Get playback state.
+ * @deprecated Do NOT use — subscribes to the ENTIRE playback object.
+ * setPosition() fires ~30fps, creating a new object each time, which
+ * forces 30fps re-renders in any component that uses this hook.
+ * Instead, subscribe to individual fields: useAppStore(s => s.playback.isPlaying)
  */
 export const usePlayback = () => useAppStore((state) => state.playback);
 

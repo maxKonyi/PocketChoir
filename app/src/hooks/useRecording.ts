@@ -33,7 +33,14 @@ export function useRecording() {
   // Get state and actions from store
   const arrangement = useAppStore((state) => state.arrangement);
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
-  const playback = useAppStore((state) => state.playback);
+  // Subscribe to ONLY the playback fields this hook needs for React re-renders.
+  // CRITICAL: Do NOT subscribe to the entire playback object or to playback.position!
+  // This hook runs inside App.tsx (the ROOT component). setPosition() fires ~30fps,
+  // creating a new playback object each time. Subscribing to the whole object (or to
+  // position) would re-render the ROOT component 30fps, cascading to ALL children
+  // and creating massive GC pressure that progressively degrades performance.
+  const pbIsPlaying = useAppStore((state) => state.playback.isPlaying);
+  const pbIsRecording = useAppStore((state) => state.playback.isRecording);
   const recordings = useAppStore((state) => state.recordings);
   const addRecording = useAppStore((state) => state.addRecording);
   const clearRecording = useAppStore((state) => state.clearRecording);
@@ -329,33 +336,45 @@ export function useRecording() {
    * Toggle recording state.
    */
   const toggleRecording = useCallback(async () => {
-    if (playback.isRecording) {
+    if (pbIsRecording) {
       stopRecording();
     } else {
       await startRecording();
     }
-  }, [playback.isRecording, startRecording, stopRecording]);
+  }, [pbIsRecording, startRecording, stopRecording]);
 
   /**
    * Auto-stop recording at the end of the loop.
-   * IMPORTANT: We guard this with a 1-second grace period after recording starts.
-   * Without this, the effect can fire with stale store position from previous
-   * playback (e.g. near loop end) and kill the recording before it begins.
+   *
+   * Uses a polling interval instead of a React effect on playback.position.
+   * WHY: subscribing to position via React causes the host component (App.tsx,
+   * the ROOT) to re-render ~30fps, cascading re-renders to ALL children and
+   * progressively degrading performance. Polling the store directly avoids
+   * any React re-renders.
+   *
+   * IMPORTANT: We guard with a 1-second grace period after recording starts.
+   * Without this, stale position from previous playback can kill the recording.
    */
   useEffect(() => {
-    if (!playback.isRecording || !playback.isPlaying) return;
+    if (!pbIsRecording || !pbIsPlaying) return;
 
-    // Grace period: ignore position updates for 1 second after recording starts.
-    // This gives the engine time to start playback and send fresh position updates.
-    const elapsed = performance.now() - recordingStartTimeRef.current;
-    if (elapsed < 1000) return;
+    const intervalId = window.setInterval(() => {
+      const state = useAppStore.getState();
+      if (!state.playback.isRecording || !state.playback.isPlaying) return;
 
-    // Stop slightly before the exact loop end to ensure we don't start recording the loop start
-    if (playback.position >= playback.loopEnd - 0.2) {
-      console.log('Auto-stopping recording at loop end');
-      stopRecording(true); // Keep playing for seamless looping!
-    }
-  }, [playback.position, playback.loopEnd, playback.isRecording, playback.isPlaying, stopRecording]);
+      // Grace period: ignore for 1 second after recording starts.
+      const elapsed = performance.now() - recordingStartTimeRef.current;
+      if (elapsed < 1000) return;
+
+      // Stop slightly before the exact loop end
+      if (state.playback.position >= state.playback.loopEnd - 0.2) {
+        console.log('Auto-stopping recording at loop end');
+        stopRecording(true); // Keep playing for seamless looping!
+      }
+    }, 100); // Check every 100ms — plenty fast for auto-stop
+
+    return () => window.clearInterval(intervalId);
+  }, [pbIsRecording, pbIsPlaying, stopRecording]);
 
   /**
    * Clean up when playback stops externally.
@@ -363,11 +382,11 @@ export function useRecording() {
    * works correctly regardless of which useRecording() instance it runs in.
    */
   useEffect(() => {
-    if (!playback.isPlaying && playback.isRecording) {
+    if (!pbIsPlaying && pbIsRecording) {
       // Playback stopped while recording — stop and save the recording.
       stopRecording();
     }
-  }, [playback.isPlaying, playback.isRecording, stopRecording]);
+  }, [pbIsPlaying, pbIsRecording, stopRecording]);
 
   /**
    * Clean up on unmount.
@@ -386,7 +405,7 @@ export function useRecording() {
     startRecording,
     stopRecording,
     toggleRecording,
-    isRecording: playback.isRecording,
+    isRecording: pbIsRecording,
     armedVoiceId,
   };
 }

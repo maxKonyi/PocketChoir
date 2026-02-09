@@ -25,7 +25,17 @@ function App() {
   // Get state and actions from store
   const arrangement = useAppStore((state) => state.arrangement);
   const setArrangement = useAppStore((state) => state.setArrangement);
-  const playback = useAppStore((state) => state.playback);
+  // Subscribe to ONLY the playback fields this component uses.
+  // CRITICAL: Do NOT subscribe to the entire playback object!
+  // setPosition() fires ~30fps during playback, creating a new playback object
+  // each time. Subscribing to the whole object would re-render App (the ROOT
+  // component) 30fps, cascading re-renders to ALL children and creating
+  // massive GC pressure that progressively degrades performance.
+  const pbIsPlaying = useAppStore((state) => state.playback.isPlaying);
+  const pbIsRecording = useAppStore((state) => state.playback.isRecording);
+  const pbTempoMultiplier = useAppStore((state) => state.playback.tempoMultiplier);
+  const pbLoopEnabled = useAppStore((state) => state.playback.loopEnabled);
+  const pbMetronomeEnabled = useAppStore((state) => state.playback.metronomeEnabled);
   const countIn = useAppStore((state) => state.countIn);
   const theme = useAppStore((state) => state.theme);
   const setPosition = useAppStore((state) => state.setPosition);
@@ -84,8 +94,8 @@ function App() {
   // - starting recording (which may want count-in)
   // - stopping recording (which should NOT restart playback)
   const prevTransportFlagsRef = useRef<{ isPlaying: boolean; isRecording: boolean }>({
-    isPlaying: playback.isPlaying,
-    isRecording: playback.isRecording,
+    isPlaying: pbIsPlaying,
+    isRecording: pbIsRecording,
   });
 
   /**
@@ -163,7 +173,10 @@ function App() {
       playbackEngine.initialize(arrangement, {
         onPositionUpdate: onEnginePositionUpdate,
         onLoop: () => {
-          console.log('Loop');
+          // Intentionally empty — loop transitions are handled by the engine.
+          // NOTE: Do NOT add console.log here. It fires every loop iteration
+          // and the browser's console buffer grows unbounded, causing
+          // progressive slowdown over long playback sessions.
         },
       });
     }
@@ -192,8 +205,8 @@ function App() {
 
   // Keep the playback engine metronome setting in sync with the transport toggle.
   useEffect(() => {
-    playbackEngine.setConfig({ metronomeEnabled: playback.metronomeEnabled });
-  }, [playback.metronomeEnabled]);
+    playbackEngine.setConfig({ metronomeEnabled: pbMetronomeEnabled });
+  }, [pbMetronomeEnabled]);
 
   // Keep recorded vocal lag compensation in sync with mic settings.
   useEffect(() => {
@@ -211,8 +224,8 @@ function App() {
 
     // Store current flags for the next effect run.
     prevTransportFlagsRef.current = {
-      isPlaying: playback.isPlaying,
-      isRecording: playback.isRecording,
+      isPlaying: pbIsPlaying,
+      isRecording: pbIsRecording,
     };
 
     const handlePlayback = async () => {
@@ -238,9 +251,9 @@ function App() {
       // IMPORTANT: when recording ENDS but playback stays ON (loop continues),
       // we must NOT call play() again, because that can restart timing and cause
       // a visible/audible "jump" at the loop boundary.
-      const recordingJustStarted = !prevIsRecording && playback.isRecording;
-      const playJustStarted = !prevIsPlaying && playback.isPlaying;
-      const shouldStartOrRestart = playback.isPlaying && (playJustStarted || recordingJustStarted);
+      const recordingJustStarted = !prevIsRecording && pbIsRecording;
+      const playJustStarted = !prevIsPlaying && pbIsPlaying;
+      const shouldStartOrRestart = pbIsPlaying && (playJustStarted || recordingJustStarted);
 
       if (shouldStartOrRestart) {
         // Guard: don't call play() if the engine is already playing or
@@ -252,7 +265,7 @@ function App() {
         }
 
         // Use count-in only when recording is active.
-        const countInBars = (playback.isRecording && countIn.enabled) ? countIn.bars : 0;
+        const countInBars = (pbIsRecording && countIn.enabled) ? countIn.bars : 0;
 
         // If the user pressed Play (not starting a recording), always restart from the beginning.
         // This matches the "Play always starts at bar 1" expectation.
@@ -268,7 +281,7 @@ function App() {
       }
 
       // Only pause when play is toggled OFF.
-      if (!playback.isPlaying && prevIsPlaying) {
+      if (!pbIsPlaying && prevIsPlaying) {
         // Guard: don't pause if the engine was already stopped directly.
         if (playbackEngine.getIsPlaying()) {
           playbackEngine.pause();
@@ -278,18 +291,18 @@ function App() {
     };
 
     handlePlayback();
-  }, [playback.isPlaying, playback.isRecording, countIn.enabled, countIn.bars, arrangement?.id, setPosition]);
+  }, [pbIsPlaying, pbIsRecording, countIn.enabled, countIn.bars, arrangement?.id, setPosition]);
 
   /**
    * Update playback engine settings when they change.
    */
   useEffect(() => {
-    playbackEngine.setTempoMultiplier(playback.tempoMultiplier);
-  }, [playback.tempoMultiplier]);
+    playbackEngine.setTempoMultiplier(pbTempoMultiplier);
+  }, [pbTempoMultiplier]);
 
   useEffect(() => {
-    playbackEngine.setLoopEnabled(playback.loopEnabled);
-  }, [playback.loopEnabled]);
+    playbackEngine.setLoopEnabled(pbLoopEnabled);
+  }, [pbLoopEnabled]);
 
   // Keep playback engine transposition in sync with the app store.
   // This is what actually transposes the arrangement playback to match your vocal range.

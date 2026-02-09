@@ -1155,6 +1155,7 @@ export function Grid({
           ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
           ctx.shadowBlur = 6;
           ctx.fillText(chord.name, blockStartX + blockWidth / 2, blockY + blockHeight / 2);
+          ctx.restore(); // Must match the ctx.save() for chord text above!
         }
       }
 
@@ -1838,7 +1839,6 @@ export function Grid({
         visualWorldTRef.current = null;
       }
 
-      // ── Draw ──
       drawRef.current();
 
       animationId = requestAnimationFrame(animate);

@@ -921,6 +921,15 @@ export class PlaybackEngine {
 
     osc.start(time);
     osc.stop(time + 0.05);
+
+    // IMPORTANT: Disconnect both nodes after the oscillator finishes.
+    // Without this, every beat leaks 2 WebAudio nodes into the audio graph.
+    // At 120 BPM that's ~240 zombie nodes per minute, which progressively
+    // degrades audio thread performance and causes stutter over time.
+    osc.onended = () => {
+      try { osc.disconnect(); } catch { /* already disconnected */ }
+      try { gain.disconnect(); } catch { /* already disconnected */ }
+    };
   }
 
   /**

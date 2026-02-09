@@ -159,6 +159,31 @@ export class SynthVoice {
   }
 
   /**
+   * Clear accumulated AudioParam automation events on this voice's synth.
+   *
+   * Tone.js's triggerAttack/triggerRelease/setNote schedule AudioParam events
+   * (frequency ramps, envelope gain ramps). While each call uses cancelScheduledValues
+   * to clear FUTURE events, PAST events remain in both the WebAudio AudioParam
+   * timeline and Tone.js's internal JavaScript Timeline objects.
+   *
+   * Over hundreds of loop iterations, these past events accumulate and can
+   * progressively degrade performance. Call this at loop boundaries (after noteOff)
+   * to flush the entire history.
+   */
+  cancelScheduledEvents(): void {
+    try {
+      // Clear the frequency AudioParam timeline.
+      // Tone.Signal wraps an AudioParam; cancelScheduledValues(0) clears everything.
+      this.synth.frequency.cancelScheduledValues(0);
+    } catch { /* ignore if not connected */ }
+    try {
+      // Clear the envelope's internal signal timeline.
+      // The envelope uses a Tone.Signal internally for its ADSR ramps.
+      (this.synth.envelope as any)._sig?.cancelScheduledValues?.(0);
+    } catch { /* ignore if internal API changed */ }
+  }
+
+  /**
    * Immediately stop and clean up this voice.
    */
   dispose(): void {
