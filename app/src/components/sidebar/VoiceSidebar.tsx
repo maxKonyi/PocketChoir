@@ -6,6 +6,7 @@
    Styled to match the cosmic/dreamy aesthetic from mockups.
    ============================================================ */
 
+import { useState } from 'react';
 import { Mic, Volume2, VolumeX, Headphones, Trash2, Edit3, Music, Layers } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { useAppStore, MAX_VOICES } from '../../stores/appStore';
@@ -24,6 +25,10 @@ interface VoiceControlProps {
 }
 
 function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopRecording }: VoiceControlProps) {
+  // Local inline rename UI state (only used in Create mode).
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [pendingName, setPendingName] = useState(voiceName);
+
   // Get state from store
   const voiceState = useAppStore((state) =>
     state.voiceStates.find((v) => v.voiceId === voiceId)
@@ -36,6 +41,10 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
   const hasRecording = useAppStore((state) => state.recordings.has(voiceId));
   const mode = useAppStore((state) => state.mode);
   const selectedVoiceId = useAppStore((state) => state.selectedVoiceId);
+  // In Create mode, we use node data to decide whether a track has content.
+  const voiceNodeCount = useAppStore((state) => (
+    state.arrangement?.voices.find((v) => v.id === voiceId)?.nodes.length ?? 0
+  ));
 
   // Get actions from store
   const armVoice = useAppStore((state) => state.armVoice);
@@ -45,9 +54,13 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
   const setVoiceVocalSolo = useAppStore((state) => state.setVoiceVocalSolo);
   const clearRecording = useAppStore((state) => state.clearRecording);
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
+  const renameVoice = useAppStore((state) => state.renameVoice);
+  const clearVoiceNodes = useAppStore((state) => state.clearVoiceNodes);
 
   const isArmed = armedVoiceId === voiceId;
   const isRecording = isArmed && pbIsRecording;
+  // Track content: in Create mode use nodes, otherwise use recordings.
+  const hasContent = mode === 'create' ? voiceNodeCount > 0 : hasRecording;
 
   const synthMuted = voiceState?.synthMuted ?? false;
   const synthSolo = voiceState?.synthSolo ?? false;
@@ -104,36 +117,83 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
           aria-label={`${voiceName} - ${mode === 'create' ? 'Select for editing' : 'Record'}`}
         >
           {mode === 'create' ? (
-            <Edit3 size={11} className="text-white" />
+            <Edit3
+              size={11}
+              // Green pencil when this track is the active edit target.
+              // shrink-0 prevents the icon from shrinking when the track name is long.
+              className={`shrink-0 ${isSelectedForEdit ? 'text-green-300 drop-shadow-[0_0_6px_rgba(34,197,94,0.8)]' : 'text-white'}`}
+            />
           ) : (
-            <Mic size={11} className={isRecording ? 'text-white animate-pulse' : 'text-white'} />
+            <Mic size={11} className={`shrink-0 ${isRecording ? 'text-white animate-pulse' : 'text-white'}`} />
           )}
 
-          <span className="text-[9px] font-bold uppercase tracking-wider truncate text-white overflow-hidden text-ellipsis whitespace-nowrap">
-            {voiceName}
-          </span>
+          {/* Track name: double-click in Create mode to rename. */}
+          {mode === 'create' && isRenaming ? (
+            <input
+              value={pendingName}
+              autoFocus
+              className="text-[9px] font-bold uppercase tracking-wider truncate text-white bg-transparent outline-none min-w-0"
+              onChange={(evt) => setPendingName(evt.target.value)}
+              onBlur={() => {
+                setIsRenaming(false);
+                renameVoice(voiceId, pendingName);
+              }}
+              onKeyDown={(evt) => {
+                if (evt.key === 'Enter') {
+                  evt.preventDefault();
+                  setIsRenaming(false);
+                  renameVoice(voiceId, pendingName);
+                }
+                if (evt.key === 'Escape') {
+                  evt.preventDefault();
+                  setPendingName(voiceName);
+                  setIsRenaming(false);
+                }
+              }}
+            />
+          ) : (
+            <span
+              className="text-[9px] font-bold uppercase tracking-wider truncate text-white overflow-hidden text-ellipsis whitespace-nowrap"
+              onDoubleClick={(evt) => {
+                if (mode !== 'create') return;
+                evt.stopPropagation();
+                setPendingName(voiceName);
+                setIsRenaming(true);
+              }}
+              title={mode === 'create' ? 'Double-click to rename' : undefined}
+            >
+              {voiceName}
+            </span>
+          )}
 
           {/* Recording indicator dot */}
           <div
             className={`
               ml-auto w-1.5 h-1.5 rounded-full transition-all duration-300
-              ${hasRecording ? 'bg-green-400 shadow-[0_0_5px_rgba(74,222,128,1)]' : 'bg-white/20'}
+              ${hasContent ? 'bg-green-400 shadow-[0_0_5px_rgba(74,222,128,1)]' : 'bg-white/20'}
             `}
           />
         </button>
 
         {/* Delete recording button - always visible but gated */}
         <button
-          onClick={() => hasRecording && clearRecording(voiceId)}
-          disabled={!hasRecording}
+          onClick={() => {
+            if (!hasContent) return;
+            if (mode === 'create') {
+              clearVoiceNodes(voiceId);
+            } else {
+              clearRecording(voiceId);
+            }
+          }}
+          disabled={!hasContent}
           className={`
             p-1 transition-colors
-            ${hasRecording
+            ${hasContent
               ? 'text-[var(--text-muted)] hover:text-red-400 cursor-pointer'
               : 'text-[var(--text-disabled)] cursor-not-allowed'}
           `}
-          title={hasRecording ? "Clear recording" : "No recording"}
-          aria-label={`Clear ${voiceName} recording`}
+          title={hasContent ? (mode === 'create' ? 'Clear track content' : 'Clear recording') : 'No content'}
+          aria-label={`Clear ${voiceName} content`}
         >
           <Trash2 size={11} />
         </button>
@@ -230,6 +290,7 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
   const setVoiceVocalMuted = useAppStore((state) => state.setVoiceVocalMuted);
   const setVoiceSynthMuted = useAppStore((state) => state.setVoiceSynthMuted);
   const clearAllRecordings = useAppStore((state) => state.clearAllRecordings);
+  const clearAllVoiceNodes = useAppStore((state) => state.clearAllVoiceNodes);
   const mode = useAppStore((state) => state.mode);
   const addVoiceTrack = useAppStore((state) => state.addVoiceTrack);
   const isCreateMode = mode === 'create';
@@ -339,7 +400,15 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
 
         {/* Clear all button */}
         <button
-          onClick={clearAllRecordings}
+          onClick={() => {
+            const confirmed = window.confirm('Are you sure you want to clear all track data?');
+            if (!confirmed) return;
+            if (isCreateMode) {
+              clearAllVoiceNodes();
+            } else {
+              clearAllRecordings();
+            }
+          }}
           aria-label="Clear all recordings"
           className="
             px-3 py-1.5 mt-2 mb-1

@@ -287,7 +287,9 @@ export function Grid({
   // This is what makes zoom behavior stable (only changes when you change zoom manually
   // or load a different arrangement).
   const [pitchRangeAnchor, setPitchRangeAnchor] = useState<PitchRangeAnchor | null>(null);
-  const [isHoveringAnchor, setIsHoveringAnchor] = useState(false);
+  // True when the mouse is over any existing node (regular or anchor) in Create mode.
+  // Used to switch the cursor from crosshair to grab.
+  const [isHoveringNode, setIsHoveringNode] = useState(false);
 
   // Get arrangement from store to ensure we always have latest (for create mode updates)
   const arrangementFromStore = useAppStore((state) => state.arrangement);
@@ -447,7 +449,6 @@ export function Grid({
 
   // Chord-track editor actions (Create mode)
   const enableChordTrack = useAppStore((state) => state.enableChordTrack);
-  const disableChordTrack = useAppStore((state) => state.disableChordTrack);
   const setChordName = useAppStore((state) => state.setChordName);
   const splitChordAt = useAppStore((state) => state.splitChordAt);
   const resizeChordBoundary = useAppStore((state) => state.resizeChordBoundary);
@@ -1996,12 +1997,12 @@ export function Grid({
           removeNode(voiceId, n.t16);
         }
 
-        updateNode(voiceId, hit.t16, hit.t16, prev.deg, prev.octave || 0, true, prev.semi);
+        updateNode(voiceId, hit.t16, hit.t16, prev.deg ?? 0, prev.octave ?? 0, true, prev.semi);
         return;
       }
 
       // Turning an anchor back into a normal node: keep its stored pitch.
-      updateNode(voiceId, hit.t16, hit.t16, hit.deg, hit.octave || 0, false, hit.semi);
+      updateNode(voiceId, hit.t16, hit.t16, hit.deg ?? 0, hit.octave ?? 0, false, hit.semi);
       return;
     }
 
@@ -2050,7 +2051,7 @@ export function Grid({
 
     // Use updateNode to "insert" a term node at this time.
     // We pass deg/octave/semi of the previous note so the contour line holds visually.
-    updateNode(voiceId, snapped.t16, snapped.t16, prev.deg, prev.octave || 0, true, prev.semi);
+    updateNode(voiceId, snapped.t16, snapped.t16, prev.deg ?? 0, prev.octave ?? 0, true, prev.semi);
   }, [mode, arrangement, selectedVoiceId, updateNode, removeNode, getPitchRange, getNodeHitAtMouseEvent, getSnappedPointFromMouseEvent]);
 
   /**
@@ -2059,6 +2060,9 @@ export function Grid({
    */
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!arrangement) return;
+
+    // ── Middle-mouse button: ignore entirely — global pan handler in App.tsx handles it ──
+    if (e.button === 1) return;
 
     // ── Create mode: right-click drag pans the timeline (horizontal scroll) ──
     // This keeps left-click free for node placement/editing.
@@ -2222,7 +2226,7 @@ export function Grid({
     const snapped = getSnappedPointFromMouseEvent(e);
     if (!snapped) {
       hoverPreviewRef.current = null;
-      setIsHoveringAnchor(false);
+      setIsHoveringNode(false);
       return;
     }
 
@@ -2256,7 +2260,7 @@ export function Grid({
 
         const { minSemitone, maxSemitone } = getPitchRange();
         const hit = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
-        setIsHoveringAnchor(!!hit?.term);
+        setIsHoveringNode(!!hit);
       }
     }
 
@@ -2292,13 +2296,15 @@ export function Grid({
 
         // Anchor must stay to the right of its parent note by at least one 16th.
         const minT16 = parentT16 !== undefined ? parentT16 + 1 : snapped.t16;
-        const clampedT16 = Math.max(snapped.t16, minT16);
 
-        // Do not allow the anchor to move onto an existing non-anchor note.
-        const wouldCollideWithNote = voice?.nodes.some((n) => !n.term && n.t16 === clampedT16) ?? false;
-        if (wouldCollideWithNote) {
-          return;
-        }
+        // Anchor cannot be dragged past (or onto) the next real note after its parent.
+        // Find the next non-term node after the parent note.
+        const nextNoteAfterParent = voice?.nodes
+          .filter((n) => !n.term && n.t16 > (parentT16 ?? 0))
+          .sort((a, b) => a.t16 - b.t16)[0];
+        const maxT16 = nextNoteAfterParent ? nextNoteAfterParent.t16 - 1 : Infinity;
+
+        const clampedT16 = Math.min(Math.max(snapped.t16, minT16), maxT16);
 
         updateNode(dragState.voiceId, dragState.originalT16, clampedT16, originalNode.deg ?? 0, originalNode.octave || 0, true, originalNode.semi);
         setDragState({ ...dragState, originalT16: clampedT16 });
@@ -2531,6 +2537,18 @@ export function Grid({
         return;
       }
 
+      // Number keys 1-6: select the corresponding voice track (if it exists).
+      // Works in both Play and Create modes.
+      const numKey = parseInt(e.key, 10);
+      if (numKey >= 1 && numKey <= 6 && arrangement) {
+        const voiceAtIndex = arrangement.voices[numKey - 1];
+        if (voiceAtIndex) {
+          e.preventDefault();
+          setSelectedVoiceId(voiceAtIndex.id);
+          return;
+        }
+      }
+
       // The rest of the navigation hotkeys are Create-mode only.
       if (mode !== 'create') return;
 
@@ -2587,7 +2605,7 @@ export function Grid({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel]);
+  }, [mode, arrangement, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId]);
 
   // Prevent the browser context menu when right-clicking the grid.
   // (Right-click is used for panning in Create mode.)
@@ -2707,18 +2725,6 @@ export function Grid({
                 </button>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className="absolute -right-10 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-[var(--text-muted)] hover:text-red-300 hover:bg-red-500/10 hover:border-red-500/20 transition-colors pointer-events-auto"
-                    title="Disable Chord Track"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      disableChordTrack();
-                    }}
-                  >
-                    🗑
-                  </button>
-
                   {/* Hover split marker */}
                   {hoverSplitT16 !== null && hoverSplitScreenX !== null && (
                     <div
@@ -2865,17 +2871,18 @@ export function Grid({
                   })()}
 
                 </>
-                )}
-                </div>
-              </div>
+              )}
             </div>
-          )}
+          </div>
+
+        </div>
+      )}
 
       <canvas
         ref={canvasRef}
         className={`absolute inset-0 w-full h-full ${
           mode === 'create'
-            ? (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringAnchor ? 'cursor-grab' : 'cursor-crosshair'))
+            ? (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringNode ? 'cursor-grab' : 'cursor-crosshair'))
             : (followMode.isDraggingTimeline ? 'cursor-grabbing' : 'cursor-grab')
         }`}
         // Promote the canvas to its own compositor layer.

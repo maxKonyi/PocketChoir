@@ -42,6 +42,8 @@ function App() {
   const transposition = useAppStore((state) => state.transposition);
   const autoTranspositionNotice = useAppStore((state) => state.autoTranspositionNotice);
   const mode = useAppStore((state) => state.mode);
+  const showChordTrack = useAppStore((state) => state.display.showChordTrack);
+  const disableChordTrack = useAppStore((state) => state.disableChordTrack);
   const undo = useAppStore((state) => state.undo);
   const redo = useAppStore((state) => state.redo);
   const canUndo = useAppStore((state) => state.canUndo);
@@ -442,6 +444,76 @@ function App() {
     // so we only need to re-register when the callback references change.
   }, [setPlaying, stopRecording]);
 
+  // ── Global middle-mouse-button pan ──
+  // Holding middle-mouse (button 1) and dragging pans in both directions simultaneously.
+  // Horizontal panning moves the timeline; vertical panning shifts the pitch view.
+  const setCreateCameraWorldT = useAppStore((state) => state.setCreateCameraWorldT);
+  const adjustCreatePitchPanSemitones = useAppStore((state) => state.adjustCreatePitchPanSemitones);
+
+  useEffect(() => {
+    let middleDrag: { startX: number; startY: number; lastX: number; lastY: number } | null = null;
+
+    const onMouseDown = (e: MouseEvent) => {
+      // Middle mouse button = button 1
+      if (e.button !== 1) return;
+      e.preventDefault();
+      middleDrag = { startX: e.clientX, startY: e.clientY, lastX: e.clientX, lastY: e.clientY };
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!middleDrag) return;
+      const currentMode = useAppStore.getState().mode;
+
+      // Horizontal delta → time pan
+      const dx = e.clientX - middleDrag.lastX;
+      if (dx !== 0) {
+        if (currentMode === 'create') {
+          // Dragging right moves camera left (earlier in time), like scrolling a map.
+          const pxPerT = useAppStore.getState().followMode.pxPerT;
+          const dT = -dx / pxPerT;
+          const currentCam = useAppStore.getState().createView.cameraWorldT;
+          setCreateCameraWorldT(currentCam + dT);
+        }
+      }
+
+      // Vertical delta → pitch pan (only in Create mode)
+      const dy = e.clientY - middleDrag.lastY;
+      if (dy !== 0) {
+        const currentMode2 = useAppStore.getState().mode;
+        if (currentMode2 === 'create') {
+          // Dragging up moves pitch view up (positive semitones).
+          const semitonesPerPixel = 0.05;
+          adjustCreatePitchPanSemitones(dy * semitonesPerPixel);
+        }
+      }
+
+      middleDrag.lastX = e.clientX;
+      middleDrag.lastY = e.clientY;
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 1) {
+        middleDrag = null;
+      }
+    };
+
+    // Prevent default middle-click behavior (auto-scroll on some browsers).
+    const onAuxClick = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault();
+    };
+
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('auxclick', onAuxClick);
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('auxclick', onAuxClick);
+    };
+  }, [setCreateCameraWorldT, adjustCreatePitchPanSemitones]);
+
   useEffect(() => {
     const handleUndoRedo = (e: KeyboardEvent) => {
       // Only allow shortcuts while editing in Create mode with no blocking UI.
@@ -542,6 +614,25 @@ function App() {
             <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} />
           </div>
         </div>
+
+        {/* Chord Track disable button rendered ABOVE the right-edge fade mask. */}
+        {mode === 'create' && showChordTrack && arrangement?.chords && arrangement.chords.length > 0 && (
+          <button
+            type="button"
+            className="absolute pointer-events-auto w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-[var(--text-muted)] hover:text-red-300 hover:bg-red-500/10 hover:border-red-500/20 transition-colors"
+            style={{
+              right: '2.25rem',
+              top: '9.25rem',
+            }}
+            title="Disable Chord Track"
+            onClick={(e) => {
+              e.stopPropagation();
+              disableChordTrack();
+            }}
+          >
+            🗑
+          </button>
+        )}
       </div>
 
       {/* UI Overlays - Floating panes */}

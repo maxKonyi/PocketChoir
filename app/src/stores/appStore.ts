@@ -12,6 +12,7 @@ import type {
   Arrangement,
   Chord,
   Voice,
+  Node as ArrangementNode,
   PlaybackState,
   MicrophoneState,
   Recording,
@@ -306,6 +307,11 @@ interface AppActions {
   removeNode: (voiceId: string, t16: number) => void;
   updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number, term?: boolean, semi?: number) => void;
   setSelectedVoiceId: (voiceId: string | null) => void;
+
+  // Create mode - voice management
+  renameVoice: (voiceId: string, newName: string) => void;
+  clearVoiceNodes: (voiceId: string) => void;
+  clearAllVoiceNodes: () => void;
 
   // Create mode - chord track editing
   enableChordTrack: () => void;
@@ -760,8 +766,13 @@ export const useAppStore = create<AppState & AppActions>()(
     // Nothing to do if we don't have an arrangement loaded.
     if (!arrangement) return;
 
+    // Map voices so each node's deg defaults to 0 (the type expects deg: number, not deg?: number).
+    const voicesWithDeg = arrangement.voices.map((v) => ({
+      ...v,
+      nodes: v.nodes.map((n) => ({ ...n, deg: n.deg ?? 0 })),
+    }));
     const arrangementRange = getArrangementFrequencyRange(
-      arrangement.voices,
+      voicesWithDeg,
       arrangement.tonic,
       arrangement.scale
     );
@@ -804,8 +815,30 @@ export const useAppStore = create<AppState & AppActions>()(
 
       // Remove any existing node at this t16, then add new one
       const filteredNodes = voice.nodes.filter((n) => n.t16 !== t16);
-      const newNode = { t16, deg, octave, ...(semi !== undefined ? { semi } : {}) };
-      const newNodes = [...filteredNodes, newNode].sort((a, b) => a.t16 - b.t16);
+      const newNode: ArrangementNode = { t16, deg, octave, ...(semi !== undefined ? { semi } : {}) };
+      let newNodes: ArrangementNode[] = [...filteredNodes, newNode].sort((a, b) => a.t16 - b.t16);
+
+      // ── Fix orphaned anchors ──
+      // After inserting the new node, any anchor (term=true) in this node's
+      // "held segment" must update its pitch to match.
+      // The held segment spans from this node's t16 up to the NEXT non-term node.
+      const nextNonTerm = newNodes
+        .filter((n) => !n.term && n.t16 > t16)
+        .sort((a, b) => a.t16 - b.t16)[0];
+      const segmentEnd = nextNonTerm ? nextNonTerm.t16 : Infinity;
+
+      newNodes = newNodes.map((n) => {
+        // Only update anchors that sit inside this node's held segment.
+        if (n.term && n.t16 > t16 && n.t16 < segmentEnd) {
+          return {
+            ...n,
+            deg,
+            octave,
+            ...(semi !== undefined ? { semi } : {}),
+          };
+        }
+        return n;
+      });
 
       return { ...voice, nodes: newNodes };
     });
@@ -936,6 +969,62 @@ export const useAppStore = create<AppState & AppActions>()(
   }),
 
   setSelectedVoiceId: (voiceId) => set({ selectedVoiceId: voiceId }),
+
+  // -- Create Mode - Voice Management --
+
+  // Rename a voice track (updates the arrangement voice name).
+  renameVoice: (voiceId, newName) => set((state) => {
+    if (!state.arrangement) return state;
+    const trimmed = newName.trim();
+    if (!trimmed) return state; // Don't allow empty names
+
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
+    const updatedVoices = state.arrangement.voices.map((voice) =>
+      voice.id === voiceId ? { ...voice, name: trimmed } : voice
+    );
+
+    return {
+      ...historyUpdate,
+      arrangement: { ...state.arrangement, voices: updatedVoices },
+    };
+  }),
+
+  // Clear all nodes from a single voice track.
+  clearVoiceNodes: (voiceId) => set((state) => {
+    if (!state.arrangement) return state;
+
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
+    const updatedVoices = state.arrangement.voices.map((voice) =>
+      voice.id === voiceId ? { ...voice, nodes: [] } : voice
+    );
+
+    return {
+      ...historyUpdate,
+      arrangement: { ...state.arrangement, voices: updatedVoices },
+    };
+  }),
+
+  // Clear all nodes from ALL voice tracks.
+  clearAllVoiceNodes: () => set((state) => {
+    if (!state.arrangement) return state;
+
+    const historyUpdate = prepareHistoryUpdate(state);
+    if (!historyUpdate) return state;
+
+    const updatedVoices = state.arrangement.voices.map((voice) => ({
+      ...voice,
+      nodes: [],
+    }));
+
+    return {
+      ...historyUpdate,
+      arrangement: { ...state.arrangement, voices: updatedVoices },
+    };
+  }),
 
   // -- Create Mode - Chord Track Editing --
 
