@@ -908,11 +908,40 @@ export const useAppStore = create<AppState & AppActions>()(
       // Start from the list without the original node (and without any accidental duplicate at newT16).
       const nodesWithoutTarget = voice.nodes.filter((n) => n.t16 !== oldT16 && n.t16 !== newT16);
 
+      // If we're updating/creating an anchor (term === true), it MUST inherit the pitch
+      // from the previous real note so it never appears on the wrong row.
+      const anchorParent = term
+        ? voice.nodes
+          .filter((n) => !n.term && n.t16 < newT16)
+          .sort((a, b) => a.t16 - b.t16)
+          .pop()
+        : null;
+
+      // If there's no previous real note, we cannot create a valid anchor.
+      if (term && !anchorParent) {
+        return voice;
+      }
+
+      // If there's already an anchor between the previous note and this time,
+      // this note is the FIRST note of a phrase and must NOT become an anchor.
+      if (term && anchorParent) {
+        const hasPhraseBreak = voice.nodes.some(
+          (n) => n.term && n.t16 > anchorParent.t16 && n.t16 < newT16,
+        );
+        if (hasPhraseBreak) {
+          return voice;
+        }
+      }
+
+      const resolvedDeg = anchorParent ? (anchorParent.deg ?? 0) : deg;
+      const resolvedOctave = anchorParent ? (anchorParent.octave ?? 0) : octave;
+      const resolvedSemi = anchorParent ? anchorParent.semi : semi;
+
       const updatedNode = {
         t16: newT16,
-        deg,
-        octave,
-        ...(semi !== undefined ? { semi } : {}),
+        deg: resolvedDeg,
+        octave: resolvedOctave,
+        ...(resolvedSemi !== undefined ? { semi: resolvedSemi } : {}),
         ...(term ? { term: true } : {}),
       };
 
