@@ -19,6 +19,7 @@ import { AudioService } from './services/AudioService';
 import { playbackEngine } from './services/PlaybackEngine';
 import { useRecording } from './hooks/useRecording';
 import { applyTheme } from './utils/colors';
+import { dragPixelsToTimeDelta } from './utils/followCamera';
 import { sixPartStressTest } from './data/arrangements';
 
 function App() {
@@ -449,42 +450,70 @@ function App() {
   // Horizontal panning moves the timeline; vertical panning shifts the pitch view.
   const setCreateCameraWorldT = useAppStore((state) => state.setCreateCameraWorldT);
   const adjustCreatePitchPanSemitones = useAppStore((state) => state.adjustCreatePitchPanSemitones);
+  const startTimelineDrag = useAppStore((state) => state.startTimelineDrag);
+  const updatePendingWorldT = useAppStore((state) => state.updatePendingWorldT);
+  const commitTimelineDrag = useAppStore((state) => state.commitTimelineDrag);
 
   useEffect(() => {
-    let middleDrag: { startX: number; startY: number; lastX: number; lastY: number } | null = null;
+    let middleDrag: {
+      startX: number;
+      startY: number;
+      lastX: number;
+      lastY: number;
+      startWorldT: number;
+      modeAtStart: 'create' | 'play';
+    } | null = null;
 
     const onMouseDown = (e: MouseEvent) => {
       // Middle mouse button = button 1
       if (e.button !== 1) return;
       e.preventDefault();
-      middleDrag = { startX: e.clientX, startY: e.clientY, lastX: e.clientX, lastY: e.clientY };
+      const modeAtStart = useAppStore.getState().mode;
+      const pendingWorldT = useAppStore.getState().followMode.pendingWorldT;
+      const startWorldT = modeAtStart === 'create'
+        ? useAppStore.getState().createView.cameraWorldT
+        : (pendingWorldT ?? playbackEngine.getWorldPositionT16());
+
+      middleDrag = {
+        startX: e.clientX,
+        startY: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        startWorldT,
+        modeAtStart,
+      };
+
+      // In Play mode, treat middle-drag as a scrub gesture (pending seek).
+      if (modeAtStart === 'play') {
+        startTimelineDrag();
+        updatePendingWorldT(startWorldT);
+      }
     };
 
     const onMouseMove = (e: MouseEvent) => {
       if (!middleDrag) return;
-      const currentMode = useAppStore.getState().mode;
-
       // Horizontal delta → time pan
       const dx = e.clientX - middleDrag.lastX;
       if (dx !== 0) {
-        if (currentMode === 'create') {
+        const pxPerT = useAppStore.getState().followMode.pxPerT;
+        const dT = dragPixelsToTimeDelta(dx, pxPerT);
+
+        if (middleDrag.modeAtStart === 'create') {
           // Dragging right moves camera left (earlier in time), like scrolling a map.
-          const pxPerT = useAppStore.getState().followMode.pxPerT;
-          const dT = -dx / pxPerT;
           const currentCam = useAppStore.getState().createView.cameraWorldT;
           setCreateCameraWorldT(currentCam + dT);
+        } else {
+          const newWorldT = Math.max(0, middleDrag.startWorldT + dragPixelsToTimeDelta(e.clientX - middleDrag.startX, pxPerT));
+          updatePendingWorldT(newWorldT);
         }
       }
 
-      // Vertical delta → pitch pan (only in Create mode)
+      // Vertical delta → pitch pan (Create + Play modes)
       const dy = e.clientY - middleDrag.lastY;
       if (dy !== 0) {
-        const currentMode2 = useAppStore.getState().mode;
-        if (currentMode2 === 'create') {
-          // Dragging up moves pitch view up (positive semitones).
-          const semitonesPerPixel = 0.05;
-          adjustCreatePitchPanSemitones(dy * semitonesPerPixel);
-        }
+        // Dragging up moves pitch view up (positive semitones).
+        const semitonesPerPixel = 0.05;
+        adjustCreatePitchPanSemitones(dy * semitonesPerPixel);
       }
 
       middleDrag.lastX = e.clientX;
@@ -493,6 +522,13 @@ function App() {
 
     const onMouseUp = (e: MouseEvent) => {
       if (e.button === 1) {
+        if (middleDrag?.modeAtStart === 'play') {
+          const pending = useAppStore.getState().followMode.pendingWorldT;
+          if (pending !== null) {
+            playbackEngine.seekWorld(pending);
+          }
+          commitTimelineDrag();
+        }
         middleDrag = null;
       }
     };
@@ -512,7 +548,7 @@ function App() {
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('auxclick', onAuxClick);
     };
-  }, [setCreateCameraWorldT, adjustCreatePitchPanSemitones]);
+  }, [setCreateCameraWorldT, adjustCreatePitchPanSemitones, startTimelineDrag, updatePendingWorldT, commitTimelineDrag]);
 
   useEffect(() => {
     const handleUndoRedo = (e: KeyboardEvent) => {

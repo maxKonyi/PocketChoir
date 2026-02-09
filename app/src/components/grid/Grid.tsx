@@ -738,9 +738,9 @@ export function Grid({
     const zoomFactor = Math.max(0.25, display.zoomLevel); // Prevent extreme zoom out
     const zoomedRange = anchor.paddedRangeSemitones / zoomFactor;
 
-    // Calculate final min/max centered on the arrangement anchor
-    // In Create mode we allow vertical panning (pitchPanSemitones) without changing the anchor.
-    const pitchPan = mode === 'create' ? createView.pitchPanSemitones : 0;
+    // Calculate final min/max centered on the arrangement anchor.
+    // Pitch panning should apply in BOTH Create and Play modes (middle-mouse pan uses this).
+    const pitchPan = createView.pitchPanSemitones;
     const finalMin = Math.floor(anchor.centerSemitone - zoomedRange / 2 + pitchPan);
     const finalMax = Math.ceil(anchor.centerSemitone + zoomedRange / 2 + pitchPan);
 
@@ -2458,6 +2458,8 @@ export function Grid({
       // Play mode:
       // - Shift+Wheel: horizontal zoom
       // - Alt+Shift+Wheel: vertical zoom
+      // - Wheel: vertical pitch pan
+      // - Alt+Wheel or horizontal wheel: time pan (scrub)
       if (e.shiftKey && e.altKey) {
         e.preventDefault();
         const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
@@ -2466,10 +2468,28 @@ export function Grid({
         return;
       }
 
-      if (!e.shiftKey) return;
+      if (e.shiftKey) {
+        e.preventDefault();
+        if (e.deltaY < 0) setHorizontalZoom('in');
+        if (e.deltaY > 0) setHorizontalZoom('out');
+        return;
+      }
+
+      // Alt (or trackpad horizontal scroll) pans time by seeking.
+      const wantsHorizontalPan = e.altKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (wantsHorizontalPan) {
+        e.preventDefault();
+        const dT = dragPixelsToTimeDelta(e.deltaX, followMode.pxPerT);
+        const currentWorldT = followMode.pendingWorldT ?? playbackEngine.getWorldPositionT16();
+        const nextWorldT = Math.max(0, currentWorldT + dT);
+        playbackEngine.seekWorld(nextWorldT);
+        return;
+      }
+
+      // Default: vertical pitch pan (same as Create mode).
       e.preventDefault();
-      if (e.deltaY < 0) setHorizontalZoom('in');
-      if (e.deltaY > 0) setHorizontalZoom('out');
+      const semitonesPerWheel = 0.03;
+      adjustCreatePitchPanSemitones(e.deltaY * semitonesPerWheel);
       return;
     }
 
