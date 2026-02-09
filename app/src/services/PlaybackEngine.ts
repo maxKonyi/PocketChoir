@@ -1134,6 +1134,29 @@ export class PlaybackEngine {
   }
 
   /**
+   * Read the engine's current base tempo (BPM).
+   * This is typically set from the arrangement during `initialize()`.
+   */
+  getBaseTempo(): number {
+    return this.baseTempo;
+  }
+
+  /**
+   * Read the engine's current tempo multiplier (playback speed).
+   * This is controlled by `setTempoMultiplier()`.
+   */
+  getTempoMultiplier(): number {
+    return this.tempoMultiplier;
+  }
+
+  /**
+   * Read the engine's current effective tempo (base * multiplier).
+   */
+  getEffectiveTempoBpm(): number {
+    return this.getEffectiveTempo();
+  }
+
+  /**
    * Get current position in milliseconds.
    */
   getCurrentPositionMs(): number {
@@ -1525,5 +1548,6 @@ export class PlaybackEngine {
   }
 }
 
-// Singleton instance
+// Shared singleton instance used throughout the app.
+// This keeps playback state consistent between the Grid, Transport, and recording.
 export const playbackEngine = new PlaybackEngine();

@@ -210,6 +210,61 @@ export function Grid({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Cached canvas sizing / layout metrics.
+  // IMPORTANT:
+  // - Resizing a canvas (setting canvas.width / canvas.height) allocates a new
+  //   backing bitmap. Doing that every animation frame can trigger periodic
+  //   garbage collection pauses, which feels like "random" stutters.
+  // - Reading layout (getBoundingClientRect) every frame can also add pressure.
+  //
+  // We keep these metrics in a ref and update them only when the container size
+  // or devicePixelRatio changes.
+  const canvasMetricsRef = useRef<{
+    dpr: number;
+    cssWidth: number;
+    cssHeight: number;
+    gridLeft: number;
+    gridTop: number;
+    gridWidth: number;
+    gridHeight: number;
+  } | null>(null);
+
+  const updateCanvasMetrics = useCallback(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const rect = container.getBoundingClientRect();
+    const cssWidth = rect.width;
+    const cssHeight = rect.height;
+    if (cssWidth <= 0 || cssHeight <= 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const deviceWidth = Math.round(cssWidth * dpr);
+    const deviceHeight = Math.round(cssHeight * dpr);
+
+    // Only resize the canvas when the actual pixel size changes.
+    // This avoids per-frame bitmap reallocations.
+    if (canvas.width !== deviceWidth) canvas.width = deviceWidth;
+    if (canvas.height !== deviceHeight) canvas.height = deviceHeight;
+
+    // Keep CSS size in sync (layout size, not backing bitmap).
+    const cssWidthPx = `${cssWidth}px`;
+    const cssHeightPx = `${cssHeight}px`;
+    if (canvas.style.width !== cssWidthPx) canvas.style.width = cssWidthPx;
+    if (canvas.style.height !== cssHeightPx) canvas.style.height = cssHeightPx;
+
+    canvasMetricsRef.current = {
+      dpr,
+      cssWidth,
+      cssHeight,
+      gridLeft: GRID_MARGIN.left,
+      gridTop: GRID_MARGIN.top,
+      gridWidth: cssWidth - GRID_MARGIN.left - GRID_MARGIN.right,
+      gridHeight: cssHeight - GRID_MARGIN.top - GRID_MARGIN.bottom,
+    };
+  }, []);
+
   // Drag state for node editing
   const [dragState, setDragState] = useState<DragState | null>(null);
 
@@ -285,6 +340,16 @@ export function Grid({
         playbackEngine.initialize(arrangement, {
           onPositionUpdate: onEnginePositionUpdate,
         });
+
+        // IMPORTANT:
+        // `initialize()` resets the engine to arrangement defaults.
+        // We must re-apply any current playback settings from the app store,
+        // otherwise the engine's internal tempo/speed can drift from what the UI
+        // thinks it is, which shows up as playhead/camera jitter.
+        const state = useAppStore.getState();
+        playbackEngine.setTempoMultiplier(state.playback.tempoMultiplier);
+        playbackEngine.setLoopEnabled(state.playback.loopEnabled);
+        playbackEngine.setTransposition(state.transposition);
       }
     })().finally(() => {
       audioInitPromiseRef.current = null;
@@ -430,6 +495,13 @@ export function Grid({
       chordStrokeTension:   getCssVar('--chord-stroke-tension')       || 'rgba(255, 148, 180, 0.7)',
       chordText:            getCssVar('--chord-text')                 || '#fefaff',
       chordTextTension:     getCssVar('--chord-text-tension')         || '#ffe6ef',
+      // Pre-cache voice fallback colors (--voice-1 through --voice-8).
+      // These are used when a voice object doesn't have its own `color` property.
+      // Previously getCssVar was called inside draw() every frame (~60fps),
+      // which triggers getComputedStyle → forced style recalculation → jank.
+      voiceFallback: Array.from({ length: 8 }, (_, i) =>
+        getCssVar(`--voice-${i + 1}`) || '#ff6b9d'
+      ),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme, display]);
@@ -748,23 +820,25 @@ export function Grid({
    */
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    // Ensure we have up-to-date canvas metrics.
+    // In normal operation this is updated by ResizeObserver + window resize.
+    if (!canvasMetricsRef.current) {
+      updateCanvasMetrics();
+    }
+
+    const metrics = canvasMetricsRef.current;
+    if (!metrics) return;
 
     // Handle high DPI displays
     // IMPORTANT: We must reset the transform each frame.
     // If we call `ctx.scale(dpr, dpr)` repeatedly without resetting, the scale accumulates,
     // which makes drawings (and mouse hit-testing) feel offset.
-    const dpr = window.devicePixelRatio || 1;
-    const rect = container.getBoundingClientRect();
-
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    canvas.style.width = `${rect.width}px`;
-    canvas.style.height = `${rect.height}px`;
+    const dpr = metrics.dpr;
 
     // Clear in device pixels with identity transform.
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -773,14 +847,14 @@ export function Grid({
     // Draw in CSS pixels with a single DPR transform.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const width = rect.width;
-    const height = rect.height;
+    const width = metrics.cssWidth;
+    const height = metrics.cssHeight;
 
     // Grid area (with margins for labels)
-    const gridLeft = GRID_MARGIN.left;
-    const gridTop = GRID_MARGIN.top;
-    const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
-    const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+    const gridLeft = metrics.gridLeft;
+    const gridTop = metrics.gridTop;
+    const gridWidth = metrics.gridWidth;
+    const gridHeight = metrics.gridHeight;
 
     // Read colors from the cached CSS variables (refreshed only on theme/display change).
     const barLineColor = cssColors.barLine;
@@ -824,27 +898,39 @@ export function Grid({
     // World time at the playhead (viewport center):
     // - Play mode follows playback (or pending drag)
     // - Create mode uses the independent camera position
+    // We prefer a smoothed visual world time while playing to avoid uneven stepping
+    // from the engine's audio-clock-derived world time.
+    const engineWorldT = playbackEngine.getWorldPositionT16();
+    const visualWorldT = visualWorldTRef.current ?? engineWorldT;
+
     const worldT = mode === 'create'
-      ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+      ? (isPlaying ? visualWorldT : createView.cameraWorldT)
       : (followMode.pendingWorldT !== null
         ? followMode.pendingWorldT
-        : playbackEngine.getWorldPositionT16());
+        : visualWorldT);
 
     // Camera left edge in world time (may be negative near the start).
     const camLeft = cameraLeftWorldT(worldT, gridWidth, pxPerT);
 
+    // Snap the camera's horizontal pixel offset to the device pixel grid.
+    // Without this, slow constant scrolling can land on fractional pixels, and thin
+    // lines (grid, text, nodes) can shimmer due to anti-aliasing even at steady 60fps.
+    const camLeftPx = camLeft * pxPerT;
+    const camLeftPxSnapped = Math.round(camLeftPx * dpr) / dpr;
+    const camLeftSnapped = camLeftPxSnapped / pxPerT;
+
     // Visible time span and the viewport's right edge in world time.
     const visDur = visibleDurationT(gridWidth, pxPerT);
-    const viewEnd = camLeft + visDur;
+    const viewEnd = camLeftSnapped + visDur;
 
     // Which tile indices overlap the visible range (forward-only, clamped >= 0).
     // In one-shot mode (loopEnabled=false), only draw tile 0 — no tiling.
     const [kStart, kEnd] = loopEnabled
-      ? getTileRange(camLeft, viewEnd, loopLengthT)
+      ? getTileRange(camLeftSnapped, viewEnd, loopLengthT)
       : [0, 0] as [number, number];
 
     // Helper: convert a world-time value to a screen X pixel inside the grid area.
-    const wToX = (wt: number) => gridLeft + worldTToScreenX(wt, camLeft, pxPerT);
+    const wToX = (wt: number) => gridLeft + worldTToScreenX(wt, camLeftSnapped, pxPerT);
 
     // Keep these around for pitch trace + chord drawing that still use local coordinates.
     const totalT16 = loopLengthT;
@@ -1112,7 +1198,7 @@ export function Grid({
 
         const voiceColor = isVocalMuted
           ? 'rgba(150, 150, 150, 0.4)'
-          : (voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d');
+          : (voice.color || cssColors.voiceFallback[voiceIndex] || '#ff6b9d');
 
         // Draw the pitch trace for each visible tile
         for (let k = kStart; k <= kEnd; k++) {
@@ -1127,7 +1213,7 @@ export function Grid({
             minSemitone,
             maxSemitone,
             worldTimeOffset: tileOffset,
-            camLeft,
+            camLeft: camLeftSnapped,
             pxPerT,
           });
         }
@@ -1142,12 +1228,13 @@ export function Grid({
         // correct even if armedVoiceId changes mid-render.
         const voiceIndex = arrangement.voices.findIndex(v => v.id === livePitchTraceVoiceId);
         const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
-        const traceColor = voice?.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ffffff';
+        const traceColor = voice?.color || cssColors.voiceFallback[voiceIndex] || '#ffffff';
 
         // The playhead is always at the horizontal center of the grid area.
         // We pin the glow "tip" of the live pitch trace to this X while recording,
         // so it always visually matches the playhead even if pitch callbacks arrive late.
-        const playheadX = gridLeft + gridWidth / 2;
+        const playheadXUnsnapped = gridLeft + gridWidth / 2;
+        const playheadX = Math.round(playheadXUnsnapped * dpr) / dpr;
 
         // Identify which tile the playhead is currently in, so we only draw ONE head flare.
         // (The trace itself still renders on every tile so looping looks continuous.)
@@ -1171,7 +1258,7 @@ export function Grid({
             minSemitone,
             maxSemitone,
             worldTimeOffset: tileOffset,
-            camLeft,
+            camLeft: camLeftSnapped,
             pxPerT,
             headXOverride: k === playheadTile ? playheadX : undefined,
           });
@@ -1201,7 +1288,7 @@ export function Grid({
           const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
 
           // Get voice color
-          const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+          const baseColor = voice.color || cssColors.voiceFallback[voiceIndex] || '#ff6b9d';
           const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
           const glowColor = voiceColor.includes('rgba') ? voiceColor : voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
 
@@ -1214,21 +1301,22 @@ export function Grid({
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = 3;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeft, pxPerT, gridLeft, loopLengthT);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT);
           }
 
           // Main line
           ctx.shadowBlur = 0;
           ctx.strokeStyle = voiceColor;
           ctx.lineWidth = 3;
-          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeft, pxPerT, gridLeft, loopLengthT);
+          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT);
           ctx.restore();
         }
       }
 
       // Draw playhead above contour lines but below nodes.
       // The playhead is always at the horizontal center of the grid area.
-      const playheadX = gridLeft + gridWidth / 2;
+      const playheadXUnsnapped = gridLeft + gridWidth / 2;
+      const playheadX = Math.round(playheadXUnsnapped * dpr) / dpr;
 
       ctx.strokeStyle = playheadColor;
       ctx.lineWidth = 2;
@@ -1248,7 +1336,7 @@ export function Grid({
           // Contour nodes follow the SYN (synth) mute/solo state.
           const isSynthMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
 
-          const baseColor = voice.color || getCssVar(`--voice-${voiceIndex + 1}`) || '#ff6b9d';
+          const baseColor = voice.color || cssColors.voiceFallback[voiceIndex] || '#ff6b9d';
           const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
 
           const nodeStrokeColor = voiceColor;
@@ -1654,6 +1742,22 @@ export function Grid({
   // Restarting the RAF effect on every state change can leak multiple loops,
   // which shows up as flicker (different stale closures drawing alternating frames).
   const drawRef = useRef(draw);
+
+  // Smoothed visual world-time (in 16th notes).
+  //
+  // The PlaybackEngine's `getWorldPositionT16()` is derived from AudioContext.currentTime,
+  // which advances in discrete audio-rendering quanta (~2.7ms at 48kHz). This quantization
+  // causes the engine's world time to step unevenly between display frames, producing
+  // visible micro-stutter even at a steady 60fps.
+  //
+  // To fix this we compute visual world time purely from the RAF timestamp (which is the
+  // display clock and therefore perfectly smooth). We "anchor" to the engine's true world
+  // time at playback start, then advance by `frameGapMs * t16PerMs` each frame. The engine
+  // time is only re-read for drift detection and re-anchoring (seek, loop, tempo change).
+  //
+  // This ref is used ONLY for visuals (camera/playhead placement). It does NOT affect
+  // audio scheduling, recording, or scrubbing.
+  const visualWorldTRef = useRef<number | null>(null);
   useEffect(() => {
     drawRef.current = draw;
   }, [draw]);
@@ -1662,8 +1766,81 @@ export function Grid({
   useEffect(() => {
     let animationId: number;
 
-    const animate = () => {
+    // ── RAF-anchor state for smooth visual world time ──
+    // We store a fixed anchor point (RAF timestamp + engine worldT) and compute the
+    // visual position each frame as:
+    //   visualWorldT = anchorWorldT + (ts - anchorRafTs) * t16PerMs
+    // Because (ts - anchorRafTs) changes by exactly the frame gap each tick, the
+    // resulting position is perfectly smooth (no audio-clock noise).
+    let anchorRafTs: number | null = null; // RAF timestamp at anchor point (ms)
+    let anchorWorldT: number = 0;          // Engine worldT at anchor point (t16)
+    let anchorT16PerMs: number = 0;        // Sixteenth notes per millisecond at anchor
+    let wasPlaying = false;                // Track play/pause transitions
+
+    // How often (ms) we silently re-anchor to prevent long-term clock drift.
+    // 10 seconds is long enough that the re-anchor is invisible but short enough
+    // that cumulative drift stays well under 1 sixteenth note.
+    const REANCHOR_INTERVAL_MS = 10_000;
+
+    const animate = (ts: number) => {
+      // ── Update visual world time (anchor-based, zero per-frame jitter) ──
+      const state = useAppStore.getState();
+      const p = state.playback;
+      const arr = state.arrangement;
+
+      if (p.isPlaying && arr) {
+        const engineWorldT = playbackEngine.getWorldPositionT16();
+        const effectiveTempo = playbackEngine.getEffectiveTempoBpm();
+        // t16 per millisecond: (tempo BPM * 4 sixteenths/beat) / 60_000 ms/min
+        const t16PerMs = effectiveTempo * 4 / 60_000;
+
+        if (!wasPlaying || anchorRafTs === null) {
+          // Playback just started (or first frame): anchor to the engine.
+          anchorRafTs = ts;
+          anchorWorldT = engineWorldT;
+          anchorT16PerMs = t16PerMs;
+          visualWorldTRef.current = engineWorldT;
+        } else {
+          // Compute purely from the RAF clock (perfectly smooth).
+          const elapsedMs = ts - anchorRafTs;
+          const rafWorldT = anchorWorldT + elapsedMs * anchorT16PerMs;
+
+          // Check for discontinuities that require re-anchoring:
+          // - Seek / scrub (large jump in engine time)
+          // - Loop transition (engine loopCount changed, causing a worldT jump)
+          // - Tempo change (t16PerMs changed)
+          const drift = engineWorldT - rafWorldT;
+          const tempoChanged = Math.abs(t16PerMs - anchorT16PerMs) > 1e-9;
+
+          if (Math.abs(drift) > 1.0 || tempoChanged) {
+            // Large discontinuity: snap to engine time immediately.
+            anchorRafTs = ts;
+            anchorWorldT = engineWorldT;
+            anchorT16PerMs = t16PerMs;
+            visualWorldTRef.current = engineWorldT;
+          } else if (elapsedMs >= REANCHOR_INTERVAL_MS) {
+            // Periodic re-anchor to prevent long-term clock drift.
+            // Shift anchor gently toward the engine time so the correction is invisible.
+            anchorRafTs = ts;
+            anchorWorldT = rafWorldT + drift * 0.15;
+            visualWorldTRef.current = anchorWorldT;
+          } else {
+            // Normal frame: use pure RAF-derived time (zero jitter).
+            visualWorldTRef.current = rafWorldT;
+          }
+        }
+
+        wasPlaying = true;
+      } else {
+        // Not playing: reset anchor so the next play starts fresh.
+        wasPlaying = false;
+        anchorRafTs = null;
+        visualWorldTRef.current = null;
+      }
+
+      // ── Draw ──
       drawRef.current();
+
       animationId = requestAnimationFrame(animate);
     };
 
@@ -1674,15 +1851,27 @@ export function Grid({
     };
   }, []);
 
-  // Handle resize
+  // Keep canvas metrics in sync with container size and devicePixelRatio.
+  // - ResizeObserver covers container resizes from layout changes.
+  // - window resize covers DPI changes from browser zoom / moving between monitors.
   useEffect(() => {
-    const handleResize = () => {
-      drawRef.current();
-    };
+    updateCanvasMetrics();
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => {
+      updateCanvasMetrics();
+    });
+    observer.observe(container);
+
+    window.addEventListener('resize', updateCanvasMetrics);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateCanvasMetrics);
+    };
+  }, [updateCanvasMetrics]);
 
   /**
    * Handle canvas click for placing/removing nodes in create mode.
@@ -2683,6 +2872,11 @@ export function Grid({
             ? (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringAnchor ? 'cursor-grab' : 'cursor-crosshair'))
             : (followMode.isDraggingTimeline ? 'cursor-grabbing' : 'cursor-grab')
         }`}
+        // Promote the canvas to its own compositor layer.
+        // Without this, DOM updates from other React components (transport bar,
+        // sidebar, etc.) can force the browser to re-composite the canvas's
+        // layer, introducing visual stutter even when our draw is fast.
+        style={{ willChange: 'transform' }}
         onClick={handleCanvasClick}
         onDoubleClick={handleCanvasDoubleClick}
         onMouseDown={handleMouseDown}
