@@ -912,12 +912,14 @@ export function Grid({
     // Camera left edge in world time (may be negative near the start).
     const camLeft = cameraLeftWorldT(worldT, gridWidth, pxPerT);
 
-    // Snap the camera's horizontal pixel offset to the device pixel grid.
-    // Without this, slow constant scrolling can land on fractional pixels, and thin
-    // lines (grid, text, nodes) can shimmer due to anti-aliasing even at steady 60fps.
-    const camLeftPx = camLeft * pxPerT;
-    const camLeftPxSnapped = Math.round(camLeftPx * dpr) / dpr;
-    const camLeftSnapped = camLeftPxSnapped / pxPerT;
+    // NOTE:
+    // - If snapCameraToPixels is ON, we quantize the camera to device pixels.
+    //   This reduces shimmer in thin lines but can create subtle micro-lurching.
+    // - If snapCameraToPixels is OFF, motion is perfectly continuous, but thin
+    //   lines may shimmer slightly at some zoom levels.
+    const camLeftSnapped = display.snapCameraToPixels
+      ? (Math.round(camLeft * pxPerT * dpr) / dpr) / pxPerT
+      : camLeft;
 
     // Visible time span and the viewport's right edge in world time.
     const visDur = visibleDurationT(gridWidth, pxPerT);
@@ -1778,10 +1780,12 @@ export function Grid({
     let anchorT16PerMs: number = 0;        // Sixteenth notes per millisecond at anchor
     let wasPlaying = false;                // Track play/pause transitions
 
-    // How often (ms) we silently re-anchor to prevent long-term clock drift.
-    // 10 seconds is long enough that the re-anchor is invisible but short enough
-    // that cumulative drift stays well under 1 sixteenth note.
-    const REANCHOR_INTERVAL_MS = 10_000;
+    // How much of the drift between the RAF clock and the audio engine clock
+    // we correct each frame. A tiny value (0.005 = 0.5%) spreads the correction
+    // evenly across many frames so no single frame has a visible speed change.
+    // At 60fps this gives a ~17ms time constant — fast enough to stay in sync
+    // with the audio, slow enough to be invisible.
+    const DRIFT_CORRECTION_FACTOR = 0.005;
 
     const animate = (ts: number) => {
       // ── Update visual world time (anchor-based, zero per-frame jitter) ──
@@ -1819,15 +1823,17 @@ export function Grid({
             anchorWorldT = engineWorldT;
             anchorT16PerMs = t16PerMs;
             visualWorldTRef.current = engineWorldT;
-          } else if (elapsedMs >= REANCHOR_INTERVAL_MS) {
-            // Periodic re-anchor to prevent long-term clock drift.
-            // Shift anchor gently toward the engine time so the correction is invisible.
-            anchorRafTs = ts;
-            anchorWorldT = rafWorldT + drift * 0.15;
-            visualWorldTRef.current = anchorWorldT;
           } else {
-            // Normal frame: use pure RAF-derived time (zero jitter).
-            visualWorldTRef.current = rafWorldT;
+            // Normal frame: use RAF-derived time with continuous micro-correction.
+            // The RAF clock (performance.now) and the audio clock (AudioContext.currentTime)
+            // run on different hardware oscillators and drift apart over time.
+            // Instead of correcting in one visible jump every N seconds, we nudge the
+            // anchor by a tiny fraction of the drift EVERY frame. This spreads the
+            // correction evenly so no single frame has a perceptible speed change.
+            const corrected = rafWorldT + drift * DRIFT_CORRECTION_FACTOR;
+            anchorRafTs = ts;
+            anchorWorldT = corrected;
+            visualWorldTRef.current = corrected;
           }
         }
 

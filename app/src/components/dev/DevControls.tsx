@@ -4,6 +4,7 @@ import { X, RotateCcw } from 'lucide-react';
 import { Panel } from '../ui/Panel';
 import { Slider } from '../ui/Slider';
 import { hexToRgb } from '../../utils/colors';
+import { useAppStore } from '../../stores/appStore';
 
 /* ============================================================
    DEV CONTROLS (Hidden Menu)
@@ -135,6 +136,11 @@ export function DevControls() {
   // Whether the dev panel is visible.
   const [open, setOpen] = useState(false);
 
+  // Read display settings and actions from the store.
+  // This lets us toggle camera pixel snapping without adding a public UI.
+  const display = useAppStore((state) => state.display);
+  const setDisplaySettings = useAppStore((state) => state.setDisplaySettings);
+
   // Initial defaults are read from the current CSS variables.
   const cssDefaults = useMemo(() => {
     // This must run in the browser; the app is client-only so this is OK.
@@ -244,8 +250,32 @@ export function DevControls() {
           </div>
         </div>
 
-        <div className="p-5 space-y-5">
-          <div className="text-xs font-semibold tracking-wide text-[var(--text-secondary)] uppercase">Grid Lines</div>
+        <div className="p-4 space-y-6">
+          {/* Camera pixel snapping toggle (smooth motion vs. reduced shimmer) */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-[var(--text-primary)]">
+              Snap Camera to Pixels (Less Shimmer)
+            </span>
+            <button
+              onClick={() => setDisplaySettings({ snapCameraToPixels: !display.snapCameraToPixels })}
+              className={`
+                w-12 h-6 rounded-full transition-colors
+                ${display.snapCameraToPixels
+                  ? 'bg-[var(--accent-primary)]'
+                  : 'bg-[var(--button-bg)]'
+                }
+              `}
+            >
+              <div
+                className={`
+                  w-5 h-5 rounded-full bg-white shadow transition-transform
+                  ${display.snapCameraToPixels ? 'translate-x-6' : 'translate-x-0.5'}
+                `}
+              />
+            </button>
+          </div>
+
+          <div className="w-full h-px bg-white/10" />
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">

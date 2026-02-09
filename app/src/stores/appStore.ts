@@ -60,6 +60,7 @@ interface DisplaySettings {
   zoomLevel: number;            // 1 = fit all, higher = zoomed in (vertical / pitch zoom)
   glowIntensity: number;        // 0-2, multiplier for glow effects
   gridOpacity: number;          // 0-1, opacity of grid elements
+  snapCameraToPixels: boolean;  // Snap camera to device pixels (less shimmer, more micro-lurch)
   backgroundVideo: string;      // Current background video path (or 'none')
   backgroundBlur: number;       // Blur amount in px
   backgroundBrightness: number; // 0-1 brightness
@@ -453,6 +454,7 @@ const initialDisplaySettings: DisplaySettings = {
   zoomLevel: 1,
   glowIntensity: 0,
   gridOpacity: 0.6,
+  snapCameraToPixels: false,
   backgroundVideo: '/src/data/backgrounds/Forest1.mp4',
   backgroundBlur: 4,
   backgroundBrightness: 0.6,
