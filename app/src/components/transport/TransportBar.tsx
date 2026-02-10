@@ -5,10 +5,13 @@
    Layout: Position | Speed | [Record Play Loop] | Zoom
    ============================================================ */
 
-import { Play, Pause, Repeat, SkipBack, ZoomIn, ZoomOut } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+
+import { ChevronDown, ChevronUp, Maximize2, Pause, Play, Repeat, SkipBack, ZoomIn, ZoomOut } from 'lucide-react';
 
 import { useAppStore } from '../../stores/appStore';
 import { playbackEngine } from '../../services/PlaybackEngine';
+import { transposeTonic } from '../../utils/music';
 
 /* ------------------------------------------------------------
    Helper: Format position as Bar:Beat
@@ -41,20 +44,79 @@ export function TransportBar() {
   const pbIsPlaying = useAppStore((state) => state.playback.isPlaying);
   const pbLoopEnabled = useAppStore((state) => state.playback.loopEnabled);
   const pbMetronomeEnabled = useAppStore((state) => state.playback.metronomeEnabled);
-  const pbTempoMultiplier = useAppStore((state) => state.playback.tempoMultiplier);
   const arrangement = useAppStore((state) => state.arrangement);
+  const transposition = useAppStore((state) => state.transposition);
+  const viewportWidthPx = useAppStore((state) => state.followMode.viewportWidthPx);
+  const zoomLevel = useAppStore((state) => state.display.zoomLevel);
 
   // actions
   const setPlaying = useAppStore((state) => state.setPlaying);
   const setLoopEnabled = useAppStore((state) => state.setLoopEnabled);
   const setMetronomeEnabled = useAppStore((state) => state.setMetronomeEnabled);
-  const setTempoMultiplier = useAppStore((state) => state.setTempoMultiplier);
   const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
+  const setPxPerT = useAppStore((state) => state.setPxPerT);
+  const setMinPxPerT = useAppStore((state) => state.setMinPxPerT);
+  const setZoomLevel = useAppStore((state) => state.setZoomLevel);
+  const resetCreateView = useAppStore((state) => state.resetCreateView);
+  const setTransposition = useAppStore((state) => state.setTransposition);
+  const updateArrangementParams = useAppStore((state) => state.updateArrangementParams);
   // setPosition is unused here because we use playbackEngine.seek directly for interactions that need immediate engine response
   // const setPosition = useAppStore((state) => state.setPosition);
 
-  // Speed options
-  const speedOptions = [0.5, 0.75, 1.0];
+  const effectiveTonic = useMemo(() => {
+    if (!arrangement) return null;
+    return transposeTonic(arrangement.tonic, transposition || 0);
+  }, [arrangement, transposition]);
+
+  const bpmValue = useMemo(() => {
+    if (!arrangement) return null;
+    return Math.round(arrangement.tempo);
+  }, [arrangement]);
+
+  const [isEditingBpm, setIsEditingBpm] = useState(false);
+  const [bpmDraft, setBpmDraft] = useState(() => String(bpmValue ?? ''));
+  const bpmDragRef = useRef<{
+    isDragging: boolean;
+    startClientY: number;
+    startTempo: number;
+  } | null>(null);
+
+  const clampTempo = (tempo: number) => {
+    return Math.max(30, Math.min(300, tempo));
+  };
+
+  const commitTempo = (tempo: number) => {
+    if (!arrangement) return;
+    const nextTempo = clampTempo(tempo);
+    updateArrangementParams({
+      title: arrangement.title,
+      tempo: nextTempo,
+      tonic: arrangement.tonic,
+      scale: arrangement.scale,
+      bars: arrangement.bars,
+      timeSig: arrangement.timeSig,
+    });
+  };
+
+  const commitTransposeDelta = (deltaSemitones: number) => {
+    const next = (transposition || 0) + deltaSemitones;
+    setTransposition(next);
+  };
+
+  const handleResetView = () => {
+    if (!arrangement) return;
+    const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
+    if (loopLenT <= 0) return;
+
+    const gridW = Math.max(0, viewportWidthPx);
+    if (gridW > 0) {
+      setMinPxPerT(gridW / (loopLenT * 2));
+      setPxPerT(gridW / loopLenT);
+    }
+
+    setZoomLevel(1);
+    resetCreateView();
+  };
 
   /**
    * Handle play/pause toggle.
@@ -86,21 +148,114 @@ export function TransportBar() {
     ">
 
       {/* LEFT SECTION: Key, Tempo, Time, Metronome */}
-      <div className="flex items-center gap-2.5 z-10 w-[260px] shrink-0">
+      <div className="flex items-center gap-2 z-10 w-[280px] shrink-0">
 
-        {/* Key Display - pill style */}
+        {/* Key Display - fixed-width pill + arrows outside on the bar */}
         {arrangement && (
-          <div className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5">
-            <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">Key</span>
-            <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center min-w-[24px]">{arrangement.tonic}</span>
+          <div className="flex items-center gap-0.5">
+            {/* Key label in its own pill */}
+            <div className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5 w-[46px]">
+              <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">Key</span>
+              <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center w-full">{effectiveTonic ?? arrangement.tonic}</span>
+            </div>
+
+            {/* Transpose arrows - directly on the transport bar, outside the pill */}
+            <div className="flex flex-col justify-center">
+              <button
+                onClick={() => commitTransposeDelta(1)}
+                aria-label="Transpose Up"
+                className="
+                  w-5 h-5 flex items-center justify-center
+                  text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/8 rounded
+                  transition-all duration-150 cursor-pointer
+                "
+                title="Transpose Up (Semitone)"
+              >
+                <ChevronUp size={14} />
+              </button>
+              <button
+                onClick={() => commitTransposeDelta(-1)}
+                aria-label="Transpose Down"
+                className="
+                  w-5 h-5 flex items-center justify-center
+                  text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/8 rounded
+                  transition-all duration-150 cursor-pointer
+                "
+                title="Transpose Down (Semitone)"
+              >
+                <ChevronDown size={14} />
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Tempo Display - pill style */}
+        {/* Tempo Display - fixed-width pill, supports up to 999 BPM without resizing */}
         {arrangement && (
-          <div className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5">
+          <div
+            className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5 select-none w-[52px] cursor-ns-resize"
+            onDoubleClick={() => {
+              setIsEditingBpm(true);
+              setBpmDraft(String(bpmValue ?? Math.round(arrangement.tempo)));
+            }}
+            onPointerDown={(e) => {
+              if (isEditingBpm) return;
+              const startTempo = bpmValue ?? Math.round(arrangement.tempo);
+              bpmDragRef.current = {
+                isDragging: true,
+                startClientY: e.clientY,
+                startTempo,
+              };
+              (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              const drag = bpmDragRef.current;
+              if (!drag?.isDragging) return;
+              const dy = e.clientY - drag.startClientY;
+
+              const sensitivityPxPerBpm = 6;
+              const delta = -dy / sensitivityPxPerBpm;
+              const nextTempo = drag.startTempo + delta;
+              commitTempo(nextTempo);
+            }}
+            onPointerUp={() => {
+              bpmDragRef.current = null;
+            }}
+            title="Drag up/down to change BPM • Double-click to type"
+          >
             <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">BPM</span>
-            <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center min-w-[24px]">{Math.round(arrangement.tempo)}</span>
+            {isEditingBpm ? (
+              <input
+                autoFocus
+                value={bpmDraft}
+                onChange={(e) => setBpmDraft(e.target.value)}
+                onBlur={() => {
+                  const parsed = Number(bpmDraft);
+                  if (Number.isFinite(parsed)) {
+                    commitTempo(parsed);
+                  }
+                  setIsEditingBpm(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const parsed = Number(bpmDraft);
+                    if (Number.isFinite(parsed)) {
+                      commitTempo(parsed);
+                    }
+                    setIsEditingBpm(false);
+                  }
+                  if (e.key === 'Escape') {
+                    setIsEditingBpm(false);
+                  }
+                }}
+                className="
+                  text-sm font-bold text-[var(--text-primary)] tabular-nums text-center
+                  w-full bg-transparent outline-none
+                "
+                inputMode="numeric"
+              />
+            ) : (
+              <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center w-full">{bpmValue}</span>
+            )}
           </div>
         )}
 
@@ -214,59 +369,83 @@ export function TransportBar() {
         </button>
       </div>
 
-      {/* RIGHT SECTION: Configuration */}
-      <div className="flex items-center justify-end gap-3 z-10 w-[260px] shrink-0">
+      {/* RIGHT SECTION: Zoom Controls */}
+      <div className="flex items-center justify-end gap-2 z-10 w-[280px] shrink-0">
 
-        {/* Speed Controls (Always visible) */}
-        <div className="flex bg-white/5 rounded-full p-0.5 border border-white/8">
-          {speedOptions.map((speed) => (
-            <button
-              key={speed}
-              onClick={() => {
-                setTempoMultiplier(speed);
-              }}
-              aria-label={`Set playback speed to ${speed}x`}
-              className={`
-                px-3 py-1.5 text-[10px] font-bold rounded-full transition-all duration-200 cursor-pointer
-                ${pbTempoMultiplier === speed
-                  ? 'bg-white/15 text-[var(--text-primary)] shadow-[0_0_10px_-3px_rgba(255,255,255,0.15)]'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-white/5'
-                }
-              `}
-              title={`Playback Speed: ${speed}x`}
-            >
-              {speed}x
-            </button>
-          ))}
-        </div>
-
-        <div className="w-px h-6 bg-white/8" />
-
-        {/* Horizontal Zoom Controls (follow-mode timeline zoom) */}
+        {/* Zoom control group: horizontal pair | vertical pair | fit-to-view */}
         <div className="flex items-center gap-0.5 bg-white/5 rounded-full p-0.5 border border-white/5">
+
+          {/* Horizontal zoom pair - laid out side by side */}
           <button
             onClick={() => setHorizontalZoom('out')}
-            aria-label="Zoom Out (Timeline)"
+            aria-label="Horizontal Zoom Out"
             className="
               w-8 h-8 rounded-full flex items-center justify-center
               text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
               transition-all duration-200 cursor-pointer
             "
-            title="Zoom Out (Shift+Scroll Down)"
+            title="Horizontal Zoom Out"
           >
-            <ZoomOut size={14} />
+            <ZoomOut size={15} />
           </button>
           <button
             onClick={() => setHorizontalZoom('in')}
-            aria-label="Zoom In (Timeline)"
+            aria-label="Horizontal Zoom In"
             className="
               w-8 h-8 rounded-full flex items-center justify-center
               text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
               transition-all duration-200 cursor-pointer
             "
-            title="Zoom In (Shift+Scroll Up)"
+            title="Horizontal Zoom In"
           >
-            <ZoomIn size={14} />
+            <ZoomIn size={15} />
+          </button>
+
+          <div className="w-px h-5 bg-white/8" />
+
+          {/* Vertical zoom pair - stacked on top of each other */}
+          <div className="flex flex-col items-center gap-0">
+            <button
+              onClick={() => setZoomLevel(Math.max(0.25, Math.min(6, zoomLevel * 1.12)))}
+              aria-label="Vertical Zoom In"
+              className="
+                w-8 h-4 flex items-center justify-center
+                text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
+                transition-all duration-200 cursor-pointer rounded-t-full
+              "
+              title="Vertical Zoom In"
+            >
+              <ZoomIn size={12} />
+            </button>
+            <button
+              onClick={() => setZoomLevel(Math.max(0.25, Math.min(6, zoomLevel / 1.12)))}
+              aria-label="Vertical Zoom Out"
+              className="
+                w-8 h-4 flex items-center justify-center
+                text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
+                transition-all duration-200 cursor-pointer rounded-b-full
+              "
+              title="Vertical Zoom Out"
+            >
+              <ZoomOut size={12} />
+            </button>
+          </div>
+
+          <div className="w-px h-5 bg-white/8" />
+
+          {/* Fit to view / reset zoom button */}
+          <button
+            onClick={handleResetView}
+            disabled={!arrangement}
+            aria-label="Fit to View"
+            className="
+              w-8 h-8 rounded-full flex items-center justify-center
+              text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
+              transition-all duration-200 disabled:opacity-20 cursor-pointer
+            "
+            title="Fit to View"
+          >
+            <Maximize2 size={14} />
           </button>
         </div>
 
