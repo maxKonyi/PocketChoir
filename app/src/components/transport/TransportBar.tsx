@@ -147,8 +147,10 @@ export function TransportBar() {
       border border-white/8
     ">
 
-      {/* LEFT SECTION: Key, Tempo, Time, Metronome */}
-      <div className="flex items-center gap-2 z-10 w-[280px] shrink-0">
+      {/* LEFT SECTION: Key, Tempo, Time */}
+      <div className="flex items-center justify-between gap-2 z-10 w-[260px] shrink-0">
+
+        <div className="flex items-center gap-2">
 
         {/* Key Display - fixed-width pill + arrows outside on the bar */}
         {arrangement && (
@@ -271,58 +273,28 @@ export function TransportBar() {
         </div>
 
         <div className="w-px h-8 bg-white/8" />
+        </div>
 
-        {/* Metronome */}
-        <button
-          onClick={() => setMetronomeEnabled(!pbMetronomeEnabled)}
-          aria-label="Toggle Metronome"
-          className={`
-            w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer
-            ${pbMetronomeEnabled
-              ? 'bg-blue-500/25 text-blue-300 shadow-[0_0_15px_-3px_rgba(59,130,246,0.4)] border border-blue-500/30'
-              : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
-            }
-          `}
-          title="Metronome"
-        >
-          {/* Metronome icon from Tabler Icons (free, high-quality) */}
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={pbMetronomeEnabled ? 'animate-pulse' : ''}
-          >
-            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
-            <path d="M14.153 8.188l-.72 -3.236a2.493 2.493 0 0 0 -4.867 0l-3.025 13.614a2 2 0 0 0 1.952 2.434h7.014a2 2 0 0 0 1.952 -2.434l-.524 -2.357m-4.935 1.791l9 -13" />
-            <path d="M19 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
-          </svg>
-        </button>
-
-      </div>
-
-      {/* CENTER SECTION: Controls Group (Absolute Centered) */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-5 z-20">
-        {/* Restart */}
+        {/* Restart Button - pinned to the inside edge (closer to Play) */}
         <button
           onClick={handleRestart}
           disabled={!arrangement}
           aria-label="Restart"
           className="
-            w-10 h-10 rounded-full flex items-center justify-center
+            w-12 h-12 rounded-full flex items-center justify-center
             text-[var(--text-secondary)] hover:bg-white/10 hover:text-[var(--text-primary)]
             transition-all duration-200 disabled:opacity-20 cursor-pointer
             hover:shadow-[0_0_12px_-3px_rgba(255,255,255,0.1)]
           "
           title="Restart"
         >
-          <SkipBack size={18} />
+          <SkipBack size={20} />
         </button>
 
+      </div>
+
+      {/* CENTER SECTION: Play Button Only (Perfectly Centered) */}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
         {/* Play Button - with animated glow ring */}
         <div className="relative">
           {/* Glow ring behind play button */}
@@ -349,31 +321,67 @@ export function TransportBar() {
             {pbIsPlaying ? <Pause size={24} /> : <Play size={24} className="ml-0.5" fill="currentColor" />}
           </button>
         </div>
-
-        {/* Loop */}
-        <button
-          onClick={() => setLoopEnabled(!pbLoopEnabled)}
-          disabled={!arrangement}
-          aria-label="Toggle Loop"
-          className={`
-            w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer
-            ${pbLoopEnabled
-              ? 'bg-[var(--accent-secondary)]/25 text-[var(--accent-secondary-light)] shadow-[0_0_15px_-3px_var(--accent-secondary-glow)] border border-[var(--accent-secondary)]/30'
-              : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
-            }
-            disabled:opacity-20
-          `}
-          title="Toggle Loop"
-        >
-          <Repeat size={18} />
-        </button>
       </div>
 
-      {/* RIGHT SECTION: Zoom Controls */}
-      <div className="flex items-center justify-end gap-2 z-10 w-[280px] shrink-0">
+      {/* RIGHT SECTION: Loop, Metronome, Zoom Controls */}
+      <div className="flex items-center justify-between gap-2 z-10 w-[260px] shrink-0">
 
-        {/* Zoom control group: horizontal pair | vertical pair | fit-to-view */}
-        <div className="flex items-center gap-0.5 bg-white/5 rounded-full p-0.5 border border-white/5">
+        <div className="flex items-center gap-2">
+          {/* Loop Button */}
+          <button
+            onClick={() => setLoopEnabled(!pbLoopEnabled)}
+            disabled={!arrangement}
+            aria-label="Toggle Loop"
+            className={`
+              w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer
+              ${pbLoopEnabled
+                ? 'bg-[var(--accent-secondary)]/25 text-[var(--accent-secondary-light)] shadow-[0_0_15px_-3px_var(--accent-secondary-glow)] border border-[var(--accent-secondary)]/30'
+                : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
+              }
+              disabled:opacity-20
+            `}
+            title="Toggle Loop"
+          >
+            <Repeat size={20} />
+          </button>
+
+          {/* Metronome Button */}
+          <button
+            onClick={() => setMetronomeEnabled(!pbMetronomeEnabled)}
+            aria-label="Toggle Metronome"
+            className={`
+              w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer
+              ${pbMetronomeEnabled
+                ? 'bg-blue-500/25 text-blue-300 shadow-[0_0_15px_-3px_rgba(59,130,246,0.4)] border border-blue-500/30'
+                : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
+              }
+            `}
+            title="Metronome"
+          >
+            {/* Metronome icon from Tabler Icons (free, high-quality) */}
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={pbMetronomeEnabled ? 'animate-pulse' : ''}
+            >
+              <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+              <path d="M14.153 8.188l-.72 -3.236a2.493 2.493 0 0 0 -4.867 0l-3.025 13.614a2 2 0 0 0 1.952 2.434h7.014a2 2 0 0 0 1.952 -2.434l-.524 -2.357m-4.935 1.791l9 -13" />
+              <path d="M19 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="w-px h-6 bg-white/8" />
+
+          {/* Zoom control group: horizontal pair | vertical pair | fit-to-view */}
+          <div className="flex items-center gap-0.5 bg-white/5 rounded-full p-0.5 border border-white/8">
 
           {/* Horizontal zoom pair - laid out side by side */}
           <button
@@ -447,6 +455,7 @@ export function TransportBar() {
           >
             <Maximize2 size={14} />
           </button>
+          </div>
         </div>
 
       </div>

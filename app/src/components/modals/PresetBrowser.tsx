@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   X, Search, FolderPlus, Trash2, ChevronRight,
-  Music, Play, Heart, Save,
+  Music, Play, Heart, Save, Upload,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Panel } from '../ui/Panel';
@@ -297,6 +297,8 @@ function MyLibraryTab({ currentArrangementId, onSelect, currentArrangement }: My
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [fileInputEl, setFileInputEl] = useState<HTMLInputElement | null>(null);
 
   /* ---- Load library from IndexedDB on mount ---- */
   const loadLibrary = useCallback(async () => {
@@ -340,6 +342,97 @@ function MyLibraryTab({ currentArrangementId, onSelect, currentArrangement }: My
     await loadLibrary();
   };
 
+  const handleImportClick = () => {
+    setImportStatus(null);
+    fileInputEl?.click();
+  };
+
+  const handleImportFile = async (file: File) => {
+    setImportStatus(null);
+
+    // Read the selected file and parse it as JSON.
+    let parsed: unknown;
+    try {
+      const text = await file.text();
+      parsed = JSON.parse(text);
+    } catch {
+      setImportStatus({ type: 'error', message: 'That file is not valid JSON.' });
+      return;
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      setImportStatus({ type: 'error', message: 'That JSON file does not look like an arrangement.' });
+      return;
+    }
+
+    const candidate = parsed as Partial<Arrangement>;
+
+    const hasRequiredFields =
+      typeof candidate.id === 'string'
+      && typeof candidate.title === 'string'
+      && typeof candidate.tonic === 'string'
+      && typeof candidate.scale === 'string'
+      && typeof candidate.tempo === 'number'
+      && typeof candidate.bars === 'number'
+      && typeof candidate.timeSig === 'object'
+      && candidate.timeSig !== null
+      && typeof (candidate.timeSig as any).numerator === 'number'
+      && typeof (candidate.timeSig as any).denominator === 'number'
+      && Array.isArray(candidate.voices);
+
+    if (!hasRequiredFields) {
+      setImportStatus({
+        type: 'error',
+        message: 'This JSON file is missing required arrangement fields (id, title, key, timing, voices).',
+      });
+      return;
+    }
+
+    // At this point, we've validated the required fields at runtime.
+    // We copy them into strongly-typed variables so TypeScript knows they are not undefined.
+    const id: string = candidate.id as string;
+    const title: string = candidate.title as string;
+    const tonic: string = candidate.tonic as string;
+    const tempo: number = candidate.tempo as number;
+    const bars: number = candidate.bars as number;
+    const timeSig: Arrangement['timeSig'] = candidate.timeSig as Arrangement['timeSig'];
+    const voices: Arrangement['voices'] = candidate.voices as Arrangement['voices'];
+
+    const importedArrangement: Arrangement = {
+      id,
+      title,
+      description: candidate.description,
+      tonic,
+      scale: candidate.scale as Arrangement['scale'],
+      tempo,
+      bars,
+      timeSig,
+      voices,
+      chords: candidate.chords as Arrangement['chords'],
+      difficulty: candidate.difficulty,
+      tags: candidate.tags,
+      author: candidate.author,
+      createdAt: candidate.createdAt,
+    };
+
+    const existingArrangementIds = new Set(items.map((it) => it.arrangement.id));
+    if (existingArrangementIds.has(importedArrangement.id)) {
+      importedArrangement.id = `${importedArrangement.id}_import_${Date.now()}`;
+    }
+
+    try {
+      await LibraryService.saveArrangement(
+        importedArrangement,
+        activeFolderId === '__favorites__' ? null : activeFolderId,
+        'user',
+      );
+      await loadLibrary();
+      setImportStatus({ type: 'success', message: `Imported “${importedArrangement.title}”` });
+    } catch {
+      setImportStatus({ type: 'error', message: 'Import failed while saving to your library.' });
+    }
+  };
+
   const handleDelete = async (itemId: string) => {
     await LibraryService.deleteItem(itemId);
     await loadLibrary();
@@ -367,6 +460,19 @@ function MyLibraryTab({ currentArrangementId, onSelect, currentArrangement }: My
     <div className="flex flex-col h-full">
       {/* Toolbar: search + save + new folder */}
       <div className="flex items-center gap-2 p-2 border-b border-[var(--border-color)]">
+        <input
+          ref={(el) => setFileInputEl(el)}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            void handleImportFile(file);
+            e.target.value = '';
+          }}
+        />
+
         {/* Search */}
         <div className="flex-1 relative">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-disabled)]" />
@@ -382,11 +488,26 @@ function MyLibraryTab({ currentArrangementId, onSelect, currentArrangement }: My
         <Button size="sm" variant="default" onClick={handleSaveCurrent} disabled={!currentArrangement} title="Save current arrangement to library">
           <Save size={14} className="mr-1" /> Save
         </Button>
+        {/* Import arrangement */}
+        <Button size="sm" variant="ghost" onClick={handleImportClick} title="Import a .json arrangement into your library">
+          <Upload size={14} className="mr-1" /> Import
+        </Button>
         {/* New folder */}
         <Button size="sm" variant="ghost" onClick={handleCreateFolder} title="Create folder">
           <FolderPlus size={14} />
         </Button>
       </div>
+
+      {importStatus && (
+        <div className="px-3 py-1 border-b border-[var(--border-color)]">
+          <p
+            className={`text-[11px] ${importStatus.type === 'error' ? 'text-red-300' : 'text-[var(--text-muted)]'}`}
+            role={importStatus.type === 'error' ? 'alert' : undefined}
+          >
+            {importStatus.message}
+          </p>
+        </div>
+      )}
 
       {/* Body: sidebar + list */}
       <div className="flex flex-1 overflow-hidden">
