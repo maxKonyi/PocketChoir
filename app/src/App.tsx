@@ -43,6 +43,7 @@ function App() {
   const transposition = useAppStore((state) => state.transposition);
   const autoTranspositionNotice = useAppStore((state) => state.autoTranspositionNotice);
   const mode = useAppStore((state) => state.mode);
+  const showMinimap = useAppStore((state) => state.display.showMinimap);
   const showChordTrack = useAppStore((state) => state.display.showChordTrack);
   const disableChordTrack = useAppStore((state) => state.disableChordTrack);
   const undo = useAppStore((state) => state.undo);
@@ -630,7 +631,7 @@ function App() {
       <BackgroundVideo />
 
       {/* Minimap - compressed contour preview above the chord bar, between top bar and grid */}
-      {arrangement && (
+      {arrangement && showMinimap && (
         <div className="absolute top-[5.25rem] left-[calc(11rem+50px)] right-[calc(2rem+20px)] z-30">
           <Minimap arrangement={arrangement} className="w-full" />
         </div>
@@ -638,7 +639,7 @@ function App() {
 
       {/* Main grid visualization - background layer (masked lines/voices) */}
       {/* Extra top padding (pt-[7.5rem]) makes room for top bar + minimap above chord bar */}
-      <div className="absolute inset-0 pt-[9rem] pb-20 pl-44 pr-8">
+      <div className={`absolute inset-0 ${showMinimap ? 'pt-[9rem]' : 'pt-[6rem]'} pb-20 pl-44 pr-8`}>
         {/* Right-edge fade uses a real mask (not a color overlay) so it fades to transparency. */}
         <div className="relative h-full w-full mask-right-fade">
           <div className="relative h-full w-full mask-vertical-fade">
@@ -658,7 +659,7 @@ function App() {
             className="absolute pointer-events-auto w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-[var(--text-muted)] hover:text-red-300 hover:bg-red-500/10 hover:border-red-500/20 transition-colors"
             style={{
               right: '2.25rem',
-              top: '9.25rem',
+              top: showMinimap ? '9.25rem' : '6.25rem',
             }}
             title="Disable Chord Track"
             onClick={(e) => {

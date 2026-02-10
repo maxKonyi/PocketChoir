@@ -54,6 +54,7 @@ interface VoiceState {
  * Display settings for the grid and labels.
  */
 interface DisplaySettings {
+  showMinimap: boolean;         // Show/hide the minimap (overview strip above the grid)
   showChordTrack: boolean;      // Show chord labels above grid
   showScaleDegrees: boolean;    // Show numbers on nodes
   showPitchLabels: boolean;     // Show note names
@@ -453,6 +454,7 @@ const initialVocalRange: VocalRange = {
 };
 
 const initialDisplaySettings: DisplaySettings = {
+  showMinimap: true,
   showChordTrack: true,
   showScaleDegrees: true,
   showPitchLabels: false,
@@ -1798,6 +1800,36 @@ export const useAppStore = create<AppState & AppActions>()(
     }),
     {
       name: STORAGE_KEY,
+      // IMPORTANT:
+      // We deep-merge nested user-settings objects so when we add new fields
+      // (like display.showMinimap) older saved settings don't erase the new defaults.
+      merge: (persistedState, currentState) => {
+        const persisted = (persistedState as Partial<PersistedState> | undefined) ?? {};
+        const next = {
+          ...currentState,
+          ...persisted,
+        } as AppState & AppActions;
+
+        return {
+          ...next,
+          display: {
+            ...currentState.display,
+            ...(persisted as any).display,
+          },
+          microphoneState: {
+            ...currentState.microphoneState,
+            ...(persisted as any).microphoneState,
+          },
+          countIn: {
+            ...currentState.countIn,
+            ...(persisted as any).countIn,
+          },
+          vocalRange: {
+            ...currentState.vocalRange,
+            ...(persisted as any).vocalRange,
+          },
+        };
+      },
       // Only persist user settings, not transient state
       partialize: (state): PersistedState => ({
         voiceStates: state.voiceStates,

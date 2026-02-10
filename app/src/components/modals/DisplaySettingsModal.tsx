@@ -96,6 +96,30 @@ export function DisplaySettingsModal() {
 
         {/* Content */}
         <div className="p-4 space-y-6">
+          {/* Show minimap */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-[var(--text-primary)]">
+              Show Minimap
+            </span>
+            <button
+              onClick={() => handleToggle('showMinimap', !display.showMinimap)}
+              className={`
+                w-12 h-6 rounded-full transition-colors
+                ${display.showMinimap
+                  ? 'bg-[var(--accent-primary)]'
+                  : 'bg-[var(--button-bg)]'
+                }
+              `}
+            >
+              <div
+                className={`
+                  w-5 h-5 rounded-full bg-white shadow transition-transform
+                  ${display.showMinimap ? 'translate-x-6' : 'translate-x-0.5'}
+                `}
+              />
+            </button>
+          </div>
+
           {/* Show chord track */}
           <div className="flex items-center justify-between">
             <span className="text-sm text-[var(--text-primary)]">
