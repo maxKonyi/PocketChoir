@@ -1,0 +1,1910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Harmonic Prism</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.26/Tone.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    /* Global body and container styles */
+    body {
+      margin: 0;
+      padding: 0;
+      background: #2a2a2a;
+      font-family: 'Montserrat', sans-serif;
+      color: #eee;
+      height: 100vh;
+      display: flex;
+    }
+    .container {
+      flex: 1;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+    }
+    /* Sidebar styling */
+    .sidebar {
+      width: 260px;
+      background: #2f2f2f;
+      padding: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      overflow-y: auto;
+    }
+    .section {
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid #555;
+    }
+    .group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-top: 0.6rem;
+    }
+    .group.inline {
+      flex-direction: row;
+      align-items: center;
+      gap: 0.6rem;
+      margin-top: 0.6rem;
+    }
+    .sidebar button {
+      background: #444;
+      color: #eee;
+      border: none;
+      padding: 0.3rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .sidebar button:hover {
+      background: #555;
+    }
+    .sidebar button.active {
+      background: #888;
+      color: #fff;
+    }
+    .sidebar input[type="range"] {
+      -webkit-appearance: none;
+      height: 4px;
+      background: #666;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+      width: 100px;
+    }
+    .sidebar input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ff6b6b;
+      cursor: pointer;
+      box-shadow: 0 0 2px rgba(0,0,0,0.5);
+    }
+    /* Main content and SVG progression styles */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .current-key-display {
+      padding: 0.5rem;
+      font-size: 1rem;
+      text-align: center;
+      background: #1f1f1f;
+    }
+    .progression-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .chord-svg {
+      background: #1f1f1f;
+      border: 1px solid #444;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+    }
+    .degree-text {
+      fill: #999;
+      font-size: 12px;
+      text-anchor: middle;
+      font-family: 'Montserrat', sans-serif;
+    }
+    .degree-text-root {
+      fill: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      text-anchor: middle;
+      font-family: 'Montserrat', sans-serif;
+    }
+    .chord-name-text {
+      fill: #eee;
+      font-size: 16px;
+      text-anchor: middle;
+      font-weight: 700;
+      font-family: 'Montserrat', sans-serif;
+    }
+    /* Updated: use inline style transitions for marker animations */
+    .voice-marker {
+      stroke-width: 2;
+      fill: #1f1f1f;
+      transition: stroke-width 0.2s ease, stroke 0.2s ease, fill 0.5s ease;
+    }
+    /* New CSS classes for rise and decay phases */
+    .marker-rise {
+      stroke-width: 4px !important;
+      stroke: var(--pulse-stroke) !important;
+      transition: stroke-width 0.2s ease, stroke 0.2s ease, fill 0.5s ease !important;
+    }
+    .marker-decay {
+      stroke-width: 2px !important;
+      transition: stroke-width 1s ease, stroke 1s ease, fill 1s ease !important;
+    }
+    .label-soprano { color: #4dc3ff; }
+    .label-alto    { color: #8ee4af; } 
+    .label-tenor   { color: #ffa94d; }
+    .label-bass    { color: #ff6b6b; }
+    /* Synth control panel popup styling */
+    #synthControlPanel {
+      display: none;
+      position: fixed;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      padding: 20px;
+      border-radius: 8px;
+      z-index: 2000;
+      color: #fff;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.8);
+      font-size: 0.9rem;
+    }
+    #synthControlPanel h3 {
+      margin-top: 0;
+      font-size: 1rem;
+    }
+    #synthControlPanel label {
+      display: block;
+      margin: 8px 0 4px;
+    }
+    #synthControlPanel input[type="range"] {
+      width: 100%;
+    }
+    #synthControlPanel button {
+      margin-top: 12px;
+      padding: 4px 8px;
+      background: #555;
+      border: none;
+      border-radius: 4px;
+      color: #eee;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    #synthControlPanel button:hover {
+      background: #777;
+    }
+    /* Voice controls styling */
+    .voice-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .voice-name-slider {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .voice-name-slider label {
+      font-size: 0.85rem;
+      font-weight: bold;
+    }
+    .voice-buttons {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    /* Radial menu for game mode */
+    #radialMenu {
+      position: absolute;
+      width: 100px;
+      height: 100px;
+      background: #444;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 3000;
+      pointer-events: auto;
+    }
+    #radialMenu button {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #666;
+      color: #eee;
+      border: none;
+      cursor: pointer;
+    }
+    #radialMenu button:hover {
+      background: #777;
+    }
+    /* Perfect message overlay */
+    #perfectMessage {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.8);
+      color: #0f0;
+      padding: 20px;
+      border-radius: 10px;
+      font-size: 2rem;
+      z-index: 4000;
+    }
+    /* Chorus control panel popup styling */
+    #chorusControlPanel {
+      display: none;
+      position: fixed;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      padding: 20px;
+      border-radius: 8px;
+      z-index: 2000;
+      color: #fff;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.8);
+      font-size: 0.9rem;
+    }
+    #chorusControlPanel h3 {
+      margin-top: 0;
+      font-size: 1rem;
+    }
+    #chorusControlPanel label {
+      display: block;
+      margin: 8px 0 4px;
+    }
+    #chorusControlPanel input[type="range"] {
+      width: 100%;
+    }
+    #chorusControlPanel button {
+      margin-top: 12px;
+      padding: 4px 8px;
+      background: #555;
+      border: none;
+      border-radius: 4px;
+      color: #eee;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    #chorusControlPanel button:hover {
+      background: #777;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Sidebar with controls -->
+    <div class="sidebar">
+      <div class="section">
+        <div class="group inline">
+          <button id="keyToggleBtn">Major Key</button>
+        </div>
+        <div class="group inline">
+          <button id="generateBtn">Generate (G)</button>
+        </div>
+        <div class="group inline">
+          <label for="chordCountSelect">Chords:</label>
+          <select id="chordCountSelect">
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8" selected>8</option>
+          </select>
+        </div>
+      </div>
+      <div class="section">
+        <div class="group inline">
+          <button id="relativeModeBtn">Relative Mode: OFF</button>
+          <button id="toggleChordDisplayBtn">Display Roman</button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="group inline">
+          <button id="playStopBtn">Play</button>
+        </div>
+        <div class="group inline">
+          <label for="tempoSlider">Tempo:</label>
+          <input type="range" id="tempoSlider" min="50" max="400" value="200" />
+          <span id="tempoValue">100</span> BPM
+        </div>
+        <div class="group inline">
+          <label for="masterVolumeSlider">Master Vol:</label>
+          <input type="range" id="masterVolumeSlider" min="-60" max="0" value="0" />
+          <span id="masterVolumeValue">0</span> dB
+        </div>
+        <div class="group inline">
+          <label for="degreeGridSlider">Degree Grid:</label>
+          <input type="range" id="degreeGridSlider" min="0" max="1" step="0.01" value="1" />
+          <span id="degreeGridValue">1.00</span>
+        </div>
+      </div>
+      <!-- Voice Controls for individual parts -->
+      <div class="section">
+        <div class="group">
+          <div class="voice-controls">
+            <div class="voice-name-slider">
+              <label class="label-soprano" data-voice="0">Soprano</label>
+              <input type="range" class="voice-volume" data-voice="0" min="-60" max="0" value="-12" />
+            </div>
+            <div class="voice-buttons">
+              <button class="mute-btn" data-voice="0">M</button>
+              <button class="solo-btn" data-voice="0">S</button>
+              <span class="transcribe-radio" style="display: none; margin-left: 5px;">
+                <input type="radio" name="transcribeVoice" value="0" id="transcribeVoice0" checked>
+                <label for="transcribeVoice0" style="font-size: 0.75rem; margin: 0;">T</label>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="voice-controls">
+            <div class="voice-name-slider">
+              <label class="label-alto" data-voice="1">Alto</label>
+              <input type="range" class="voice-volume" data-voice="1" min="-60" max="0" value="-12" />
+            </div>
+            <div class="voice-buttons">
+              <button class="mute-btn" data-voice="1">M</button>
+              <button class="solo-btn" data-voice="1">S</button>
+              <span class="transcribe-radio" style="display: none; margin-left: 5px;">
+                <input type="radio" name="transcribeVoice" value="1" id="transcribeVoice1">
+                <label for="transcribeVoice1" style="font-size: 0.75rem; margin: 0;">T</label>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="voice-controls">
+            <div class="voice-name-slider">
+              <label class="label-tenor" data-voice="2">Tenor</label>
+              <input type="range" class="voice-volume" data-voice="2" min="-60" max="0" value="-12" />
+            </div>
+            <div class="voice-buttons">
+              <button class="mute-btn" data-voice="2">M</button>
+              <button class="solo-btn" data-voice="2">S</button>
+              <span class="transcribe-radio" style="display: none; margin-left: 5px;">
+                <input type="radio" name="transcribeVoice" value="2" id="transcribeVoice2">
+                <label for="transcribeVoice2" style="font-size: 0.75rem; margin: 0;">T</label>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="voice-controls">
+            <div class="voice-name-slider">
+              <label class="label-bass" data-voice="3">Bass</label>
+              <input type="range" class="voice-volume" data-voice="3" min="-60" max="0" value="-12" />
+            </div>
+            <div class="voice-buttons">
+              <button class="mute-btn" data-voice="3">M</button>
+              <button class="solo-btn" data-voice="3">S</button>
+              <span class="transcribe-radio" style="display: none; margin-left: 5px;">
+                <input type="radio" name="transcribeVoice" value="3" id="transcribeVoice3">
+                <label for="transcribeVoice3" style="font-size: 0.75rem; margin: 0;">T</label>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Inversion toggle for chord voicing -->
+      <div class="section">
+        <div class="group inline">
+          <button id="invertBtn">Invert: OFF</button>
+        </div>
+      </div>
+      <!-- Game mode controls -->
+      <div class="section">
+        <div class="group inline">
+          <button id="gameModeToggleBtn">Game Mode: OFF</button>
+          <button id="submitAnswersBtn" style="display: none;">Submit</button>
+        </div>
+      </div>
+      <!-- Transcribe Mode Controls -->
+      <div class="section" id="transcribeSection">
+        <div class="group inline">
+          <button id="transcribeModeToggleBtn">Transcribe Mode: OFF</button>
+          <button id="transcribeSubmitBtn" style="display: none;">Submit Transcription</button>
+        </div>
+      </div>
+      <!-- Chorus control access -->
+      <div class="section">
+        <div class="group inline">
+          <button id="chorusBtn">CHORUS</button>
+        </div>
+      </div>
+    </div>
+    <!-- Main content area showing the current key and chord progression -->
+    <div class="main-content">
+      <div id="currentKeyDisplay" class="current-key-display"></div>
+      <div class="progression-container">
+        <svg id="chordSvg" class="chord-svg" preserveAspectRatio="xMidYMid meet" width="1200" height="850"></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Synth Control Popup Panel -->
+  <div id="synthControlPanel">
+    <h3 id="synthControlHeader">Synth Controls</h3>
+    <label for="cutoffSlider">Low-Pass Cutoff (Hz)</label>
+    <input type="range" id="cutoffSlider" min="100" max="5000" value="1200" />
+    <span id="cutoffVal">1200</span>
+    <label for="panSlider">Pan (-1 to 1)</label>
+    <input type="range" id="panSlider" min="-1" max="1" step="0.01" value="0" />
+    <span id="panVal">0</span>
+    <label for="portamentoSlider">Portamento (ms)</label>
+    <input type="range" id="portamentoSlider" min="0" max="100" value="100" />
+    <span id="portamentoVal">100</span>
+    <button id="closeSynthPanel">Close</button>
+  </div>
+
+  <!-- Chorus Control Popup Panel -->
+  <div id="chorusControlPanel">
+    <h3>Chorus Controls</h3>
+    <label for="chorusFrequency">Frequency (Hz)</label>
+    <input type="range" id="chorusFrequency" min="0.1" max="5" step="0.1" value="0.1">
+    <span id="chorusFrequencyVal">0.1</span>
+    
+    <label for="chorusDelay">Delay Time (ms)</label>
+    <input type="range" id="chorusDelay" min="1" max="10" step="0.1" value="10">
+    <span id="chorusDelayVal">10</span>
+    
+    <label for="chorusDepth">Depth</label>
+    <input type="range" id="chorusDepth" min="0" max="1" step="0.01" value="0.71">
+    <span id="chorusDepthVal">0.71</span>
+    
+    <label for="chorusFeedback">Feedback</label>
+    <input type="range" id="chorusFeedback" min="0" max="1" step="0.01" value="0.47">
+    <span id="chorusFeedbackVal">0.47</span>
+    
+    <label for="chorusSpread">Spread (°)</label>
+    <input type="range" id="chorusSpread" min="0" max="360" step="1" value="181">
+    <span id="chorusSpreadVal">181</span>
+    
+    <label for="chorusWet">Wet</label>
+    <input type="range" id="chorusWet" min="0" max="1" step="0.01" value="0.04">
+    <span id="chorusWetVal">0.04</span>
+    
+    <button id="closeChorusPanel">Close</button>
+  </div>
+
+  <script>
+    /***** GLOBAL VARIABLES AND INITIAL SETUP *****/
+    let relativeMode = false;
+    let displayRoman = false;
+    let keyIsMinor = false;
+    let isPlaying = false;
+    let currentKey = null;
+    let currentProgression = null;
+    let currentVoicedChords = null;
+    let currentPart = null;
+    let globalInitialSteps = [0, 0, 0];
+    let chordHighlightRects = [];
+
+    let isInverted = false;
+    let baseVoicedChords = null;
+    let gameModeEnabled = false;
+    let userAnswers = [];
+
+    // Transcribe Mode flag and storage for user-drawn markers
+    let transcribeModeEnabled = false;
+    let userTranscriptions = [[], [], [], []];
+
+    const synthFilters = [];
+    const synthPanners = [];
+    const userMuteStates = [false, false, false, false];
+    const soloStates = [false, false, false, false];
+    const numVoices = 4;
+    const synths = [];
+    const voiceGains = [];
+
+    const numRows = 22;
+    const rowSpacing = 35;
+    const BACKGROUND_TEXT_OFFSET = -3;
+    const MARKER_CIRCLE_OFFSET = -6;
+
+    Tone.Destination.volume.value = 0;
+    let currentTempo = 200;
+    let isDummyGrid = true;
+    const FIXED_WIDTH = 1200;
+    const FIXED_HEIGHT = 850;
+
+    const globalChorus = new Tone.Chorus({
+      frequency: 0.1,
+      delayTime: 10,
+      depth: 0.71,
+      feedback: 0.47,
+      spread: 181,
+      wet: 0.04
+    }).start();
+
+    // Create synth chains for each voice
+    for (let i = 0; i < numVoices; i++) {
+      let filterFreq = 1200, panVal = 0;
+      if (i === 1) { filterFreq = 2000; panVal = -0.8; }
+      else if (i === 2) { filterFreq = 2500; panVal = 0.8; }
+      const synth = new Tone.Synth({
+        oscillator: { type: "triangle" },
+        envelope: { attack: 0.05, decay: 0.1, sustain: 1, release: 0.1 },
+        volume: -10,
+        portamento: 0.1 
+      });
+      const filter = new Tone.Filter({ frequency: filterFreq, type: "lowpass", rolloff: -12 });
+      const gain = new Tone.Gain(Math.pow(10, -6 / 20));
+      const panner = new Tone.Panner(panVal);
+      synth.chain(filter, gain, panner, globalChorus, Tone.Destination);
+      synths.push(synth);
+      synthFilters.push(filter);
+      synthPanners.push(panner);
+      voiceGains.push(gain);
+    }
+
+    let selectedChordCount = 8;
+    document.getElementById("chordCountSelect").addEventListener("change", function(e) {
+      selectedChordCount = parseInt(e.target.value, 10);
+    });
+
+    const allMajorKeys = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+    const chordNamesMajor = ["I", "ii", "iii", "IV", "V", "vi"];
+    const chordScaleDegreesMajor = {
+      I: [1, 3, 5],
+      ii: [2, 4, 6],
+      iii: [3, 5, 7],
+      IV: [4, 6, 1],
+      V: [5, 7, 2],
+      vi: [6, 1, 3]
+    };
+    const chordNamesMinor = ["i", "ii°", "III", "iv", "V", "VI", "VII"];
+    const chordScaleDegreesMinor = {
+      i: [1, 3, 5],
+      "ii°": [2, 4, 6],
+      III: [3, 5, 7],
+      iv: [4, 6, 1],
+      V: [5, 7, 2],
+      VI: [6, 1, 3],
+      VII: [7, 2, 4]
+    };
+    const majorScale = [0, 2, 4, 5, 7, 9, 11];
+    const naturalMinorScale = [0, 2, 3, 5, 7, 8, 10];
+    const noteToSemitone = {
+      "C": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3,
+      "E": 4, "F": 5, "F#": 6, "GB": 6, "G": 7, "G#": 8,
+      "AB": 8, "A": 9, "A#": 10, "BB": 10, "B": 11, "CB": 11
+    };
+    const modeMappingMajor = {
+      "I":   ["1", "2", "3", "4", "5", "6", "7"],
+      "ii":  ["1", "2", "♭3", "4", "5", "6", "♭7"],
+      "iii": ["1", "♭2", "♭3", "4", "5", "♭6", "♭7"],
+      "IV":  ["1", "2", "3", "#4", "5", "6", "7"],
+      "V":   ["1", "2", "3", "4", "5", "6", "♭7"],
+      "vi":  ["1", "2", "♭3", "4", "5", "♭6", "♭7"]
+    };
+    const modeMappingMinor = {
+      "i":   ["1", "2", "♭3", "4", "5", "♭6", "♭7"],
+      "ii°": ["1", "♭2", "♭3", "4", "♭5", "♭6", "♭7"],
+      "III": ["1", "2", "3", "4", "5", "6", "7"],
+      "iv":  ["1", "2", "♭3", "4", "5", "6", "♭7"],
+      "V":   ["1", "♭2", "3", "4", "5", "♭6", "♭7"],
+      "VI":  ["1", "2", "3", "#4", "5", "6", "7"],
+      "VII": ["1", "2", "3", "4", "5", "6", "♭7"]
+    };
+
+    /***** HELPER FUNCTIONS FOR MUSIC THEORY CALCULATIONS *****/
+    function usesFlats(keyName) {
+      const flatKeys = new Set(["F", "Bb", "Eb", "Ab", "Db", "Gb", "Cb"]);
+      return (keyName.includes("b") || flatKeys.has(keyName));
+    }
+    function semitoneToNoteName(st, keyName) {
+      const sharps = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+      const flats  = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+      return usesFlats(keyName) ? flats[st] : sharps[st];
+    }
+    function getMinorSemitone(deg, isChordV) {
+      if (deg < 1 || deg > 7) return 0;
+      if (deg === 7 && isChordV) return 11;
+      return naturalMinorScale[deg - 1];
+    }
+    function getChordSemitones(keyRoot, degArray, isMinor, isChordV) {
+      const keyBase = noteToSemitone[keyRoot.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      if (!isMinor) {
+        return degArray.map(d => (keyBase + majorScale[d - 1]) % 12);
+      } else {
+        return degArray.map(d => {
+          const semi = getMinorSemitone(d, isChordV);
+          return (keyBase + semi) % 12;
+        });
+      }
+    }
+    function getChordName(key, chordSymbol) {
+      const majorMap = { "I": 1, "ii": 2, "iii": 3, "IV": 4, "V": 5, "vi": 6 };
+      const minorMap = { "i": 1, "ii°": 2, "III": 3, "iv": 4, "V": 5, "VI": 6, "VII": 7 };
+      let isMinorChord = false;
+      let deg = 1;
+      if (minorMap[chordSymbol] !== undefined) {
+        isMinorChord = true;
+        deg = minorMap[chordSymbol];
+      } else {
+        deg = majorMap[chordSymbol];
+      }
+      const keyBase = noteToSemitone[key.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      let offset = 0;
+      const chordV = (chordSymbol === "V" && isMinorChord);
+      if (isMinorChord) {
+        offset = getMinorSemitone(deg, chordV);
+      } else {
+        offset = majorScale[deg - 1];
+      }
+      const chordRoot = (keyBase + offset) % 12;
+      const chordRootName = semitoneToNoteName(chordRoot, key);
+      if (chordSymbol.includes("°")) return chordRootName + "°";
+      const isUpper = (chordSymbol.charAt(0) === chordSymbol.charAt(0).toUpperCase());
+      return isUpper ? chordRootName : chordRootName + "m";
+    }
+    function getScaleDegree(midi, key, isMinor) {
+      const noteMod = midi % 12;
+      const keyBase = noteToSemitone[key.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      if (!isMinor) {
+        for (let i = 0; i < majorScale.length; i++) {
+          if ((keyBase + majorScale[i]) % 12 === noteMod) return i + 1;
+        }
+        return -1;
+      } else {
+        const possible = [0, 2, 3, 5, 7, 8, 10, 11];
+        const degs = [1, 2, 3, 4, 5, 6, 7, 7];
+        for (let i = 0; i < possible.length; i++) {
+          if ((keyBase + possible[i]) % 12 === noteMod) return degs[i];
+        }
+        return -1;
+      }
+    }
+    function getAbsoluteDiatonicStep(midi, key, isMinor) {
+      const keyBase = noteToSemitone[key.toUpperCase().replace("♯", "#").replace("♭", "b")] || 0;
+      let scale = isMinor ? naturalMinorScale : majorScale;
+      let diff = midi - keyBase;
+      let octave = Math.floor(diff / 12);
+      let noteMod = diff % 12;
+      if (noteMod < 0) { noteMod += 12; octave -= 1; }
+      let scaleIndex = scale.indexOf(noteMod);
+      if (scaleIndex === -1) scaleIndex = 0;
+      return octave * 7 + scaleIndex + 1;
+    }
+    function findNearestChordTone(oldNote, chordTones) {
+      let best = chordTones[0], minDiff = Infinity;
+      chordTones.forEach(ct => {
+        const diff = Math.abs(ct - oldNote);
+        if (diff < minDiff) { minDiff = diff; best = ct; }
+      });
+      return best;
+    }
+    function reorderChordByPitch(chord) {
+      let combined = chord.notes.map((midi, idx) => ({ midi, deg: chord.voiceDegrees[idx] }));
+      combined.sort((a, b) => b.midi - a.midi);
+      for (let i = 0; i < 4; i++) {
+        chord.notes[i] = combined[i].midi;
+        chord.voiceDegrees[i] = combined[i].deg;
+      }
+    }
+    function reorderVoicesByPitch(voicedChords) {
+      for (let chord of voicedChords) {
+        reorderChordByPitch(chord);
+      }
+      return voicedChords;
+    }
+    function getMultiOctaveChordTones(chordOffsets, minMidi = 36, maxMidi = 84) {
+      const out = [];
+      for (let octave = 0; octave < 10; octave++) {
+        for (let off of chordOffsets) {
+          const midi = 12 * octave + off;
+          if (midi >= minMidi && midi <= maxMidi) out.push(midi);
+        }
+      }
+      return out;
+    }
+    function generateDummyProgression() {
+      const dummy = [];
+      for (let i = 0; i < selectedChordCount; i++) {
+        dummy.push({ chordSymbol: "I" });
+      }
+      return dummy;
+    }
+
+    /***** NEW HELPER: Lighten a HEX color by a given fraction *****/
+    function lightenColor(hex, amount) {
+      hex = hex.replace('#', '');
+      let num = parseInt(hex, 16);
+      let r = (num >> 16) & 0xFF;
+      let g = (num >> 8) & 0xFF;
+      let b = num & 0xFF;
+      r = Math.round(r + (255 - r) * amount);
+      g = Math.round(g + (255 - g) * amount);
+      b = Math.round(b + (255 - b) * amount);
+      return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    }
+
+    /***** HELPER FUNCTION: Get voice colour *****/
+    function getVoiceColor(v) {
+      if (userMuteStates[v] || (soloStates.some(s => s) && !soloStates[v])) {
+        return "#808080";
+      }
+      const colors = ["#4dc3ff", "#8ee4af", "#ffa94d", "#ff6b6b"];
+      return colors[v];
+    }
+    function updateDegreeGridOpacity(opacity) {
+      if (gameModeEnabled) opacity = 0;
+      const degreeGridValue = document.getElementById("degreeGridValue");
+      degreeGridValue.textContent = opacity.toFixed(2);
+      const degElements = document.querySelectorAll(".degree-text, .degree-text-root");
+      degElements.forEach(el => {
+        el.style.opacity = opacity;
+      });
+    }
+    function forceReleaseAll() {
+      synths.forEach(s => s.triggerRelease());
+    }
+    function stopPlayback() {
+      if (currentPart) {
+        currentPart.dispose();
+        currentPart = null;
+      }
+      Tone.Transport.cancel(0);
+      Tone.Transport.stop();
+      forceReleaseAll();
+      isPlaying = false;
+      document.getElementById("playStopBtn").textContent = "Play";
+    }
+
+    /*--- Updated schedulePlayback(): now uses CSS classes for the pulse ---*/
+    function schedulePlayback(voicedChords, tempo) {
+      stopPlayback();
+      Tone.Transport.bpm.value = tempo;
+      const chordDuration = "1n";
+      const events = [];
+      for (let i = 0; i < voicedChords.length; i++) {
+        const chord = voicedChords[i];
+        for (let v = 0; v < numVoices; v++) {
+          const midi = chord.notes[v];
+          const freq = Tone.Frequency(midi, "midi").toFrequency();
+          events.push({
+            time: i + "m",
+            voiceIdx: v,
+            freq,
+            chordIndex: i
+          });
+        }
+      }
+      currentPart = new Tone.Part((schedTime, ev) => {
+        if (ev.time === "0m") {
+          synths[ev.voiceIdx].triggerAttack(ev.freq, schedTime, 1);
+        } else {
+          synths[ev.voiceIdx].setNote(ev.freq, schedTime);
+        }
+        // When voiceIdx===0, trigger the pulse for the entire chord column
+        if (ev.voiceIdx === 0) {
+          chordHighlightRects.forEach(rect => rect.setAttribute("fill", "none"));
+          chordHighlightRects[ev.chordIndex].setAttribute("fill", "#c864c8");
+          Tone.Transport.scheduleOnce(() => {
+            chordHighlightRects[ev.chordIndex].setAttribute("fill", "none");
+          }, schedTime + Tone.Time(chordDuration));
+
+          // Loop over all marker circles in this chord column using rise and decay classes
+          for (let v = 0; v < numVoices; v++) {
+            const marker = document.getElementById("marker-circle-" + ev.chordIndex + "-" + v);
+            if (marker) {
+              const origColor = getVoiceColor(v);
+              const pulseColor = lightenColor(origColor, 0.4);
+              marker.style.setProperty('--pulse-stroke', pulseColor);
+              marker.classList.add("marker-rise");
+              setTimeout(() => {
+                marker.classList.remove("marker-rise");
+                marker.classList.add("marker-decay");
+                setTimeout(() => {
+                  marker.classList.remove("marker-decay");
+                }, 1000);
+              }, 200);
+            }
+          }
+        }
+      }, events).start(0);
+      currentPart.loop = true;
+      currentPart.loopEnd = voicedChords.length + "m";
+      Tone.Transport.start();
+      isPlaying = true;
+      document.getElementById("playStopBtn").textContent = "Stop";
+    }
+
+    function updateMutes() {
+      for (let v = 0; v < numVoices; v++) {
+        const slider = document.querySelector(`.voice-volume[data-voice="${v}"]`);
+        const sliderVal = parseFloat(slider.value);
+        const offsetDb = sliderVal - (-12);
+        const newDb = -6 + offsetDb;
+        if (userMuteStates[v] || (soloStates.some(s => s) && !soloStates[v])) {
+          voiceGains[v].gain.value = 0;
+        } else {
+          voiceGains[v].gain.value = Math.pow(10, newDb / 20);
+        }
+      }
+      for (let v = 0; v < numVoices; v++) {
+        document.querySelector(`.mute-btn[data-voice="${v}"]`).classList.toggle("active", userMuteStates[v]);
+        document.querySelector(`.solo-btn[data-voice="${v}"]`).classList.toggle("active", soloStates[v]);
+      }
+      if (currentVoicedChords) {
+        drawProgression(currentVoicedChords);
+      }
+    }
+    function toggleMute(voiceIdx) {
+      userMuteStates[voiceIdx] = !userMuteStates[voiceIdx];
+      updateMutes();
+    }
+    function toggleSolo(voiceIdx) {
+      soloStates[voiceIdx] = !soloStates[voiceIdx];
+      updateMutes();
+    }
+
+    let currentSynthIndex = null;
+    const synthControlPanel = document.getElementById("synthControlPanel");
+    const cutoffSlider = document.getElementById("cutoffSlider");
+    const cutoffVal = document.getElementById("cutoffVal");
+    const panSlider = document.getElementById("panSlider");
+    const panVal = document.getElementById("panVal");
+    const portamentoSlider = document.getElementById("portamentoSlider");
+    const portamentoVal = document.getElementById("portamentoVal");
+    const synthControlHeader = document.getElementById("synthControlHeader");
+    const closeSynthPanel = document.getElementById("closeSynthPanel");
+
+    document.querySelectorAll(".voice-controls label").forEach(label => {
+      label.addEventListener("click", (e) => {
+        const voice = e.target.getAttribute("data-voice");
+        currentSynthIndex = parseInt(voice);
+        synthControlHeader.textContent = e.target.textContent + " Synth Controls";
+        cutoffSlider.value = synthFilters[currentSynthIndex].frequency.value;
+        cutoffVal.textContent = Math.round(synthFilters[currentSynthIndex].frequency.value);
+        panSlider.value = synthPanners[currentSynthIndex].pan.value;
+        panVal.textContent = synthPanners[currentSynthIndex].pan.value.toFixed(2);
+        portamentoSlider.value = synths[currentSynthIndex].portamento * 1000;
+        portamentoVal.textContent = (synths[currentSynthIndex].portamento * 1000).toFixed(0);
+        synthControlPanel.style.display = "block";
+      });
+    });
+    closeSynthPanel.addEventListener("click", () => {
+      synthControlPanel.style.display = "none";
+    });
+    cutoffSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      cutoffVal.textContent = Math.round(val);
+      if (currentSynthIndex !== null) {
+        synthFilters[currentSynthIndex].frequency.value = val;
+      }
+    });
+    panSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      panVal.textContent = val.toFixed(2);
+      if (currentSynthIndex !== null) {
+        synthPanners[currentSynthIndex].pan.value = val;
+      }
+    });
+    portamentoSlider.addEventListener("input", (e) => {
+      const msVal = parseFloat(e.target.value);
+      portamentoVal.textContent = msVal.toFixed(0);
+      if (currentSynthIndex !== null) {
+        synths[currentSynthIndex].portamento = msVal / 1000;
+      }
+    });
+
+    const chorusBtn = document.getElementById("chorusBtn");
+    const chorusPanel = document.getElementById("chorusControlPanel");
+    const closeChorusPanel = document.getElementById("closeChorusPanel");
+
+    const chorusFrequencySlider = document.getElementById("chorusFrequency");
+    const chorusFrequencyVal = document.getElementById("chorusFrequencyVal");
+
+    const chorusDelaySlider = document.getElementById("chorusDelay");
+    const chorusDelayVal = document.getElementById("chorusDelayVal");
+
+    const chorusDepthSlider = document.getElementById("chorusDepth");
+    const chorusDepthVal = document.getElementById("chorusDepthVal");
+
+    const chorusFeedbackSlider = document.getElementById("chorusFeedback");
+    const chorusFeedbackVal = document.getElementById("chorusFeedbackVal");
+
+    const chorusSpreadSlider = document.getElementById("chorusSpread");
+    const chorusSpreadVal = document.getElementById("chorusSpreadVal");
+
+    const chorusWetSlider = document.getElementById("chorusWet");
+    const chorusWetVal = document.getElementById("chorusWetVal");
+
+    chorusBtn.addEventListener("click", () => {
+      chorusPanel.style.display = "block";
+    });
+    closeChorusPanel.addEventListener("click", () => {
+      chorusPanel.style.display = "none";
+    });
+    chorusFrequencySlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusFrequencyVal.textContent = val;
+      globalChorus.frequency.value = val;
+    });
+    chorusDelaySlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusDelayVal.textContent = val;
+      globalChorus.delayTime = val;
+    });
+    chorusDepthSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusDepthVal.textContent = val;
+      globalChorus.depth = val;
+    });
+    chorusFeedbackSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusFeedbackVal.textContent = val;
+      globalChorus.feedback = val;
+    });
+    chorusSpreadSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusSpreadVal.textContent = val;
+      globalChorus.spread = val;
+    });
+    chorusWetSlider.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      chorusWetVal.textContent = val;
+      globalChorus.wet.value = val;
+    });
+
+    const keyToggleBtn = document.getElementById("keyToggleBtn");
+    const relativeModeBtn = document.getElementById("relativeModeBtn");
+    const toggleChordDisplayBtn = document.getElementById("toggleChordDisplayBtn");
+    const generateBtn = document.getElementById("generateBtn");
+    const playStopBtn = document.getElementById("playStopBtn");
+    const tempoSliderEl = document.getElementById("tempoSlider");
+    const tempoValueEl = document.getElementById("tempoValue");
+    const masterVolumeSliderEl = document.getElementById("masterVolumeSlider");
+    const masterVolumeValueEl = document.getElementById("masterVolumeValue");
+    const degreeGridSliderEl = document.getElementById("degreeGridSlider");
+    const degreeGridValueEl = document.getElementById("degreeGridValue");
+    const currentKeyDisplay = document.getElementById("currentKeyDisplay");
+    const gameModeToggleBtn = document.getElementById("gameModeToggleBtn");
+    const submitAnswersBtn = document.getElementById("submitAnswersBtn");
+    const invertBtn = document.getElementById("invertBtn");
+
+    // Transcribe Mode elements
+    const transcribeModeToggleBtn = document.getElementById("transcribeModeToggleBtn");
+    const transcribeSubmitBtn = document.getElementById("transcribeSubmitBtn");
+
+    invertBtn.addEventListener("click", () => {
+      isInverted = !isInverted;
+      invertBtn.textContent = "Invert: " + (isInverted ? "ON" : "OFF");
+      if (baseVoicedChords) {
+        let newChords = JSON.parse(JSON.stringify(baseVoicedChords));
+        if (isInverted) {
+          applyInversion(newChords);
+        }
+        currentVoicedChords = newChords;
+        drawProgression(currentVoicedChords);
+      }
+    });
+
+    tempoSliderEl.addEventListener("input", e => {
+      currentTempo = parseInt(e.target.value, 10);
+      tempoValueEl.textContent = Math.round(currentTempo / 2);
+      Tone.Transport.bpm.value = currentTempo;
+    });
+    tempoSliderEl.addEventListener("dblclick", () => {
+      tempoSliderEl.value = 200;
+      currentTempo = 200;
+      tempoValueEl.textContent = Math.round(currentTempo / 2);
+      Tone.Transport.bpm.value = currentTempo;
+    });
+
+    keyToggleBtn.addEventListener("click", () => {
+      keyIsMinor = !keyIsMinor;
+      keyToggleBtn.textContent = keyIsMinor ? "Minor Key" : "Major Key";
+    });
+    relativeModeBtn.addEventListener("click", () => {
+      relativeMode = !relativeMode;
+      relativeModeBtn.textContent = "Relative Mode: " + (relativeMode ? "ON" : "OFF");
+      if (currentVoicedChords) drawProgression(currentVoicedChords);
+    });
+    toggleChordDisplayBtn.addEventListener("click", () => {
+      displayRoman = !displayRoman;
+      toggleChordDisplayBtn.textContent = displayRoman ? "Display Chord Names" : "Display Roman";
+      if (currentVoicedChords) drawProgression(currentVoicedChords);
+    });
+    degreeGridSliderEl.addEventListener("input", e => {
+      const val = parseFloat(e.target.value);
+      updateDegreeGridOpacity(val);
+    });
+
+    gameModeToggleBtn.addEventListener("click", () => {
+      gameModeEnabled = !gameModeEnabled;
+      gameModeToggleBtn.textContent = "Game Mode: " + (gameModeEnabled ? "ON" : "OFF");
+      submitAnswersBtn.style.display = gameModeEnabled ? "inline-block" : "none";
+      if (currentVoicedChords) drawProgression(currentVoicedChords);
+      if (gameModeEnabled) {
+          transcribeModeToggleBtn.disabled = true;
+          transcribeModeToggleBtn.style.opacity = "0.5";
+      } else {
+          transcribeModeToggleBtn.disabled = false;
+          transcribeModeToggleBtn.style.opacity = "1";
+      }
+    });
+
+    transcribeModeToggleBtn.addEventListener("click", () => {
+       transcribeModeEnabled = !transcribeModeEnabled;
+       transcribeModeToggleBtn.textContent = "Transcribe Mode: " + (transcribeModeEnabled ? "ON" : "OFF");
+       transcribeSubmitBtn.style.display = transcribeModeEnabled ? "inline-block" : "none";
+       if (transcribeModeEnabled && gameModeEnabled) {
+         gameModeEnabled = false;
+         gameModeToggleBtn.textContent = "Game Mode: OFF";
+         submitAnswersBtn.style.display = "none";
+       }
+       if (transcribeModeEnabled) {
+         userTranscriptions = [[], [], [], []];
+       }
+       if (currentVoicedChords) {
+         drawProgression(currentVoicedChords);
+       }
+       
+       if (transcribeModeEnabled) {
+           relativeModeBtn.disabled = true;
+           relativeModeBtn.style.opacity = "0.5";
+           relativeMode = false;
+           relativeModeBtn.textContent = "Relative Mode: OFF";
+
+           invertBtn.disabled = true;
+           invertBtn.style.opacity = "0.5";
+           isInverted = false;
+           invertBtn.textContent = "Invert: OFF";
+
+           degreeGridSliderEl.disabled = true;
+           degreeGridSliderEl.value = 1;
+           degreeGridValueEl.textContent = "1.00";
+           updateDegreeGridOpacity(1);
+           
+           gameModeToggleBtn.disabled = true;
+           gameModeToggleBtn.style.opacity = "0.5";
+       } else {
+           relativeModeBtn.disabled = false;
+           relativeModeBtn.style.opacity = "1";
+           invertBtn.disabled = false;
+           invertBtn.style.opacity = "1";
+           degreeGridSliderEl.disabled = false;
+           gameModeToggleBtn.disabled = false;
+           gameModeToggleBtn.style.opacity = "1";
+       }
+       document.querySelectorAll(".transcribe-radio").forEach(el => {
+           el.style.display = transcribeModeEnabled ? "inline-block" : "none";
+       });
+    });
+
+    transcribeSubmitBtn.addEventListener("click", () => {
+       for (let voice = 0; voice < numVoices; voice++) {
+         for (let i = 0; i < currentVoicedChords.length; i++) {
+           let userMarker = userTranscriptions[voice][i];
+           if (userMarker) {
+              let correctDegree = currentVoicedChords[i].voiceDegrees[voice];
+              let markerTextEl = document.querySelector(`text.transcribe-marker-text[data-chord-index="${i}"][data-voice="${voice}"]`);
+              if (markerTextEl) {
+                 if (parseInt(userMarker.degree) === correctDegree) {
+                    markerTextEl.setAttribute("fill", "green");
+                 } else {
+                    markerTextEl.setAttribute("fill", "red");
+                 }
+              }
+           }
+         }
+       }
+    });
+
+    function onTranscribeGridClick(e) {
+       if (!transcribeModeEnabled) return;
+       const chordIndex = parseInt(e.currentTarget.getAttribute("data-chord-index"), 10);
+       if (isNaN(chordIndex)) return;
+       const bbox = e.currentTarget.getBBox();
+       const centerX = bbox.x + bbox.width / 2;
+       const centerY = bbox.y + bbox.height / 2;
+       const textContent = e.currentTarget.querySelector("text")?.textContent || "";
+       const degreeMatch = textContent.match(/\d+/);
+       if (!degreeMatch) return;
+       const chosenDegree = parseInt(degreeMatch[0]);
+       const activeVoice = parseInt(document.querySelector('input[name="transcribeVoice"]:checked').value);
+       userTranscriptions[activeVoice][chordIndex] = { degree: chosenDegree, x: centerX, y: centerY };
+       updateTranscribeMarkers();
+    }
+
+    function updateTranscribeMarkers() {
+       if (!transcribeModeEnabled) return;
+       const svg = document.getElementById("chordSvg");
+       const oldMarkers = svg.querySelectorAll(".transcribe-marker, .transcribe-marker-text, .transcribe-path");
+       oldMarkers.forEach(el => el.remove());
+       const chordCount = currentVoicedChords.length;
+       const chordWidth = 120;
+       const totalWidth = chordWidth * chordCount;
+       const viewBoxWidth = getViewBoxWidth(chordCount);
+       const xOffset = viewBoxWidth > totalWidth ? (viewBoxWidth - totalWidth) / 2 : 0;
+       const topMargin = 50;
+       const numRows = 22;
+       const rowSpacing = 35;
+       const gridBottom = topMargin + (numRows - 1) * rowSpacing;
+       
+       for (let voice = 0; voice < numVoices; voice++) {
+         let markers = [];
+         for (let i = 0; i < chordCount; i++) {
+           const userMarker = userTranscriptions[voice][i];
+           if (userMarker) {
+             const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+             circle.setAttribute("cx", userMarker.x);
+             circle.setAttribute("cy", userMarker.y);
+             circle.setAttribute("r", "12");
+             circle.setAttribute("class", "transcribe-marker");
+             // Assign the same id format so the universal pulse animation applies:
+             circle.setAttribute("id", "marker-circle-" + i + "-" + voice);
+             circle.setAttribute("stroke", getVoiceColor(voice));
+             circle.setAttribute("fill", "#1f1f1f");
+             circle.setAttribute("stroke-width", "2");
+             svg.appendChild(circle);
+             const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+             textEl.setAttribute("x", userMarker.x);
+             textEl.setAttribute("y", userMarker.y);
+             textEl.setAttribute("text-anchor", "middle");
+             textEl.setAttribute("dominant-baseline", "middle");
+             textEl.setAttribute("font-size", "16px");
+             textEl.setAttribute("fill", "#fff");
+             textEl.setAttribute("class", "transcribe-marker-text");
+             textEl.setAttribute("data-chord-index", i);
+             textEl.setAttribute("data-voice", voice);
+             textEl.textContent = userMarker.degree;
+             svg.appendChild(textEl);
+             markers.push({ x: userMarker.x, y: userMarker.y });
+           }
+         }
+         if (markers.length > 1) {
+           let dPath = "";
+           for (let j = 0; j < markers.length; j++) {
+             const pt = markers[j];
+             if (j === 0) {
+               dPath += `M ${pt.x} ${pt.y} `;
+             } else {
+               const prevPt = markers[j-1];
+               const midX = (prevPt.x + pt.x) / 2;
+               const midY = (prevPt.y + pt.y) / 2;
+               dPath += `Q ${midX} ${midY}, ${pt.x} ${pt.y} `;
+             }
+           }
+           const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+           path.setAttribute("d", dPath);
+           path.setAttribute("stroke", getVoiceColor(voice));
+           path.setAttribute("fill", "none");
+           path.setAttribute("stroke-width", "2");
+           path.setAttribute("class", "transcribe-path");
+           svg.insertBefore(path, svg.firstChild);
+         }
+       }
+    }
+
+    function drawProgression(voicedChords) {
+      const svg = document.getElementById("chordSvg");
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      chordHighlightRects = [];
+
+      const chordWidth = 120;
+      const totalWidth = chordWidth * voicedChords.length;
+      const viewWidth = getViewBoxWidth(voicedChords.length);
+      const xOffset = viewWidth > totalWidth ? (viewWidth - totalWidth) / 2 : 0;
+
+      const topMargin = 50;
+      const gridBottom = topMargin + (numRows - 1) * rowSpacing;
+      const chordNameY = gridBottom + 40;
+      const isMinor = keyIsMinor;
+
+      // 1) Draw background degree labels for each chord column (the grid)
+      for (let i = 0; i < voicedChords.length; i++) {
+        const chord = voicedChords[i];
+        const colX = xOffset + i * chordWidth + chordWidth / 2;
+        let chordNum = 1;
+        if (!isDummyGrid) {
+          chordNum = (function(chSym) {
+            const majorMap = { "I":1, "ii":2, "iii":3, "IV":4, "V":5, "vi":6 };
+            const minorMap = { "i":1, "ii°":2, "III":3, "iv":4, "V":5, "VI":6, "VII":7 };
+            return isMinor ? (minorMap[chSym] || 1) : (majorMap[chSym] || 1);
+          })(chord.chordSymbol);
+        }
+        const shift = chordNum - 1;
+
+        const chordMode = (relativeMode && !isDummyGrid)
+          ? (isMinor ? modeMappingMinor[chord.chordSymbol] : modeMappingMajor[chord.chordSymbol])
+          : null;
+
+        for (let r = 1; r <= numRows; r++) {
+          let labelStr;
+          if (chordMode) {
+            const idx = (((r - 1) - shift) + 7) % 7;
+            labelStr = chordMode[idx];
+          } else {
+            let labelNum = ((r - 1) % 7) + 1;
+            labelStr = labelNum.toString();
+            if (isMinor && !isDummyGrid) {
+              if (labelNum === 3) labelStr = "♭3";
+              if (labelNum === 6) labelStr = "♭6";
+              if (labelNum === 7) labelStr = "♭7";
+            }
+          }
+          const baseRowY = gridBottom - (r - 1) * rowSpacing;
+          const textY = baseRowY + BACKGROUND_TEXT_OFFSET;
+          const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          txt.setAttribute("x", colX);
+          txt.setAttribute("y", textY);
+          txt.setAttribute("class", labelStr === "1" ? "degree-text-root" : "degree-text");
+          txt.textContent = labelStr;
+          if (transcribeModeEnabled) {
+            const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            group.setAttribute("data-chord-index", i);
+            group.style.cursor = "pointer";
+            group.addEventListener("click", onTranscribeGridClick);
+            const hitRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            hitRect.setAttribute("x", colX - 15);
+            hitRect.setAttribute("y", textY - 21);
+            hitRect.setAttribute("width", "30");
+            hitRect.setAttribute("height", "30");
+            hitRect.setAttribute("fill", "#000");
+            hitRect.setAttribute("fill-opacity", "0");
+            group.appendChild(hitRect);
+            group.appendChild(txt);
+            svg.appendChild(group);
+          } else {
+            svg.appendChild(txt);
+          }
+        }
+      }
+
+      updateDegreeGridOpacity(parseFloat(document.getElementById("degreeGridSlider").value));
+      if (isDummyGrid) return;
+
+      let topDeg = voicedChords[0].voiceDegrees[0];
+      if (topDeg < 1) topDeg = 1;
+      const fixedRowsArr = [getSopranoStartRow(topDeg), 12, 10];
+      if (fixedRowsArr[0] === 17) { fixedRowsArr[1] = 15; fixedRowsArr[2] = 12; }
+      else if (fixedRowsArr[0] === 19) { fixedRowsArr[1] = 17; fixedRowsArr[2] = 15; }
+
+      globalInitialSteps[0] = getAbsoluteDiatonicStep(voicedChords[0].notes[0], currentKey, isMinor);
+      globalInitialSteps[1] = getAbsoluteDiatonicStep(voicedChords[0].notes[1], currentKey, isMinor);
+      globalInitialSteps[2] = getAbsoluteDiatonicStep(voicedChords[0].notes[2], currentKey, isMinor);
+
+      const recognizedSoprano = voicedChords.filter(ch => ch.voiceDegrees[0] >= 1);
+      let shiftTopVoicesBy7 = false;
+      if (recognizedSoprano.length > 0) {
+        let highestChord = recognizedSoprano[0];
+        let maxMidi = highestChord.notes[0];
+        for (let i = 1; i < recognizedSoprano.length; i++) {
+          if (recognizedSoprano[i].notes[0] > maxMidi) {
+            highestChord = recognizedSoprano[i];
+            maxMidi = recognizedSoprano[i].notes[0];
+          }
+        }
+        if (highestChord.voiceDegrees[0] === 1) shiftTopVoicesBy7 = true;
+      }
+
+      let initialBassStep = getAbsoluteDiatonicStep(voicedChords[0].notes[3], currentKey, isMinor);
+      const bassBaseRow = 8;
+      const markers = [];
+      for (let i = 0; i < voicedChords.length; i++) {
+        const chord = voicedChords[i];
+        const chordSymbol = chord.chordSymbol;
+        const colX = xOffset + i * chordWidth + chordWidth / 2;
+        const chordMarkers = [];
+        for (let v = 0; v < numVoices; v++) {
+          let rowVal;
+          if (v < 3) {
+            const currentStep = getAbsoluteDiatonicStep(chord.notes[v], currentKey, isMinor);
+            const offset = currentStep - globalInitialSteps[v];
+            rowVal = fixedRowsArr[v] + offset;
+            if (isMinor && chordSymbol === "V" && chord.voiceDegrees[v] === 7) rowVal += 6;
+            if (shiftTopVoicesBy7) rowVal += 7;
+          } else {
+            const currentBassStep = getAbsoluteDiatonicStep(chord.notes[3], currentKey, isMinor);
+            const bassOffset = currentBassStep - initialBassStep;
+            rowVal = bassBaseRow + bassOffset;
+          }
+          rowVal = Math.max(1, Math.min(rowVal, 22));
+          const baseY = gridBottom - (rowVal - 1) * rowSpacing;
+          const finalY = baseY + MARKER_CIRCLE_OFFSET;
+          let bigLabel = chord.voiceDegrees[v].toString();
+          if (chord.voiceDegrees[v] === -1) bigLabel = "?";
+          const chordMode = relativeMode
+            ? (isMinor ? modeMappingMinor[chordSymbol] : modeMappingMajor[chordSymbol])
+            : null;
+          if (relativeMode && chordMode && chord.voiceDegrees[v] >= 1) {
+            const localIndex = chord.chordGlobalDegs.indexOf(chord.voiceDegrees[v]);
+            if (localIndex >= 0) {
+              const localDegMap = [0, 2, 4];
+              const modeIdx = localDegMap[localIndex] || 0;
+              bigLabel = chordMode[modeIdx];
+            } else {
+              const fallbackIdx = ((chord.voiceDegrees[v] - 1) + 7) % 7;
+              bigLabel = chordMode[fallbackIdx];
+            }
+          } else if (isMinor) {
+            if (chord.voiceDegrees[v] === 3) bigLabel = "♭3";
+            if (chord.voiceDegrees[v] === 6) bigLabel = "♭6";
+            if (chord.voiceDegrees[v] === 7) bigLabel = "♭7";
+          }
+          if (!relativeMode && chordSymbol === "V" && bigLabel === "♭7") {
+            bigLabel = "7";
+          }
+          chordMarkers.push({ x: colX, y: finalY, voiceIdx: v, text: bigLabel });
+        }
+        markers.push(chordMarkers);
+      }
+
+      // 4) Draw connecting lines for each voice across chords
+      for (let v = 0; v < numVoices; v++) {
+        let dPath = "";
+        for (let i = 0; i < markers.length; i++) {
+          const pt = markers[i][v];
+          if (i === 0) {
+            dPath += `M ${pt.x} ${pt.y} `;
+          } else {
+            const prevPt = markers[i - 1][v];
+            const offset = (pt.y === prevPt.y) ? 0 : (i % 2 === 0 ? 5 : -5);
+            const midX = (prevPt.x + pt.x) / 2;
+            const midY = (prevPt.y + pt.y) / 2 + offset;
+            dPath += `Q ${midX} ${midY}, ${pt.x} ${pt.y} `;
+          }
+        }
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", dPath);
+        path.setAttribute("stroke", getVoiceColor(v));
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke-width", "2");
+        document.getElementById("chordSvg").appendChild(path);
+      }
+
+      // 5) Draw highlight boxes and chord name labels
+      for (let i = 0; i < voicedChords.length; i++) {
+        const chord = voicedChords[i];
+        const colX = xOffset + i * chordWidth + chordWidth / 2;
+        const rectWidth = 96, rectHeight = 30;
+        const rectX = xOffset + i * chordWidth + (chordWidth - rectWidth) / 2;
+        const rectY = chordNameY - rectHeight / 2 - 5;
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", rectX);
+        rect.setAttribute("y", rectY);
+        rect.setAttribute("rx", "5");
+        rect.setAttribute("ry", "5");
+        rect.setAttribute("width", rectWidth);
+        rect.setAttribute("height", rectHeight);
+        rect.setAttribute("fill", "none");
+        rect.setAttribute("id", "highlight-chord-" + i);
+        chordHighlightRects.push(rect);
+        document.getElementById("chordSvg").appendChild(rect);
+
+        if (!gameModeEnabled) {
+          const nameText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          nameText.setAttribute("x", colX);
+          nameText.setAttribute("y", chordNameY);
+          nameText.setAttribute("class", "chord-name-text");
+          nameText.textContent = displayRoman ? getRomanNumeral(chord.chordSymbol, isMinor) : chord.chordName;
+          nameText.dataset.chordIndex = i;
+          nameText.style.cursor = "pointer";
+          nameText.addEventListener("mousedown", chordMouseDown);
+          nameText.addEventListener("mouseup", chordMouseUp);
+          // Removed the "mouseleave" event listener to prevent hover from stopping the audio.
+          document.getElementById("chordSvg").appendChild(nameText);
+        }
+      }
+
+      // 6) Draw circles and big text markers for each voice
+      for (let i = 0; i < markers.length; i++) {
+        for (let marker of markers[i]) {
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", marker.x);
+          circle.setAttribute("cy", marker.y);
+          circle.setAttribute("r", "12");
+          circle.setAttribute("class", "voice-marker");
+          circle.setAttribute("id", "marker-circle-" + i + "-" + marker.voiceIdx);
+          circle.setAttribute("stroke", getVoiceColor(marker.voiceIdx));
+          circle.setAttribute("fill", "#1f1f1f");
+          circle.setAttribute("stroke-width", "2");
+          if (gameModeEnabled) {
+            circle.style.cursor = "pointer";
+          }
+          document.getElementById("chordSvg").appendChild(circle);
+          if (gameModeEnabled) {
+            const hitCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            hitCircle.setAttribute("cx", marker.x);
+            hitCircle.setAttribute("cy", marker.y);
+            hitCircle.setAttribute("r", "20");
+            hitCircle.setAttribute("fill", "transparent");
+            hitCircle.style.cursor = "pointer";
+            hitCircle.setAttribute("data-chord-index", i);
+            hitCircle.setAttribute("data-voice-idx", marker.voiceIdx);
+            hitCircle.addEventListener("click", gameModeMarkerClickHandler);
+            document.getElementById("chordSvg").appendChild(hitCircle);
+          }
+          const bigText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          bigText.setAttribute("x", marker.x);
+          bigText.setAttribute("y", marker.y);
+          bigText.setAttribute("text-anchor", "middle");
+          bigText.setAttribute("dominant-baseline", "middle");
+          bigText.setAttribute("font-size", "16px");
+          bigText.setAttribute("fill", "#fff");
+          if (gameModeEnabled) {
+            bigText.textContent = "–";
+            bigText.classList.add("game-marker-text");
+            bigText.setAttribute("data-chord-index", i);
+            bigText.setAttribute("data-voice-idx", marker.voiceIdx);
+            bigText.style.pointerEvents = "none";
+          } else {
+            bigText.textContent = marker.text;
+            bigText.classList.add("auto-voice-text");
+          }
+          document.getElementById("chordSvg").appendChild(bigText);
+        }
+      }
+      
+      // If Transcribe Mode is enabled, remove the auto markers so that only transcribe markers are visible,
+      // then call updateTranscribeMarkers() to draw the transcribe circles with the same id format.
+      if (transcribeModeEnabled) {
+        const chordNames = document.querySelectorAll("text.chord-name-text");
+        chordNames.forEach(el => el.remove());
+        const autoVoiceText = document.querySelectorAll("text.auto-voice-text");
+        autoVoiceText.forEach(el => el.remove());
+        const autoMarkers = document.querySelectorAll("circle.voice-marker");
+        autoMarkers.forEach(el => el.remove());
+        const autoPaths = document.querySelectorAll("path");
+        autoPaths.forEach(el => {
+          if (!el.classList.contains("transcribe-path")) {
+            el.remove();
+          }
+        });
+        updateTranscribeMarkers();
+      }
+    }
+
+    function chordMouseDown(e) {
+      const chordIndex = parseInt(e.target.dataset.chordIndex, 10);
+      if (isNaN(chordIndex) || !currentVoicedChords) return;
+      const chord = currentVoicedChords[chordIndex];
+      for (let v = 0; v < numVoices; v++) {
+        const midi = chord.notes[v];
+        const freq = Tone.Frequency(midi, "midi").toFrequency();
+        synths[v].triggerAttack(freq);
+      }
+    }
+    function chordMouseUp(e) {
+      for (let v = 0; v < numVoices; v++) {
+        synths[v].triggerRelease();
+      }
+    }
+    function getSopranoStartRow(deg) {
+      if (deg < 1) deg = 1;
+      if (deg === 1) return 15;
+      if (deg === 3) return 17;
+      if (deg === 5) return 19;
+      return 15;
+    }
+    function getRomanNumeral(chordSymbol, isMinor) {
+      if (!isMinor) return chordSymbol;
+      const mapping = {
+        "i": "i",
+        "ii°": "ii°",
+        "III": "bIII",
+        "iv": "iv",
+        "V": "V",
+        "VI": "bVI",
+        "VII": "bVII"
+      };
+      return mapping[chordSymbol] || chordSymbol;
+    }
+
+    function applyInversion(chords) {
+      for (const chord of chords) {
+        const oldNotes = chord.notes.slice();
+        const oldDegs  = chord.voiceDegrees.slice();
+        const newSopranoNote = oldNotes[0] - 12;
+        chord.notes[0] = oldNotes[1];
+        chord.notes[1] = oldNotes[2];
+        chord.notes[2] = newSopranoNote;
+        chord.notes[3] = oldNotes[3];
+        chord.voiceDegrees[0] = oldDegs[1];
+        chord.voiceDegrees[1] = oldDegs[2];
+        chord.voiceDegrees[2] = oldDegs[0];
+        chord.voiceDegrees[3] = oldDegs[3];
+      }
+    }
+
+    function getViewBoxWidth(numChords) {
+      const chordWidth = 120;
+      const totalWidth = chordWidth * numChords;
+      return totalWidth < FIXED_WIDTH ? FIXED_WIDTH : totalWidth;
+    }
+
+    /***** CHORD PROGRESSION GENERATION *****/
+    function generateChordProgression(isMinor) {
+      const chordCount = selectedChordCount;
+      if (isMinor) {
+        const chordNames = chordNamesMinor;
+        const progression = [ chordNames[0] ];
+        let usedDim = false;
+        for (let i = 1; i < chordCount; i++) {
+          let candidate;
+          if (progression[i - 1] === "V") {
+            const forcedSet = ["i", "iv", "VI"];
+            do {
+              candidate = forcedSet[Math.floor(Math.random() * forcedSet.length)];
+            } while (candidate === progression[i - 1]);
+            progression.push(candidate);
+          } else {
+            do {
+              candidate = chordNames[Math.floor(Math.random() * chordNames.length)];
+            } while (candidate === progression[i - 1] || (candidate === "ii°" && usedDim));
+            progression.push(candidate);
+            if (candidate === "ii°") usedDim = true;
+          }
+        }
+        if (!progression.includes("V") && progression.length > 1) {
+          const randomIndex = Math.floor(Math.random() * (progression.length - 1)) + 1;
+          progression[randomIndex] = "V";
+        }
+        return progression;
+      } else {
+        const chordNames = chordNamesMajor;
+        const progression = [ chordNames[0] ];
+        for (let i = 1; i < chordCount; i++) {
+          let candidate;
+          do {
+            candidate = chordNames[Math.floor(Math.random() * chordNames.length)];
+          } while (candidate === progression[i - 1]);
+          progression.push(candidate);
+        }
+        return progression;
+      }
+    }
+    function attemptVoiceLeading(key, progression, isMinor) {
+      const voicedProgression = [];
+      let prevSoprano, prevAlto, prevTenor, prevBass;
+      let initialBassMidi = null;
+      let initialBassStep = 0;
+      const bassBaseRow = 8;
+      function getBassRowVal(midi) {
+        if (!initialBassMidi) return bassBaseRow;
+        const currentStep = getAbsoluteDiatonicStep(midi, key, isMinor);
+        return bassBaseRow + (currentStep - initialBassStep);
+      }
+      for (let i = 0; i < progression.length; i++) {
+        const chSym = progression[i];
+        let degArray;
+        let isChordV = false;
+        if (isMinor) {
+          degArray = chordScaleDegreesMinor[chSym];
+          if (chSym === "V") isChordV = true;
+        } else {
+          degArray = chordScaleDegreesMajor[chSym];
+        }
+        const chordOffsets = getChordSemitones(key, degArray, isMinor, isChordV);
+        let chordVoicing = [null, null, null, null];
+
+        // BASS:
+        const bassTones = getMultiOctaveChordTones(chordOffsets, 36, 53);
+        let rootCandidates = bassTones.filter(n => n % 12 === chordOffsets[0]);
+        if (!rootCandidates.length) rootCandidates = bassTones;
+        let chosenBass;
+        if (i === 0) {
+          chosenBass = rootCandidates[Math.floor(rootCandidates.length / 2)] || rootCandidates[0];
+          initialBassMidi = chosenBass;
+          initialBassStep = getAbsoluteDiatonicStep(chosenBass, key, isMinor);
+        } else {
+          chosenBass = findNearestChordTone(prevBass, rootCandidates);
+          let rowVal = getBassRowVal(chosenBass);
+          if (rowVal < 1) chosenBass += 12;
+          else if (rowVal > 22) chosenBass -= 12;
+          chosenBass = Math.max(36, Math.min(chosenBass, 53));
+        }
+        chordVoicing[3] = chosenBass;
+
+        // SOPRANO:
+        const midChordTones = getMultiOctaveChordTones(chordOffsets, 50, 75);
+        if (i === 0) {
+          chordVoicing[0] = midChordTones[Math.floor(midChordTones.length * 0.7)] || midChordTones[0];
+        } else {
+          chordVoicing[0] = findNearestChordTone(prevSoprano, midChordTones);
+        }
+
+        // ALTO:
+        if (i === 0) {
+          let used = [chordVoicing[0] % 12];
+          let remain = midChordTones.filter(n => !used.includes(n % 12));
+          chordVoicing[1] = remain[Math.floor(remain.length / 2)] || remain[0];
+        } else {
+          let used = [chordVoicing[0] % 12];
+          let remain = midChordTones.filter(n => !used.includes(n % 12));
+          chordVoicing[1] = findNearestChordTone(prevAlto, remain);
+        }
+
+        // TENOR:
+        if (i === 0) {
+          let used = [chordVoicing[0] % 12, chordVoicing[1] % 12];
+          let remain = midChordTones.filter(n => !used.includes(n % 12));
+          chordVoicing[2] = remain[Math.floor(remain.length / 2)] || remain[0];
+        } else {
+          let used = [chordVoicing[0] % 12, chordVoicing[1] % 12];
+          let remain = midChordTones.filter(n => !used.includes(n % 12));
+          chordVoicing[2] = findNearestChordTone(prevTenor, remain);
+        }
+
+        prevSoprano = chordVoicing[0];
+        prevAlto = chordVoicing[1];
+        prevTenor = chordVoicing[2];
+        prevBass = chordVoicing[3];
+
+        const voiceDegrees = chordVoicing.map(m => getScaleDegree(m, key, isMinor));
+        voicedProgression.push({
+          chordSymbol: chSym,
+          chordName: getChordName(key, chSym),
+          notes: chordVoicing.slice(),
+          voiceDegrees,
+          chordGlobalDegs: degArray
+        });
+      }
+      return voicedProgression;
+    }
+    function exceedsTopRow(voicedChords) {
+      for (let chord of voicedChords) {
+        for (let v = 0; v < 4; v++) {
+          const deg = (chord.voiceDegrees[v] === -1 ? 1 : chord.voiceDegrees[v]);
+          const baseOffset = (v === 3 ? 7 : 14);
+          const row = deg + baseOffset;
+          if (row > 22) return true;
+        }
+      }
+      return false;
+    }
+    function voiceLeadChords(key, progression, isMinor) {
+      for (let tries = 0; tries < 20; tries++) {
+        const candidate = attemptVoiceLeading(key, progression, isMinor);
+        if (!exceedsTopRow(candidate)) return candidate;
+      }
+      return attemptVoiceLeading(key, progression, isMinor);
+    }
+    function getSopranoStartRow(deg) {
+      if (deg < 1) deg = 1;
+      if (deg === 1) return 15;
+      if (deg === 3) return 17;
+      if (deg === 5) return 19;
+      return 15;
+    }
+    function getRomanNumeral(chordSymbol, isMinor) {
+      if (!isMinor) return chordSymbol;
+      const mapping = {
+        "i": "i",
+        "ii°": "ii°",
+        "III": "bIII",
+        "iv": "iv",
+        "V": "V",
+        "VI": "bVI",
+        "VII": "bVII"
+      };
+      return mapping[chordSymbol] || chordSymbol;
+    }
+
+    function updateSvgSize() {
+      const container = document.querySelector('.progression-container');
+      const svg = document.getElementById("chordSvg");
+      const maxWidth = 1200;
+      const maxHeight = 850;
+      const newWidth = Math.min(container.clientWidth, maxWidth);
+      const newHeight = Math.min(container.clientHeight, maxHeight);
+      svg.setAttribute("width", newWidth);
+      svg.setAttribute("height", newHeight);
+
+      let chordCount = currentVoicedChords ? currentVoicedChords.length : selectedChordCount;
+      let vbWidth = getViewBoxWidth(chordCount);
+      svg.setAttribute("viewBox", `0 0 ${vbWidth} 850`);
+
+      if (currentVoicedChords) {
+        drawProgression(currentVoicedChords);
+      } else {
+        drawProgression(generateDummyProgression());
+      }
+    }
+    window.addEventListener("resize", updateSvgSize);
+
+    if (!currentVoicedChords) {
+      currentKey = "C";
+      currentKeyDisplay.textContent = 'Press "G" to generate a progression!';
+      currentVoicedChords = generateDummyProgression();
+      drawProgression(currentVoicedChords);
+      updateSvgSize();
+    }
+
+    generateBtn.addEventListener("click", async () => {
+      isDummyGrid = false;
+      if (isPlaying) stopPlayback();
+      await Tone.start();
+      if (transcribeModeEnabled) {
+         userTranscriptions = [[], [], [], []];
+      }
+      const isMinor = keyIsMinor;
+      currentKey = allMajorKeys[Math.floor(Math.random() * allMajorKeys.length)];
+      currentKeyDisplay.textContent = "Key of " + currentKey + (isMinor ? " Minor" : " Major");
+      const progression = generateChordProgression(isMinor);
+      currentProgression = progression;
+      let rawChords = voiceLeadChords(currentKey, progression, isMinor);
+      baseVoicedChords = reorderVoicesByPitch(rawChords);
+      if (isInverted) {
+        let newChords = JSON.parse(JSON.stringify(baseVoicedChords));
+        applyInversion(newChords);
+        currentVoicedChords = newChords;
+      } else {
+        currentVoicedChords = baseVoicedChords;
+      }
+      if (gameModeEnabled) {
+        userAnswers = currentVoicedChords.map(chord => Array(numVoices).fill(null));
+      }
+      drawProgression(currentVoicedChords);
+      updateSvgSize();
+    });
+    playStopBtn.addEventListener("click", async () => {
+      if (!currentVoicedChords) {
+        alert("No chords generated yet! Click Generate first.");
+        return;
+      }
+      if (isPlaying) {
+        stopPlayback();
+      } else {
+        await Tone.start();
+        currentTempo = parseInt(tempoSliderEl.value, 10);
+        Tone.Transport.bpm.value = currentTempo;
+        schedulePlayback(currentVoicedChords, currentTempo);
+      }
+    });
+
+    document.addEventListener("keydown", e => {
+      if (e.key.toLowerCase() === "g") {
+        generateBtn.click();
+      }
+      if (e.code === "Space") {
+        e.preventDefault();
+        playStopBtn.click();
+      }
+    });
+    masterVolumeSliderEl.addEventListener("input", e => {
+      const vol = parseFloat(e.target.value);
+      masterVolumeValueEl.textContent = vol;
+      Tone.Destination.volume.value = vol;
+    });
+
+    document.querySelectorAll(".mute-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const voiceIdx = parseInt(btn.getAttribute("data-voice"), 10);
+        toggleMute(voiceIdx);
+      });
+    });
+    document.querySelectorAll(".solo-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const voiceIdx = parseInt(btn.getAttribute("data-voice"), 10);
+        toggleSolo(voiceIdx);
+      });
+    });
+    document.querySelectorAll(".voice-volume").forEach(slider => {
+      slider.addEventListener("input", () => {
+        const voiceIdx = parseInt(slider.getAttribute("data-voice"), 10);
+        const vol = parseFloat(slider.value);
+        const offsetDb = vol - (-12);
+        const newDb = -6 + offsetDb;
+        if (!userMuteStates[voiceIdx]) {
+          voiceGains[voiceIdx].gain.value = Math.pow(10, newDb / 20);
+        }
+      });
+      slider.addEventListener("dblclick", () => {
+        slider.value = -12;
+        const voiceIdx = parseInt(slider.getAttribute("data-voice"), 10);
+        const vol = parseFloat(slider.value);
+        const offsetDb = vol - (-12);
+        const newDb = -6 + offsetDb;
+        if (!userMuteStates[voiceIdx]) {
+          voiceGains[voiceIdx].gain.value = Math.pow(10, newDb / 20);
+        }
+      });
+    });
+
+    function gameModeMarkerClickHandler(e) {
+      e.stopPropagation();
+      removeRadialMenu();
+      const circle = e.currentTarget;
+      const chordIndex = parseInt(circle.getAttribute("data-chord-index"), 10);
+      const voiceIdx = parseInt(circle.getAttribute("data-voice-idx"), 10);
+      const rect = circle.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      showRadialMenu(centerX, centerY, chordIndex, voiceIdx);
+    }
+    function showRadialMenu(x, y, chordIndex, voiceIdx) {
+      const menu = document.createElement("div");
+      menu.id = "radialMenu";
+      menu.style.left = x + "px";
+      menu.style.top = y + "px";
+      const radius = 40;
+      for (let i = 0; i < 7; i++) {
+        const angle = (2 * Math.PI / 7) * i - Math.PI / 2;
+        const btn = document.createElement("button");
+        btn.textContent = (i + 1).toString();
+        const btnX = radius * Math.cos(angle);
+        const btnY = radius * Math.sin(angle);
+        btn.style.left = (50 + btnX - 15) + "px";
+        btn.style.top = (50 + btnY - 15) + "px";
+        btn.addEventListener("click", () => {
+          userAnswers[chordIndex][voiceIdx] = i + 1;
+          const markerText = document.querySelector(
+            `text.game-marker-text[data-chord-index="${chordIndex}"][data-voice-idx="${voiceIdx}"]`
+          );
+          if (markerText) {
+            markerText.textContent = (i + 1).toString();
+            markerText.setAttribute("fill", "#fff");
+          }
+          removeRadialMenu();
+        });
+        menu.appendChild(btn);
+      }
+      menu.style.position = "absolute";
+      menu.style.width = "100px";
+      menu.style.height = "100px";
+      document.body.appendChild(menu);
+    }
+    function removeRadialMenu() {
+      const existingMenu = document.getElementById("radialMenu");
+      if (existingMenu) {
+        existingMenu.remove();
+      }
+    }
+    document.addEventListener("click", function(e) {
+      const menu = document.getElementById("radialMenu");
+      if (menu && !menu.contains(e.target)) {
+        removeRadialMenu();
+      }
+    });
+    function evaluateAnswers() {
+      let allCorrect = true;
+      const markerTexts = document.querySelectorAll("text.game-marker-text");
+      markerTexts.forEach(textEl => {
+        const chordIndex = parseInt(textEl.getAttribute("data-chord-index"), 10);
+        const voiceIdx = parseInt(textEl.getAttribute("data-voice-idx"), 10);
+        const userAnswer = userAnswers[chordIndex][voiceIdx];
+        const correctAnswer = currentVoicedChords[chordIndex].voiceDegrees[voiceIdx];
+        if (userAnswer === correctAnswer) {
+          textEl.setAttribute("fill", "green");
+        } else {
+          textEl.setAttribute("fill", "red");
+          allCorrect = false;
+        }
+      });
+      if (allCorrect) {
+        showPerfectMessage();
+      }
+    }
+    function showPerfectMessage() {
+      const msg = document.createElement("div");
+      msg.id = "perfectMessage";
+      msg.textContent = "PERFECT!";
+      document.body.appendChild(msg);
+      setTimeout(() => { msg.remove(); }, 2000);
+    }
+  </script>
+</body>
+</html>

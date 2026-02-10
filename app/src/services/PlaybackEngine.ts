@@ -19,6 +19,29 @@ import { MicrophoneService } from './MicrophoneService';
 export type PositionCallback = (t16: number, ms: number) => void;
 
 /**
+ * Visual callback for when a contour node becomes active.
+ *
+ * IMPORTANT:
+ * This is intended for UI effects (ex: flashing nodes on the grid) and is
+ * scheduled to run at the same AudioContext time as the corresponding synth
+ * event, so the visuals line up tightly with audio.
+ */
+export type NodeEventCallback = (event: NodeEvent) => void;
+
+/**
+ * A single scheduled node event.
+ */
+export interface NodeEvent {
+  voiceId: string;
+  /** Local (loop-relative) node time in 16th notes. */
+  t16: number;
+  /** Monotonic world time in 16th notes (includes loop count). */
+  worldT16: number;
+  /** What happened at this node (attack = new note, glide = pitch change). */
+  type: 'attack' | 'glide';
+}
+
+/**
  * Callback for when playback loops or ends.
  */
 export type LoopCallback = () => void;
@@ -36,6 +59,7 @@ interface PlaybackConfig {
   onLoop?: () => void;
   onCountIn?: (beat: number, total: number) => void;
   onStart?: () => void;
+  onNodeEvent?: NodeEventCallback;
   metronomeEnabled?: boolean;
   // Positive values make recordings play earlier (skip initial input latency).
   recordingLagMs?: number;
@@ -139,6 +163,10 @@ export class PlaybackEngine {
   // Animation frame for position updates
   // (animationFrameId declared above)
 
+  // Incrementing id used to invalidate pending UI timeouts when playback is
+  // stopped/seeked/restarted.
+  private nodeEventSessionId: number = 0;
+
   // Callbacks
   private config: PlaybackConfig = {
     onPositionUpdate: () => { }, // Default no-op
@@ -164,13 +192,17 @@ export class PlaybackEngine {
     // Otherwise the Play-mode camera (which follows world time) will appear to
     // "stay" at the previous arrangement's position.
     this.stop();
+    // Cancel any pending UI callbacks from the prior arrangement.
+    this.nodeEventSessionId += 1;
     this.resetLoopCount();
     this.currentPositionMs = 0;
     this.startPosition = 0;
     this.startTime = 0;
 
     this.arrangement = arrangement;
-    this.config = config;
+    // Merge so UI-only callbacks (ex: onNodeEvent set by the Grid) are not
+    // accidentally wiped out when App re-initializes the engine.
+    this.config = { ...this.config, ...config };
     this.baseTempo = arrangement.tempo;
     this.timeSig = arrangement.timeSig;
 
@@ -338,6 +370,30 @@ export class PlaybackEngine {
       // Now schedule upcoming events from the current playhead.
       this.scheduleAheadFromCurrentPosition();
     }
+  }
+
+  /**
+   * Schedule a UI callback to run at (or as close as possible to) a specific
+   * AudioContext time.
+   */
+  private scheduleNodeEventCallback(event: NodeEvent, audioTime: number): void {
+    const cb = this.config.onNodeEvent;
+    if (!cb) return;
+
+    // Capture the current session id so we can discard stale timeouts.
+    const sessionId = this.nodeEventSessionId;
+
+    // Convert AudioContext seconds -> wall-clock delay.
+    const nowAudioTime = AudioService.getCurrentTime();
+    const delayMs = Math.max(0, (audioTime - nowAudioTime) * 1000);
+
+    window.setTimeout(() => {
+      // Only fire if playback is still active and this callback belongs to the
+      // current playback run.
+      if (!this.isPlaying) return;
+      if (this.nodeEventSessionId !== sessionId) return;
+      cb(event);
+    }, delayMs);
   }
 
   /**
@@ -819,6 +875,10 @@ export class PlaybackEngine {
       }
     }
 
+    // Playback is starting now (count-in is finished).
+    // Invalidate any pending node-event UI callbacks from prior play runs.
+    this.nodeEventSessionId += 1;
+
     this.isPlaying = true;
     this.startTime = AudioService.getCurrentTime();
     this.startPosition = this.currentPositionMs;
@@ -943,6 +1003,9 @@ export class PlaybackEngine {
     this.isPlaying = false;
     this.isCountingIn = false;
 
+    // Invalidate any pending node-event UI callbacks.
+    this.nodeEventSessionId += 1;
+
     // Clear any pending recording trigger so a subsequent play() doesn't
     // accidentally start a microphone recording from a stale request.
     // Without this, cancelling a count-in leaves the trigger armed.
@@ -982,6 +1045,9 @@ export class PlaybackEngine {
   seek(t16: number): void {
     const wasPlaying = this.isPlaying;
 
+    // Seeking changes the time base, so invalidate pending UI callbacks.
+    this.nodeEventSessionId += 1;
+
     if (wasPlaying) {
       this.stop();
     }
@@ -1000,6 +1066,8 @@ export class PlaybackEngine {
    * @param worldT16 - Monotonic world position in 16th notes (clamped >= 0)
    */
   seekWorld(worldT16: number): void {
+    // Seeking changes the time base, so invalidate pending UI callbacks.
+    this.nodeEventSessionId += 1;
     const clamped = Math.max(0, worldT16);
     const loopLength = this.getLoopLengthT16();
     if (loopLength <= 0) {
@@ -1366,11 +1434,9 @@ export class PlaybackEngine {
         const currentNode = voice.nodes[nodeIndex];
 
         if (!prevNode.term && prevNode.t16 <= fromT16 && currentNode.t16 > fromT16) {
-          if (this.isSynthAudible(voice.id)) {
-            const freq = this.getNodeFrequency(voice, prevNode);
-            synth.noteOn(freq, this.startTime);
-            this.scheduledSynthIsPlaying.set(voice.id, true);
-          }
+          const freq = this.getNodeFrequency(voice, prevNode);
+          synth.noteOn(freq, this.startTime);
+          this.scheduledSynthIsPlaying.set(voice.id, true);
         }
       }
     }
@@ -1385,6 +1451,8 @@ export class PlaybackEngine {
 
     const currentMs = this.getCurrentPositionMs();
     let lookaheadUntilMs = currentMs + this.scheduleLookaheadMs;
+
+    const loopLengthT16 = this.getLoopLengthT16();
 
     // If looping is enabled and we're close to the loop end, do NOT schedule
     // events that land exactly on/after the loop boundary.
@@ -1429,9 +1497,6 @@ export class PlaybackEngine {
       const synth = this.synthVoices.get(voice.id);
       if (!synth) continue;
 
-      // If this synth is muted/unsoloed, don't schedule any future events.
-      if (!this.isSynthAudible(voice.id)) continue;
-
       let nextIndex = this.nextNodeIndexToSchedule.get(voice.id) ?? 0;
       let isPlaying = this.scheduledSynthIsPlaying.get(voice.id) ?? false;
 
@@ -1453,12 +1518,28 @@ export class PlaybackEngine {
         } else {
           const freq = this.getNodeFrequency(voice, node);
 
+          // Compute the world-time position for this node occurrence.
+          // This allows the UI to flash the correct tiled copy of the node.
+          const worldT16 = this.loopCount * loopLengthT16 + node.t16;
+
           if (!isPlaying) {
             synth.noteOn(freq, eventTime);
+            this.scheduleNodeEventCallback({
+              voiceId: voice.id,
+              t16: node.t16,
+              worldT16,
+              type: 'attack',
+            }, eventTime);
             isPlaying = true;
           } else {
             // Already sounding: glide to the new pitch instead of re-attacking.
             synth.glideTo(freq, 0.05, eventTime);
+            this.scheduleNodeEventCallback({
+              voiceId: voice.id,
+              t16: node.t16,
+              worldT16,
+              type: 'glide',
+            }, eventTime);
           }
         }
 

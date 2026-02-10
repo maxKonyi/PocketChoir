@@ -15,7 +15,7 @@ import { useAppStore } from '../../stores/appStore';
 import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 import { darkenColor } from '../../utils/colors';
-import { playbackEngine } from '../../services/PlaybackEngine';
+import { playbackEngine, type NodeEvent } from '../../services/PlaybackEngine';
 import { AudioService } from '../../services/AudioService';
 import {
   cameraLeftWorldT,
@@ -50,6 +50,50 @@ interface GridProps {
  */
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/**
+ * Lighten a CSS color toward white.
+ *
+ * This is used for the playback "flash" effect on contour nodes.
+ * Supported inputs:
+ * - "#rrggbb"
+ * - "rgb(r,g,b)"
+ * - "rgba(r,g,b,a)"
+ */
+function lightenCssColorTowardWhite(color: string, amount01: number): string {
+  const amount = Math.max(0, Math.min(1, amount01));
+
+  // #rrggbb
+  if (color.startsWith('#')) {
+    const hex = color.slice(1);
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      const lr = Math.round(r + (255 - r) * amount);
+      const lg = Math.round(g + (255 - g) * amount);
+      const lb = Math.round(b + (255 - b) * amount);
+      return `rgb(${lr}, ${lg}, ${lb})`;
+    }
+    return color;
+  }
+
+  // rgb(...) / rgba(...)
+  const m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([0-9.]+))?\s*\)$/i);
+  if (m) {
+    const r = Math.max(0, Math.min(255, parseInt(m[1], 10)));
+    const g = Math.max(0, Math.min(255, parseInt(m[2], 10)));
+    const b = Math.max(0, Math.min(255, parseInt(m[3], 10)));
+    const a = m[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(m[4]))) : null;
+    const lr = Math.round(r + (255 - r) * amount);
+    const lg = Math.round(g + (255 - g) * amount);
+    const lb = Math.round(b + (255 - b) * amount);
+    return a === null ? `rgb(${lr}, ${lg}, ${lb})` : `rgba(${lr}, ${lg}, ${lb}, ${a})`;
+  }
+
+  // Fallback (named colors, hsl, etc.)
+  return color;
 }
 
 /**
@@ -209,6 +253,30 @@ export function Grid({
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Playback flash state: keyed by voiceId + worldT16.
+  // Value is performance.now() timestamp (ms) when the flash was triggered.
+  const nodeFlashStartMsRef = useRef<Map<string, number>>(new Map());
+
+  // Fallback flash trigger uses the world (monotonic) playhead position.
+  // We store the previous world time so we can detect when the playhead crosses
+  // a node event time even if the engine-scheduled callback is not arriving.
+  const lastFlashTriggerWorldT16Ref = useRef<number | null>(null);
+
+  // Hook the playback engine so we get callbacks scheduled at the same audio time
+  // as synth attacks/glides. This keeps the visual flash aligned to the sound.
+  useEffect(() => {
+    const onNodeEvent = (ev: NodeEvent) => {
+      // IMPORTANT:
+      // The Grid draws each node tiled across multiple loop repetitions.
+      // We key flashes by the *world* time (monotonic across loops) so only the
+      // correct tiled copy flashes.
+      const key = `${ev.voiceId}:${ev.worldT16}`;
+      nodeFlashStartMsRef.current.set(key, window.performance.now());
+    };
+
+    playbackEngine.setConfig({ onNodeEvent });
+  }, []);
 
   // Cached canvas sizing / layout metrics.
   // IMPORTANT:
@@ -1395,8 +1463,51 @@ export function Grid({
             ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
             ctx.fillStyle = nodeFillColor;
             ctx.fill();
-            ctx.strokeStyle = nodeStrokeColor;
-            ctx.lineWidth = 1.5;
+
+            // Playback flash:
+            // When the playhead triggers this node's synth event, we briefly thicken
+            // and lighten the stroke toward white, then fade back to normal.
+            // IMPORTANT:
+            // Use world time so only this specific tiled copy flashes.
+            const flashKey = `${voice.id}:${nodeWorldT}`;
+            const flashStartMs = nodeFlashStartMsRef.current.get(flashKey);
+            const nowMs = window.performance.now();
+
+            // These timings mirror the old IndexOLD.html behavior:
+            // 200ms "rise" (instant hold at peak) + 1000ms decay.
+            // NOTE:
+            // The old behavior included a noticeable "full" hold. For the newer
+            // feel you asked for (fast initial falloff, slow tail), we use a short
+            // attack ramp and then start the decay immediately.
+            const FLASH_ATTACK_MS = 35;
+            const FLASH_DECAY_MS = 2000;
+            const flashAgeMs = flashStartMs !== undefined ? (nowMs - flashStartMs) : Infinity;
+
+            let flashIntensity = 0;
+            if (flashAgeMs >= 0 && flashAgeMs <= (FLASH_ATTACK_MS + FLASH_DECAY_MS)) {
+              if (flashAgeMs <= FLASH_ATTACK_MS) {
+                // Quick ramp up to avoid a harsh single-frame jump.
+                flashIntensity = Math.max(0, Math.min(1, flashAgeMs / FLASH_ATTACK_MS));
+              } else {
+                // Exponential-style decay: fast initial falloff, slow tail.
+                // Larger DECAY_K = faster drop.
+                const DECAY_K = 4;
+                const decay01 = (flashAgeMs - FLASH_ATTACK_MS) / FLASH_DECAY_MS;
+                flashIntensity = Math.exp(-DECAY_K * decay01);
+              }
+            } else if (flashStartMs !== undefined && flashAgeMs > (FLASH_ATTACK_MS + FLASH_DECAY_MS)) {
+              // Cleanup so the map doesn't grow unbounded during long playback.
+              nodeFlashStartMsRef.current.delete(flashKey);
+            }
+
+            const baseStrokeWidth = 1.5;
+            const flashStrokeWidth = baseStrokeWidth + flashIntensity * 3;
+            const flashStrokeColor = flashIntensity > 0
+              ? lightenCssColorTowardWhite(nodeStrokeColor, 0.4 * flashIntensity)
+              : nodeStrokeColor;
+
+            ctx.strokeStyle = flashStrokeColor;
+            ctx.lineWidth = flashStrokeWidth;
             ctx.stroke();
 
             ctx.shadowBlur = 0;
@@ -1795,6 +1906,43 @@ export function Grid({
       const arr = state.arrangement;
 
       if (p.isPlaying && arr) {
+        // ── Fallback flash trigger (visual safety net) ──
+        // If, for any reason, the engine-scheduled onNodeEvent callback is not
+        // reaching this component, we still want node flashes to be visible.
+        //
+        // This uses the playhead crossing node world-times.
+        const loopLenT16 = arr.bars * arr.timeSig.numerator * 4;
+        const currentWorldT16 = playbackEngine.getWorldPositionT16();
+        const nowMs = window.performance.now();
+
+        const epsilon = 0.01;
+        const lastWorld = lastFlashTriggerWorldT16Ref.current;
+        const effectiveLastWorld = lastWorld === null ? (currentWorldT16 - epsilon) : lastWorld;
+
+        if (loopLenT16 > 0 && currentWorldT16 >= effectiveLastWorld) {
+          // The playhead can cross a loop boundary between frames. We handle that
+          // by scanning the tiles spanned by [lastWorld, currentWorld].
+          const startTile = Math.max(0, Math.floor(effectiveLastWorld / loopLenT16));
+          const endTile = Math.max(0, Math.floor(currentWorldT16 / loopLenT16));
+
+          for (let tile = startTile; tile <= endTile; tile++) {
+            const tileOffset = tile * loopLenT16;
+            for (const voice of arr.voices) {
+              for (const node of voice.nodes) {
+                if (node.term) continue;
+                const nodeWorldT = tileOffset + node.t16;
+                if (nodeWorldT <= effectiveLastWorld || nodeWorldT > currentWorldT16) continue;
+
+                const key = `${voice.id}:${nodeWorldT}`;
+                nodeFlashStartMsRef.current.set(key, nowMs);
+              }
+            }
+          }
+        }
+
+        // Advance stored value for the next frame.
+        lastFlashTriggerWorldT16Ref.current = currentWorldT16;
+
         const engineWorldT = playbackEngine.getWorldPositionT16();
         const effectiveTempo = playbackEngine.getEffectiveTempoBpm();
         // t16 per millisecond: (tempo BPM * 4 sixteenths/beat) / 60_000 ms/min
@@ -1844,6 +1992,9 @@ export function Grid({
         wasPlaying = false;
         anchorRafTs = null;
         visualWorldTRef.current = null;
+
+        // Reset fallback trigger so next play re-arms cleanly.
+        lastFlashTriggerWorldT16Ref.current = null;
       }
 
       drawRef.current();
