@@ -372,7 +372,7 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
         </div>
 
         {/* Bottom section: Clear All + Mixer */}
-        <div className="flex flex-col gap-1.5 mt-1">
+        <div className="flex flex-col gap-2 mt-2">
           {/* Clear All button — shows confirmation dialog */}
           <button
             onClick={() => setShowClearAllConfirm(true)}

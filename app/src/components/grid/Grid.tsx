@@ -2042,7 +2042,21 @@ export function Grid({
       const p = state.playback;
       const arr = state.arrangement;
 
-      if (p.isPlaying && arr) {
+      // IMPORTANT:
+      // During recording count-in, the STORE says "isPlaying" (so the UI can show
+      // the active transport state), but the PlaybackEngine has NOT started its
+      // audio-clock update loop yet.
+      //
+      // If we try to run the smooth follow-camera code while the engine is still
+      // stationary, the RAF-based world time will advance and then repeatedly snap
+      // back to the engine (which is stuck at 0). This looks like the grid is
+      // "starting over and over" during count-in.
+      //
+      // Fix: treat count-in as "not playing" for VISUALS. The grid holds still
+      // until the downbeat when the engine actually starts moving.
+      const engineIsCountingIn = playbackEngine.getIsCountingIn();
+
+      if (p.isPlaying && arr && !engineIsCountingIn) {
         // ── Fallback flash trigger (visual safety net) ──
         // If, for any reason, the engine-scheduled onNodeEvent callback is not
         // reaching this component, we still want node flashes to be visible.
