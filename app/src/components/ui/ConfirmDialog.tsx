@@ -4,7 +4,12 @@
    A reusable in-app pop-up that asks "Are you sure you want to
    delete X?" before performing destructive actions like clearing
    a recording or clearing all tracks.
+   
+   Uses a React portal to render at document.body level so it
+   is never clipped by parent overflow or positioning.
    ============================================================ */
+
+import { createPortal } from 'react-dom';
 
 interface ConfirmDialogProps {
   /** Whether the dialog is visible. */
@@ -21,7 +26,7 @@ export function ConfirmDialog({ open, message, onConfirm, onCancel }: ConfirmDia
   // Don't render anything when the dialog is closed.
   if (!open) return null;
 
-  return (
+  return createPortal(
     /* Full-screen backdrop: darkens the background and centers the dialog. */
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-[fadeInUp_0.15s_ease-out]"
@@ -81,7 +86,8 @@ export function ConfirmDialog({ open, message, onConfirm, onCancel }: ConfirmDia
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

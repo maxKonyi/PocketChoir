@@ -78,145 +78,150 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
 
   return (
     <div
-      className="flex flex-col gap-1 p-1.5 rounded-[1.25rem] bg-white/5 border border-white/5 transition-opacity duration-200"
+      className="flex flex-row gap-0 rounded-lg bg-white/5 border border-white/5 transition-opacity duration-200 overflow-hidden"
       style={{ opacity: isDimmed ? 0.45 : 1 }}
     >
-      {/* ROW 1: Full-width coloured name pill with indicator dot */}
-      <button
-        onClick={() => {
-          if (mode === 'create') {
-            // In Create mode, clicking the pill selects the track for editing.
-            setSelectedVoiceId(voiceId);
-          }
-        }}
-        className={`
-          w-full flex items-center gap-1.5 px-2.5 py-1.5
-          rounded-full transition-all duration-200
-          ${mode === 'create' ? 'cursor-pointer' : 'cursor-default'}
-          ${isRecording
-            ? 'ring-2 ring-white shadow-[0_0_15px_rgba(239,68,68,0.5)] scale-[1.02]'
-            : (isArmed || isSelectedForEdit)
-              ? 'ring-1 ring-white/50 brightness-110'
-              : mode === 'create' ? 'hover:brightness-110 hover:shadow-[0_0_10px_-3px_rgba(255,255,255,0.1)]' : ''
-          }
-        `}
+      {/* Tall thin colour bar on the left — like the mixer modal */}
+      <div
+        className="w-2 shrink-0 rounded-l-xl self-stretch"
         style={{
-          backgroundColor: isRecording
-            ? '#ef4444'
-            : `color-mix(in srgb, ${voiceColor}, transparent 60%)`,
-          border: isRecording ? 'none' : `1px solid ${voiceColor}`,
-          opacity: vocalMuted && synthMuted ? 0.5 : 1
+          backgroundColor: voiceColor,
+          boxShadow: `0 0 10px ${voiceColor}50`,
         }}
-        title={mode === 'create' ? 'Select for editing' : voiceName}
-        aria-label={`${voiceName} - ${mode === 'create' ? 'Select for editing' : 'Track'}`}
-      >
-        {/* In Create mode show the pencil icon; in Play mode just the name */}
-        {mode === 'create' && (
-          <Edit3
-            size={11}
-            className={`shrink-0 ${isSelectedForEdit ? 'text-green-300 drop-shadow-[0_0_6px_rgba(34,197,94,0.8)]' : 'text-white'}`}
-          />
-        )}
+      />
 
-        {/* Track name: double-click in Create mode to rename. */}
-        {mode === 'create' && isRenaming ? (
-          <input
-            value={pendingName}
-            autoFocus
-            className="text-[9px] font-bold uppercase tracking-wider truncate text-white bg-transparent outline-none min-w-0"
-            onChange={(evt) => setPendingName(evt.target.value)}
-            onBlur={() => {
-              setIsRenaming(false);
-              renameVoice(voiceId, pendingName);
-            }}
-            onKeyDown={(evt) => {
-              if (evt.key === 'Enter') {
-                evt.preventDefault();
-                setIsRenaming(false);
-                renameVoice(voiceId, pendingName);
-              }
-              if (evt.key === 'Escape') {
-                evt.preventDefault();
-                setPendingName(voiceName);
-                setIsRenaming(false);
-              }
-            }}
-            onClick={(evt) => evt.stopPropagation()}
-          />
-        ) : (
-          <span
-            className="text-[9px] font-bold uppercase tracking-wider truncate text-white overflow-hidden text-ellipsis whitespace-nowrap"
-            onDoubleClick={(evt) => {
-              if (mode !== 'create') return;
-              evt.stopPropagation();
-              setPendingName(voiceName);
-              setIsRenaming(true);
-            }}
-            title={mode === 'create' ? 'Double-click to rename' : undefined}
-          >
-            {voiceName}
-          </span>
-        )}
+      {/* Track content to the right of the colour bar */}
+      <div className="flex flex-col gap-2 py-1 px-2.5 flex-1 min-w-0">
 
-        {/* Recording indicator dot — green when content exists */}
-        <div
-          className={`
-            ml-auto w-1.5 h-1.5 rounded-full transition-all duration-300 shrink-0
-            ${hasContent ? 'bg-green-400 shadow-[0_0_5px_rgba(74,222,128,1)]' : 'bg-white/20'}
-          `}
-        />
-      </button>
-
-      {/* ROW 2: Rec button + Trash button */}
-      <div className="flex items-center gap-1 px-0.5">
-        {/* Rec button — starts recording in Play mode, selects in Create mode */}
-        <button
-          onClick={async () => {
-            if (mode === 'create') {
-              setSelectedVoiceId(voiceId);
-            } else {
-              if (isRecording) {
-                stopRecording();
-              } else {
-                armVoice(voiceId);
-                await startRecording(voiceId);
-              }
-            }
-          }}
-          className={`
-            flex-1 flex items-center justify-center gap-1 px-2 py-1
-            rounded-full text-[9px] font-bold uppercase tracking-wider
-            transition-all duration-200 cursor-pointer
-            ${isRecording
-              ? 'bg-red-500 text-white animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.5)]'
-              : 'bg-white/8 text-[var(--text-secondary)] hover:bg-white/15 hover:text-white border border-white/10'
-            }
-          `}
-          title={mode === 'create' ? 'Select track' : (isRecording ? 'Stop recording' : 'Record')}
-          aria-label={`${isRecording ? 'Stop recording' : 'Record'} ${voiceName}`}
-        >
-          <Mic size={10} className="shrink-0" />
-          <span>{isRecording ? 'Stop' : 'Rec'}</span>
-        </button>
-
-        {/* Trash button — shows confirmation dialog before deleting */}
+        {/* ROW 1: Track name + indicator dot (plain text, no pill) */}
         <button
           onClick={() => {
-            if (!hasContent) return;
-            setShowDeleteConfirm(true);
+            if (mode === 'create') {
+              setSelectedVoiceId(voiceId);
+            }
           }}
-          disabled={!hasContent}
           className={`
-            p-1.5 rounded-full transition-colors
-            ${hasContent
-              ? 'text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/10 cursor-pointer'
-              : 'text-[var(--text-disabled)] cursor-not-allowed'}
+            relative w-full flex items-center gap-1.5 pr-8
+            transition-all duration-200
+            ${mode === 'create' ? 'cursor-pointer' : 'cursor-default'}
+            ${isSelectedForEdit ? 'brightness-125' : ''}
           `}
-          title={hasContent ? (mode === 'create' ? 'Clear track content' : 'Clear recording') : 'No content'}
-          aria-label={`Clear ${voiceName} content`}
+          style={{ opacity: vocalMuted && synthMuted ? 0.5 : 1 }}
+          title={mode === 'create' ? 'Select for editing' : voiceName}
+          aria-label={`${voiceName} - ${mode === 'create' ? 'Select for editing' : 'Track'}`}
         >
-          <Trash2 size={11} />
+          {/* In Create mode show the pencil icon */}
+          {mode === 'create' && (
+            <Edit3
+              size={11}
+              className={`shrink-0 ${isSelectedForEdit ? 'text-green-300 drop-shadow-[0_0_6px_rgba(34,197,94,0.8)]' : 'text-[var(--text-muted)]'}`}
+            />
+          )}
+
+          {/* Track name: double-click in Create mode to rename. */}
+          {mode === 'create' && isRenaming ? (
+            <input
+              value={pendingName}
+              autoFocus
+              className="text-[10px] font-bold uppercase tracking-wider truncate text-white bg-transparent outline-none min-w-0"
+              onChange={(evt) => setPendingName(evt.target.value)}
+              onBlur={() => {
+                setIsRenaming(false);
+                renameVoice(voiceId, pendingName);
+              }}
+              onKeyDown={(evt) => {
+                if (evt.key === 'Enter') {
+                  evt.preventDefault();
+                  setIsRenaming(false);
+                  renameVoice(voiceId, pendingName);
+                }
+                if (evt.key === 'Escape') {
+                  evt.preventDefault();
+                  setPendingName(voiceName);
+                  setIsRenaming(false);
+                }
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            />
+          ) : (
+            <span
+              className="text-[11px] font-regular uppercase tracking-wider truncate text-[var(--text-primary)] overflow-hidden text-ellipsis whitespace-nowrap"
+              onDoubleClick={(evt) => {
+                if (mode !== 'create') return;
+                evt.stopPropagation();
+                setPendingName(voiceName);
+                setIsRenaming(true);
+              }}
+              title={mode === 'create' ? 'Double-click to rename' : undefined}
+            >
+              {voiceName}
+            </span>
+          )}
+
+          {/* Recording indicator dot — green when content exists */}
+          <div className="absolute right-0.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center">
+            <div
+              className={`
+                w-1.5 h-1.5 rounded-full transition-all duration-300
+                ${hasContent ? 'bg-green-400 shadow-[0_0_5px_rgba(74,222,128,1)]' : 'bg-white/20'}
+              `}
+            />
+          </div>
         </button>
+
+        {/* ROW 2: Rec button + Trash button */}
+        <div className="relative flex items-center gap-1 pr-8">
+          {/* Rec button — subtle red colouring, starts recording in Play mode */}
+          <button
+            onClick={async () => {
+              if (mode === 'create') {
+                setSelectedVoiceId(voiceId);
+              } else {
+                if (isRecording) {
+                  stopRecording();
+                } else {
+                  armVoice(voiceId);
+                  await startRecording(voiceId);
+                }
+              }
+            }}
+            className={`
+              flex-1 flex items-center justify-center gap-1 px-1 py-0.5
+              rounded-full text-[10px] font-bold uppercase tracking-wider
+              transition-all duration-200 cursor-pointer
+              ${isRecording
+                ? 'bg-red-500 text-white animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.5)]'
+                : 'bg-red-500/10 text-red-300/80 border border-red-500/20 hover:bg-red-500/20 hover:text-red-200'
+              }
+            `}
+            title={mode === 'create' ? 'Select track' : (isRecording ? 'Stop recording' : 'Record')}
+            aria-label={`${isRecording ? 'Stop recording' : 'Record'} ${voiceName}`}
+          >
+            <Mic size={10} className="shrink-0" />
+            <span>{isRecording ? 'Stop' : 'Rec'}</span>
+          </button>
+
+          {/* Trash button — shows confirmation dialog before deleting */}
+          <div className="absolute right-0.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center">
+            <button
+              onClick={() => {
+                if (!hasContent) return;
+                setShowDeleteConfirm(true);
+              }}
+              disabled={!hasContent}
+              className={`
+                p-1.5 rounded-full transition-colors
+                ${hasContent
+                  ? 'text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/10 cursor-pointer'
+                  : 'text-[var(--text-disabled)] cursor-not-allowed'}
+              `}
+              title={hasContent ? (mode === 'create' ? 'Clear track content' : 'Clear recording') : 'No content'}
+              aria-label={`Clear ${voiceName} content`}
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Confirmation dialog for deleting this track's content */}
@@ -352,7 +357,7 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
         </div>
 
         {/* Voice controls — one two-row card per track */}
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           {arrangement.voices.map((voice, index) => (
             <VoiceControl
               key={voice.id}
