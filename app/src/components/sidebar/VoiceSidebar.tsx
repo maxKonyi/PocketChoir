@@ -191,7 +191,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
               transition-all duration-200 cursor-pointer
               ${isRecording
                 ? 'bg-red-500 text-white animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.5)]'
-                : 'bg-red-500/10 text-red-300/80 border border-red-500/20 hover:bg-red-500/20 hover:text-red-200'
+                : 'bg-red-500/10 text-white/90 border border-red-500/50 hover:bg-red-500/20 hover:text-red-200'
               }
             `}
             title={mode === 'create' ? 'Select track' : (isRecording ? 'Stop recording' : 'Record')}
@@ -288,7 +288,7 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
         {/* Header label styled to match the brighter top-bar theme dropdown */}
         <div className="relative flex items-center justify-center text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-[0.25em]">
           <div className="flex items-center gap-1.25">
-            <Layers size={11} />
+            <Layers size={20} />
             <span>Tracks</span>
           </div>
 
