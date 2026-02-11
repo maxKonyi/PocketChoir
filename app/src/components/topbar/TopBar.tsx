@@ -5,7 +5,7 @@
    Controls: Library, Mic Setup, Display Settings, Theme, Mode Toggle
    ============================================================ */
 
-import { Library, Mic, Eye, Palette, Download, Sliders } from 'lucide-react';
+import { Library, Mic, Eye, Palette, Download } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { applyTheme, type ThemeName } from '../../utils/colors';
 import { AudioService } from '../../services/AudioService';
@@ -35,7 +35,6 @@ export function TopBar() {
 
   // Get actions from store
   const setLibraryOpen = useAppStore((state) => state.setLibraryOpen);
-  const setMixerOpen = useAppStore((state) => state.setMixerOpen);
   const setMicSetupOpen = useAppStore((state) => state.setMicSetupOpen);
   const setDisplaySettingsOpen = useAppStore((state) => state.setDisplaySettingsOpen);
   const setMode = useAppStore((state) => state.setMode);
@@ -151,22 +150,6 @@ export function TopBar() {
 
       {/* Right section - Settings buttons and mode toggle */}
       <div className="flex items-center gap-1.5">
-        {/* Mixer */}
-        <button
-          onClick={() => setMixerOpen(true)}
-          aria-label="Open Mixer"
-          className="
-            p-2.5 rounded-xl
-            text-[var(--text-secondary)]
-            hover:bg-white/10 hover:text-[var(--text-primary)]
-            hover:shadow-[0_0_15px_-3px_rgba(255,255,255,0.1)]
-            transition-all duration-200 cursor-pointer
-          "
-          title="Mixer"
-        >
-          <Sliders size={16} />
-        </button>
-
         {/* Mic Setup */}
         <button
           onClick={() => {

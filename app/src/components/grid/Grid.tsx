@@ -442,6 +442,15 @@ export function Grid({
   const transposition = useAppStore((state) => state.transposition);
   const theme = useAppStore((state) => state.theme);
 
+  // Focus actions — triggered by clicking contour lines or pressing Escape
+  const toggleFocus = useAppStore((state) => state.toggleFocus);
+  const clearAllFocus = useAppStore((state) => state.clearAllFocus);
+
+  // Which voice's contour line the mouse is currently hovering over (null = none).
+  // Stored in a ref because it updates on every mouse move and the draw loop reads it
+  // every frame — no need for React re-renders.
+  const hoveredContourVoiceIdRef = useRef<string | null>(null);
+
   // Follow-mode timeline state and actions
   const followMode = useAppStore((state) => state.followMode);
   const startTimelineDrag = useAppStore((state) => state.startTimelineDrag);
@@ -725,6 +734,130 @@ export function Grid({
     }
 
     return null;
+  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, isPlaying]);
+
+  /**
+   * Check if the mouse is near any voice's contour line (for hover/click-to-focus).
+   * Returns the voiceId of the closest contour within the hit threshold, or null.
+   *
+   * Works by walking each voice's node list and checking the pixel distance from
+   * the mouse to each line segment (horizontal holds + bends between nodes).
+   * We use a generous threshold (12px) so you don't have to be pixel-perfect.
+   */
+  const getContourHitAtMouse = useCallback((
+    mouseX: number,
+    mouseY: number,
+    gridLeft: number,
+    gridTop: number,
+    gridWidth: number,
+    gridHeight: number,
+    minSemitone: number,
+    maxSemitone: number
+  ): string | null => {
+    if (!arrangement) return null;
+
+    // How close the mouse must be to the contour line (in CSS pixels)
+    const hitThreshold = 12;
+
+    const pxPerTVal = followMode.pxPerT;
+    const loopLen = arrangement.bars * arrangement.timeSig.numerator * 4;
+    const currentWorldT = mode === 'create'
+      ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+      : (followMode.pendingWorldT !== null
+        ? followMode.pendingWorldT
+        : playbackEngine.getWorldPositionT16());
+    const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
+    const visDur = visibleDurationT(gridWidth, pxPerTVal);
+    const [kStart, kEnd] = getTileRange(camLeft, camLeft + visDur, loopLen);
+
+    // Helper: convert local t16 + tile offset to screen X
+    const toScreenX = (localT16: number, tileOffset: number) =>
+      gridLeft + worldTToScreenX(localT16 + tileOffset, camLeft, pxPerTVal);
+
+    // Helper: convert a node to its Y position on screen
+    const nodeToY = (node: { deg?: number; octave?: number; semi?: number }) =>
+      node.semi !== undefined
+        ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+        : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+    // Helper: point-to-segment distance (squared, for performance)
+    const distToSegmentSq = (px: number, py: number, ax: number, ay: number, bx: number, by: number): number => {
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq === 0) return (px - ax) * (px - ax) + (py - ay) * (py - ay);
+      let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+      t = Math.max(0, Math.min(1, t));
+      const projX = ax + t * dx;
+      const projY = ay + t * dy;
+      return (px - projX) * (px - projX) + (py - projY) * (py - projY);
+    };
+
+    const thresholdSq = hitThreshold * hitThreshold;
+    let bestVoiceId: string | null = null;
+    let bestDistSq = Infinity;
+
+    for (let k = kStart; k <= kEnd; k++) {
+      const tileOffset = k * loopLen;
+
+      for (const voice of arrangement.voices) {
+        if (voice.nodes.length === 0) continue;
+
+        let lastX = 0;
+        let lastY = 0;
+        let inPhrase = false;
+
+        for (const node of voice.nodes) {
+          if (node.term) {
+            if (inPhrase) {
+              // Check horizontal hold segment to termination point
+              const termX = toScreenX(node.t16, tileOffset);
+              const d = distToSegmentSq(mouseX, mouseY, lastX, lastY, termX, lastY);
+              if (d < thresholdSq && d < bestDistSq) {
+                bestDistSq = d;
+                bestVoiceId = voice.id;
+              }
+              inPhrase = false;
+            }
+            continue;
+          }
+
+          const x = toScreenX(node.t16, tileOffset);
+          const y = nodeToY(node);
+
+          if (!inPhrase) {
+            lastX = x;
+            lastY = y;
+            inPhrase = true;
+            continue;
+          }
+
+          // Check horizontal hold from lastX,lastY to the bend start
+          // Then the bend itself (approximate as straight line from bend start to x,y)
+          const bendWidth = Math.min(40, (x - lastX) * 0.8);
+          const bendStartX = x - bendWidth;
+
+          // Segment 1: horizontal hold (lastX, lastY) → (bendStartX, lastY)
+          const d1 = distToSegmentSq(mouseX, mouseY, lastX, lastY, bendStartX, lastY);
+          if (d1 < thresholdSq && d1 < bestDistSq) {
+            bestDistSq = d1;
+            bestVoiceId = voice.id;
+          }
+
+          // Segment 2: bend (bendStartX, lastY) → (x, y) — simplified as straight line
+          const d2 = distToSegmentSq(mouseX, mouseY, bendStartX, lastY, x, y);
+          if (d2 < thresholdSq && d2 < bestDistSq) {
+            bestDistSq = d2;
+            bestVoiceId = voice.id;
+          }
+
+          lastX = x;
+          lastY = y;
+        }
+      }
+    }
+
+    return bestVoiceId;
   }, [arrangement, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, isPlaying]);
 
   /**
@@ -1364,6 +1497,10 @@ export function Grid({
           const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
           const glowColor = voiceColor.includes('rgba') ? voiceColor : voiceColor.replace(')', ', 0.5)').replace('rgb', 'rgba');
 
+          // Contour lines get thicker when the mouse hovers over them (play mode only).
+          const isHoveredContour = hoveredContourVoiceIdRef.current === voice.id;
+          const contourLineWidth = isHoveredContour ? 5 : 3;
+
           // Draw contour with glow effect
           ctx.save();
 
@@ -1372,14 +1509,14 @@ export function Grid({
             ctx.shadowColor = glowColor;
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
-            ctx.lineWidth = 3;
+            ctx.lineWidth = contourLineWidth;
             drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT);
           }
 
           // Main line
           ctx.shadowBlur = 0;
           ctx.strokeStyle = voiceColor;
-          ctx.lineWidth = 3;
+          ctx.lineWidth = contourLineWidth;
           drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT);
           ctx.restore();
         }
@@ -2224,12 +2361,41 @@ export function Grid({
       return;
     }
 
-    // ── Play mode: start a timeline scrub/drag (seek-on-release) ──
+    // ── Play mode: contour click-to-focus, or timeline scrub/drag ──
     if (mode === 'play') {
       // Prevent the browser context menu / drag behaviors while we use right-click for scrubbing.
       if (e.button === 2) {
         e.preventDefault();
       }
+
+      // Left-click: check if we clicked on a contour line (for focus toggling).
+      // Right-click skips this and goes straight to timeline drag.
+      if (e.button === 0) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) {
+          const mouseX = e.clientX - rect.left;
+          const mouseY = e.clientY - rect.top;
+          const gridLeft = GRID_MARGIN.left;
+          const gridTop = GRID_MARGIN.top;
+          const gridWidth = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+          const gridHeight = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+          const { minSemitone, maxSemitone } = getPitchRange();
+
+          const hitVoiceId = getContourHitAtMouse(
+            mouseX, mouseY, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone
+          );
+
+          if (hitVoiceId) {
+            // Clicked on a contour line — toggle focus for that voice
+            toggleFocus(hitVoiceId);
+            return;
+          } else {
+            // Clicked on empty space — clear all focus
+            clearAllFocus();
+          }
+        }
+      }
+
       const currentWorldT = playbackEngine.getWorldPositionT16();
       dragStartRef.current = { startX: e.clientX, startWorldT: currentWorldT };
       startTimelineDrag();
@@ -2370,6 +2536,25 @@ export function Grid({
       const newWorldT = Math.max(0, dragStartRef.current.startWorldT + dT);
       updatePendingWorldT(newWorldT);
       return;
+    }
+
+    // ── Play mode: detect contour line hover for interactive focus ──
+    if (mode === 'play' && !followMode.isDraggingTimeline) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const gridLeft = GRID_MARGIN.left;
+        const gridTop = GRID_MARGIN.top;
+        const gridWidth = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+        const gridHeight = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+        const { minSemitone, maxSemitone } = getPitchRange();
+
+        // Update the hovered contour ref — the draw loop reads this every frame
+        hoveredContourVoiceIdRef.current = getContourHitAtMouse(
+          mouseX, mouseY, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone
+        );
+      }
     }
 
     if (mode !== 'create') return;
@@ -2720,6 +2905,13 @@ export function Grid({
         }
       }
 
+      // Escape: clear all focus states (works in both Play and Create modes)
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        clearAllFocus();
+        return;
+      }
+
       // The rest of the navigation hotkeys are Create-mode only.
       if (mode !== 'create') return;
 
@@ -2776,7 +2968,7 @@ export function Grid({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, arrangement, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId]);
+  }, [mode, arrangement, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId, clearAllFocus]);
 
   // Prevent the browser context menu when right-clicking the grid.
   // (Right-click is used for panning in Create mode.)
@@ -3070,6 +3262,7 @@ export function Grid({
         onContextMenu={handleContextMenu}
         onMouseLeave={() => {
           hoverPreviewRef.current = null;
+          hoveredContourVoiceIdRef.current = null;
           handleMouseUp();
         }}
       />

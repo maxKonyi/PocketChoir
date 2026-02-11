@@ -7,7 +7,7 @@ import { useAppStore } from '../../stores/appStore';
    A comprehensive mixing interface for controlling:
    - Global volume and reverb
    - Per-track synth/vocal balance
-   - Mute/Solo states
+   - Mute/Focus states
    ------------------------------------------------------------ */
 
 export function MixerModal() {
@@ -187,8 +187,9 @@ export function MixerModal() {
                                                         className={`
                                         w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold transition-all
                                         ${vs.synthSolo ? 'bg-yellow-500 text-black' : 'bg-white/10 text-[var(--text-muted)] hover:bg-white/20 hover:text-[var(--text-primary)]'}
+                                        cursor-pointer
                                     `}
-                                                    >S</button>
+                                                    >F</button>
                                                 </div>
                                                 <span className="text-[9px] text-[var(--text-dim)] tabular-nums">Vol {Math.round(vs.synthVolume * 100)} | Pan {vs.synthPan.toFixed(1)}</span>
                                             </div>
@@ -237,8 +238,9 @@ export function MixerModal() {
                                                         className={`
                                         w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold transition-all
                                         ${vs.vocalSolo ? 'bg-yellow-500 text-black' : 'bg-white/10 text-[var(--text-muted)] hover:bg-white/20 hover:text-[var(--text-primary)]'}
+                                        cursor-pointer
                                     `}
-                                                    >S</button>
+                                                    >F</button>
                                                 </div>
                                                 <span className="text-[9px] text-[var(--text-dim)] tabular-nums">Vol {Math.round(vs.vocalVolume * 100)} | Pan {vs.vocalPan.toFixed(1)}</span>
                                             </div>

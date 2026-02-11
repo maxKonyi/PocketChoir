@@ -336,6 +336,12 @@ interface AppActions {
   setVoiceVocalPan: (voiceId: string, pan: number) => void;
   setVoiceVocalReverb: (voiceId: string, reverb: number) => void;
 
+  // Focus (replaces per-track solo buttons)
+  // "Focus" solos BOTH synth and vocal for a voice simultaneously.
+  // Clicking a contour line toggles focus; clicking empty space or Esc clears all.
+  toggleFocus: (voiceId: string) => void;
+  clearAllFocus: () => void;
+
   // Global Mix
   setGlobalVolume: (volume: number) => void;
   setGlobalReverb: (reverb: number) => void;
@@ -1442,6 +1448,37 @@ export const useAppStore = create<AppState & AppActions>()(
     voiceStates: state.voiceStates.map(vs =>
       vs.voiceId === voiceId ? { ...vs, vocalReverb: reverb } : vs
     )
+  })),
+
+  // -- Focus (combined synth+vocal solo toggle) --
+  // Clicking a contour line toggles "focus" for that voice.
+  // Focus means both synthSolo AND vocalSolo are set to true.
+  // If already focused, clicking again removes the focus.
+  toggleFocus: (voiceId) => set((state) => {
+    const vs = state.voiceStates.find(v => v.voiceId === voiceId);
+    if (!vs) return state;
+
+    // If this voice is already focused (both solos on), turn it off.
+    const isFocused = vs.synthSolo && vs.vocalSolo;
+    const newSolo = !isFocused;
+
+    return {
+      voiceStates: state.voiceStates.map(v =>
+        v.voiceId === voiceId
+          ? { ...v, synthSolo: newSolo, vocalSolo: newSolo }
+          : v
+      ),
+    };
+  }),
+
+  // Clear all focus: remove all solo states from every voice.
+  // Triggered by clicking empty grid space or pressing Escape.
+  clearAllFocus: () => set((state) => ({
+    voiceStates: state.voiceStates.map(v => ({
+      ...v,
+      synthSolo: false,
+      vocalSolo: false,
+    })),
   })),
 
   // Global Mix
