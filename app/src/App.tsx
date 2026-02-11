@@ -36,6 +36,8 @@ function App() {
   const pbIsRecording = useAppStore((state) => state.playback.isRecording);
   const pbTempoMultiplier = useAppStore((state) => state.playback.tempoMultiplier);
   const pbLoopEnabled = useAppStore((state) => state.playback.loopEnabled);
+  const pbLoopStart = useAppStore((state) => state.playback.loopStart);
+  const pbLoopEnd = useAppStore((state) => state.playback.loopEnd);
   const pbMetronomeEnabled = useAppStore((state) => state.playback.metronomeEnabled);
   const countIn = useAppStore((state) => state.countIn);
   const theme = useAppStore((state) => state.theme);
@@ -271,11 +273,14 @@ function App() {
         // Use count-in only when recording is active.
         const countInBars = (pbIsRecording && countIn.enabled) ? countIn.bars : 0;
 
-        // If the user pressed Play (not starting a recording), always restart from the beginning.
-        // This matches the "Play always starts at bar 1" expectation.
+        // If the user pressed Play (not starting a recording), seek to the
+        // correct start position:
+        // - Loop ON  → start from the loop start point
+        // - Loop OFF → start from the very beginning (bar 1)
         if (playJustStarted && !recordingJustStarted) {
           playbackEngine.resetLoopCount();
-          playbackEngine.seek(0);
+          const seekTarget = pbLoopEnabled ? pbLoopStart : 0;
+          playbackEngine.seek(seekTarget);
         }
 
         playbackEngine.play(countInBars).then(() => {
@@ -307,6 +312,11 @@ function App() {
   useEffect(() => {
     playbackEngine.setLoopEnabled(pbLoopEnabled);
   }, [pbLoopEnabled]);
+
+  // Keep the playback engine's loop points in sync with the store.
+  useEffect(() => {
+    playbackEngine.setLoopPoints(pbLoopStart, pbLoopEnd);
+  }, [pbLoopStart, pbLoopEnd]);
 
   // Keep playback engine transposition in sync with the app store.
   // This is what actually transposes the arrangement playback to match your vocal range.

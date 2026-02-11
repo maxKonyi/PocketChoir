@@ -225,11 +225,13 @@ export function useRecording() {
       return false;
     }
 
-    // ── STEP 1: Rewind to the very beginning (first loop repetition). ──
-    // Reset the world-time loop counter so we start at repetition 0,
-    // not just the loop start point of whatever repetition we were on.
+    // ── STEP 1: Seek to the correct start position. ──
+    // If the practice loop is enabled, start from the loop start point.
+    // Otherwise, start from the very beginning of the arrangement.
     playbackEngine.resetLoopCount();
-    playbackEngine.seek(0);
+    const loopState = useAppStore.getState().playback;
+    const seekTarget = loopState.loopEnabled ? loopState.loopStart : 0;
+    playbackEngine.seek(seekTarget);
 
     // Reset timing state - wait for actual playback to start
     playbackActuallyStartedRef.current = false;
@@ -309,12 +311,12 @@ export function useRecording() {
     });
 
     // ── STEP 2: Start playback (which triggers count-in then recording). ──
-    // CRITICAL: Reset the store position to 0 BEFORE setting isRecording/isPlaying.
+    // CRITICAL: Reset the store position BEFORE setting isRecording/isPlaying.
     // Without this, the auto-stop effect can see the old position (e.g. near loop end
     // from a previous playback) and immediately fire stopRecording, killing the
     // recording before it even starts. This was the root cause of "plays without
     // recording" and "certain tracks have no pitch trace" bugs.
-    setPosition(0);
+    setPosition(seekTarget);
 
     // Record the time so the auto-stop effect knows to ignore early position updates.
     recordingStartTimeRef.current = performance.now();
@@ -366,10 +368,15 @@ export function useRecording() {
       const elapsed = performance.now() - recordingStartTimeRef.current;
       if (elapsed < 1000) return;
 
-      // Stop slightly before the exact loop end
-      if (state.playback.position >= state.playback.loopEnd - 0.2) {
-        console.log('Auto-stopping recording at loop end');
-        stopRecording(true); // Keep playing for seamless looping!
+      // When loop is enabled, stop at the user's loop end.
+      // When loop is disabled, stop at the full arrangement end.
+      const effectiveEnd = state.playback.loopEnabled
+        ? state.playback.loopEnd
+        : (playbackEngine.getArrangementEndT16());
+      if (state.playback.position >= effectiveEnd - 0.2) {
+        console.log('Auto-stopping recording at effective end:', effectiveEnd);
+        // Keep playing if looping (seamless loop); stop fully if one-shot.
+        stopRecording(state.playback.loopEnabled);
       }
     }, 100); // Check every 100ms — plenty fast for auto-stop
 

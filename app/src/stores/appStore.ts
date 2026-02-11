@@ -426,9 +426,9 @@ const initialPlaybackState: PlaybackState = {
   isRecording: false,
   position: 0,
   positionMs: 0,
-  loopEnabled: true,
+  loopEnabled: false,     // Loop OFF by default — one-shot play through the arrangement
   loopStart: 0,
-  loopEnd: 64,           // Default 4 bars in 4/4 = 64 sixteenths
+  loopEnd: 64,           // Default 4 bars in 4/4 = 64 sixteenths (reset per arrangement)
   tempoMultiplier: 1.0,
   metronomeEnabled: false,
 };
@@ -679,6 +679,8 @@ export const useAppStore = create<AppState & AppActions>()(
       set((state) => ({
         playback: {
           ...state.playback,
+          loopEnabled: false,       // Every new arrangement starts in one-shot mode
+          loopStart: 0,             // Reset practice loop range to full arrangement
           loopEnd: totalSixteenths,
           position: 0,
           isPlaying: false,

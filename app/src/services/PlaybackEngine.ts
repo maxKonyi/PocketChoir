@@ -143,9 +143,12 @@ export class PlaybackEngine {
   private vocalPannerNodes: Map<string, StereoPannerNode> = new Map();
 
   // Loop settings
-  private loopEnabled: boolean = true;
-  private loopStartT16: number = 0;
-  private loopEndT16: number = 64;
+  // loopEnabled=false means one-shot (play to end + 1 bar, then stop).
+  // loopEnabled=true means the user has set a practice loop range.
+  private loopEnabled: boolean = false;
+  private loopStartT16: number = 0;      // User-set loop start (16th notes)
+  private loopEndT16: number = 64;       // User-set loop end (16th notes)
+  private arrangementEndT16: number = 64; // Full arrangement length (16th notes)
 
   // World time tracking: counts how many complete loops have occurred.
   // Used by follow-mode to compute a monotonically increasing world position
@@ -206,8 +209,10 @@ export class PlaybackEngine {
     this.baseTempo = arrangement.tempo;
     this.timeSig = arrangement.timeSig;
 
-    // Set loop end to arrangement length
-    this.loopEndT16 = arrangementTotalSixteenths(arrangement.bars, this.timeSig);
+    // Set arrangement length and default loop range to full arrangement
+    this.arrangementEndT16 = arrangementTotalSixteenths(arrangement.bars, this.timeSig);
+    this.loopStartT16 = 0;
+    this.loopEndT16 = this.arrangementEndT16;
 
     // Create synth voices and voice gain nodes for each voice in the arrangement
     this.disposeSynthVoices();
@@ -272,7 +277,15 @@ export class PlaybackEngine {
     this.arrangement = arrangement;
     this.baseTempo = arrangement.tempo;
     this.timeSig = arrangement.timeSig;
-    this.loopEndT16 = arrangementTotalSixteenths(arrangement.bars, this.timeSig);
+    this.arrangementEndT16 = arrangementTotalSixteenths(arrangement.bars, this.timeSig);
+
+    // Clamp user loop range so it stays within the (possibly resized) arrangement.
+    if (this.loopEndT16 > this.arrangementEndT16) {
+      this.loopEndT16 = this.arrangementEndT16;
+    }
+    if (this.loopStartT16 >= this.loopEndT16) {
+      this.loopStartT16 = 0;
+    }
 
     // If new voices were added while editing (Create mode), make sure we create
     // the corresponding synth + preview synth voices and routing nodes.
@@ -316,12 +329,6 @@ export class PlaybackEngine {
         this.previewOverrideUntilMs.set(voice.id, 0);
       }
     });
-
-    // Ensure loop end is valid.
-    if (this.loopEndT16 <= this.loopStartT16) {
-      this.loopStartT16 = 0;
-      this.loopEndT16 = this.loopEndT16;
-    }
 
     // If we are currently playing, refresh scheduling markers from the current playhead.
     // IMPORTANT: Do NOT call `primeSynthSchedulingFromPosition()` here.
@@ -1068,17 +1075,13 @@ export class PlaybackEngine {
   seekWorld(worldT16: number): void {
     // Seeking changes the time base, so invalidate pending UI callbacks.
     this.nodeEventSessionId += 1;
+
+    // DAW-style timeline:
+    // `worldT16` is now the actual arrangement timeline position (no wrapping/tiling).
+    // So seeking in world time should be a simple absolute seek.
     const clamped = Math.max(0, worldT16);
-    const loopLength = this.getLoopLengthT16();
-    if (loopLength <= 0) {
-      this.seek(clamped);
-      return;
-    }
-    // Compute which loop iteration this lands in and the position within the loop.
-    const loopsCompleted = Math.floor(clamped / loopLength);
-    const positionInLoop = clamped - loopsCompleted * loopLength;
-    this.loopCount = loopsCompleted;
-    this.seek(this.loopStartT16 + positionInLoop);
+    this.loopCount = 0;
+    this.seek(clamped);
   }
 
   /**
@@ -1255,22 +1258,48 @@ export class PlaybackEngine {
   }
 
   /**
-   * Get the monotonically increasing "world" position in 16th notes.
-   * This never resets on loop — it keeps increasing so the follow-mode
-   * timeline scrolls seamlessly forward.
-   *   worldT16 = loopCount * loopLengthT16 + currentLoopPositionT16
+   * Get the current "world" position in 16th notes.
+   * In the new DAW-style model there is no tiling — world time simply
+   * equals the raw timeline position. The camera follows this value.
    */
   getWorldPositionT16(): number {
-    const loopLengthT16 = this.loopEndT16 - this.loopStartT16;
-    const loopPositionT16 = this.getCurrentPositionT16() - this.loopStartT16;
-    return this.loopCount * loopLengthT16 + this.loopStartT16 + loopPositionT16;
+    return this.getCurrentPositionT16();
   }
 
   /**
-   * Get the total length of the loop in 16th notes.
+   * Get the total length of the arrangement in 16th notes.
+   * (This is always the full arrangement length, NOT the user loop range.)
    */
   getLoopLengthT16(): number {
-    return this.loopEndT16 - this.loopStartT16;
+    return this.arrangementEndT16;
+  }
+
+  /**
+   * Get the current user-set loop start in 16th notes.
+   */
+  getLoopStartT16(): number {
+    return this.loopStartT16;
+  }
+
+  /**
+   * Get the current user-set loop end in 16th notes.
+   */
+  getLoopEndT16(): number {
+    return this.loopEndT16;
+  }
+
+  /**
+   * Get the full arrangement length in 16th notes.
+   */
+  getArrangementEndT16(): number {
+    return this.arrangementEndT16;
+  }
+
+  /**
+   * Whether the practice loop is currently enabled.
+   */
+  getIsLoopEnabled(): boolean {
+    return this.loopEnabled;
   }
 
   /**
@@ -1300,16 +1329,18 @@ export class PlaybackEngine {
       const currentMs = this.getCurrentPositionMs();
       const currentT16 = this.getCurrentPositionT16();
 
-      // ── One-shot auto-stop: stop one bar past the loop end ──
-      const loopEndMs = t16ToMs(this.loopEndT16, this.getEffectiveTempo(), this.timeSig);
+      // ── One-shot auto-stop: stop one bar past the arrangement end ──
       if (!this.loopEnabled) {
         const oneBarT16 = this.timeSig.numerator * 4;
-        const oneShotEndMs = t16ToMs(this.loopEndT16 + oneBarT16, this.getEffectiveTempo(), this.timeSig);
+        const oneShotEndMs = t16ToMs(this.arrangementEndT16 + oneBarT16, this.getEffectiveTempo(), this.timeSig);
         if (currentMs >= oneShotEndMs) {
           this.stop();
           return;
         }
       }
+
+      // Compute the user loop end in ms (used by both fade and loop-back logic below).
+      const loopEndMs = t16ToMs(this.loopEndT16, this.getEffectiveTempo(), this.timeSig);
 
       // If we're approaching the end of the loop, schedule a quick fade-down of
       // recorded audio right AT the loop boundary. This helps prevent clicks.

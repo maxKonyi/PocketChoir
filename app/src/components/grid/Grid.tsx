@@ -19,10 +19,8 @@ import { playbackEngine, type NodeEvent } from '../../services/PlaybackEngine';
 import { AudioService } from '../../services/AudioService';
 import {
   cameraLeftWorldT,
-  visibleDurationT,
   worldTToScreenX,
   screenXToWorldT,
-  getTileRange,
   tileLocalToWorldT,
   getGridLOD,
   dragPixelsToTimeDelta,
@@ -267,15 +265,33 @@ export function Grid({
   // as synth attacks/glides. This keeps the visual flash aligned to the sound.
   useEffect(() => {
     const onNodeEvent = (ev: NodeEvent) => {
-      // IMPORTANT:
-      // The Grid draws each node tiled across multiple loop repetitions.
-      // We key flashes by the *world* time (monotonic across loops) so only the
-      // correct tiled copy flashes.
-      const key = `${ev.voiceId}:${ev.worldT16}`;
+      // DAW-style grid:
+      // We no longer draw tiled copies of the arrangement, so we key flashes by
+      // the local (arrangement) time `t16`. Each time the loop wraps, the same
+      // node will re-trigger and overwrite the same key, producing a new flash.
+      const key = `${ev.voiceId}:${ev.t16}`;
       nodeFlashStartMsRef.current.set(key, window.performance.now());
     };
 
-    playbackEngine.setConfig({ onNodeEvent });
+    const onLoop = () => {
+      const state = useAppStore.getState();
+      const arr = state.arrangement;
+      if (!arr) return;
+
+      const loopStartT16 = state.playback.loopStart;
+      const nowMs = window.performance.now();
+
+      for (const voice of arr.voices) {
+        for (const node of voice.nodes) {
+          if (node.term) continue;
+          if (node.t16 !== loopStartT16) continue;
+          const key = `${voice.id}:${node.t16}`;
+          nodeFlashStartMsRef.current.set(key, nowMs);
+        }
+      }
+    };
+
+    playbackEngine.setConfig({ onNodeEvent, onLoop });
   }, []);
 
   // Cached canvas sizing / layout metrics.
@@ -359,6 +375,11 @@ export function Grid({
   // Used to switch the cursor from crosshair to grab.
   const [isHoveringNode, setIsHoveringNode] = useState(false);
 
+  // True when the mouse is near a loop boundary handle (start/end) while loop is enabled.
+  // Used to switch the cursor to a resize/grab style only when it makes sense.
+  const [isHoveringLoopHandle, setIsHoveringLoopHandle] = useState(false);
+  const isHoveringLoopHandleRef = useRef(false);
+
   // Get arrangement from store to ensure we always have latest (for create mode updates)
   const arrangementFromStore = useAppStore((state) => state.arrangement);
   const arrangement = arrangementFromStore || arrangementProp;
@@ -370,7 +391,10 @@ export function Grid({
   const isPlaying = useAppStore((state) => state.playback.isPlaying);
   const isRecording = useAppStore((state) => state.playback.isRecording);
   const loopEnabled = useAppStore((state) => state.playback.loopEnabled);
+  const loopStart = useAppStore((state) => state.playback.loopStart);
+  const loopEnd = useAppStore((state) => state.playback.loopEnd);
   const setPosition = useAppStore((state) => state.setPosition);
+  const setLoopPoints = useAppStore((state) => state.setLoopPoints);
 
   // Throttle UI position updates during normal playback.
   // See App.tsx for the same reasoning: 60fps store writes force React work.
@@ -468,6 +492,9 @@ export function Grid({
 
   // Ref to track right-click panning in Create mode
   const rightDragRef = useRef<{ startX: number; startWorldT: number } | null>(null);
+
+  // Ref to track loop handle dragging ('start' or 'end' boundary, or null if not dragging)
+  const loopHandleDragRef = useRef<'start' | 'end' | null>(null);
 
   /**
    * Set the Create-mode camera, and (when paused) also scrub the playback engine
@@ -698,38 +725,31 @@ export function Grid({
 
     // ── Compute camera to position nodes on screen ──
     const pxPerTVal = followMode.pxPerT;
-    const loopLen = arrangement.bars * arrangement.timeSig.numerator * 4;
     const currentWorldT = mode === 'create'
       ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
       : (followMode.pendingWorldT !== null
         ? followMode.pendingWorldT
         : playbackEngine.getWorldPositionT16());
     const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
-    const visDur = visibleDurationT(gridWidth, pxPerTVal);
-    const [kStart, kEnd] = getTileRange(camLeft, camLeft + visDur, loopLen);
 
-    // Check all visible tiles for a node hit
-    for (let k = kStart; k <= kEnd; k++) {
-      const tileOffset = k * loopLen;
-      for (const node of voice.nodes) {
-        const r = node.term ? 9 : hitRadius;
+    // Check tile 0 only (no tiling)
+    for (const node of voice.nodes) {
+      const r = node.term ? 9 : hitRadius;
 
-        const nodeWorldT = node.t16 + tileOffset;
-        if (nodeWorldT < 0) continue;
-        const x = gridLeft + worldTToScreenX(nodeWorldT, camLeft, pxPerTVal);
+      const nodeWorldT = node.t16;
+      const x = gridLeft + worldTToScreenX(nodeWorldT, camLeft, pxPerTVal);
 
-        // Skip off-screen nodes
-        if (x < gridLeft - r || x > gridLeft + gridWidth + r) continue;
+      // Skip off-screen nodes
+      if (x < gridLeft - r || x > gridLeft + gridWidth + r) continue;
 
-        const y = node.semi !== undefined
-          ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-          : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+      const y = node.semi !== undefined
+        ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+        : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
-        const dx = mouseX - x;
-        const dy = mouseY - y;
-        if (dx * dx + dy * dy <= r * r) {
-          return node;
-        }
+      const dx = mouseX - x;
+      const dy = mouseY - y;
+      if (dx * dx + dy * dy <= r * r) {
+        return node;
       }
     }
 
@@ -760,19 +780,16 @@ export function Grid({
     const hitThreshold = 12;
 
     const pxPerTVal = followMode.pxPerT;
-    const loopLen = arrangement.bars * arrangement.timeSig.numerator * 4;
     const currentWorldT = mode === 'create'
       ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
       : (followMode.pendingWorldT !== null
         ? followMode.pendingWorldT
         : playbackEngine.getWorldPositionT16());
     const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
-    const visDur = visibleDurationT(gridWidth, pxPerTVal);
-    const [kStart, kEnd] = getTileRange(camLeft, camLeft + visDur, loopLen);
 
-    // Helper: convert local t16 + tile offset to screen X
-    const toScreenX = (localT16: number, tileOffset: number) =>
-      gridLeft + worldTToScreenX(localT16 + tileOffset, camLeft, pxPerTVal);
+    // Helper: convert local t16 to screen X (no tiling — tile 0 only)
+    const toScreenX = (localT16: number) =>
+      gridLeft + worldTToScreenX(localT16, camLeft, pxPerTVal);
 
     // Helper: convert a node to its Y position on screen
     const nodeToY = (node: { deg?: number; octave?: number; semi?: number }) =>
@@ -797,63 +814,60 @@ export function Grid({
     let bestVoiceId: string | null = null;
     let bestDistSq = Infinity;
 
-    for (let k = kStart; k <= kEnd; k++) {
-      const tileOffset = k * loopLen;
+    // Tile 0 only — no tiling
+    for (const voice of arrangement.voices) {
+      if (voice.nodes.length === 0) continue;
 
-      for (const voice of arrangement.voices) {
-        if (voice.nodes.length === 0) continue;
+      let lastX = 0;
+      let lastY = 0;
+      let inPhrase = false;
 
-        let lastX = 0;
-        let lastY = 0;
-        let inPhrase = false;
-
-        for (const node of voice.nodes) {
-          if (node.term) {
-            if (inPhrase) {
-              // Check horizontal hold segment to termination point
-              const termX = toScreenX(node.t16, tileOffset);
-              const d = distToSegmentSq(mouseX, mouseY, lastX, lastY, termX, lastY);
-              if (d < thresholdSq && d < bestDistSq) {
-                bestDistSq = d;
-                bestVoiceId = voice.id;
-              }
-              inPhrase = false;
+      for (const node of voice.nodes) {
+        if (node.term) {
+          if (inPhrase) {
+            // Check horizontal hold segment to termination point
+            const termX = toScreenX(node.t16);
+            const d = distToSegmentSq(mouseX, mouseY, lastX, lastY, termX, lastY);
+            if (d < thresholdSq && d < bestDistSq) {
+              bestDistSq = d;
+              bestVoiceId = voice.id;
             }
-            continue;
+            inPhrase = false;
           }
+          continue;
+        }
 
-          const x = toScreenX(node.t16, tileOffset);
-          const y = nodeToY(node);
+        const x = toScreenX(node.t16);
+        const y = nodeToY(node);
 
-          if (!inPhrase) {
-            lastX = x;
-            lastY = y;
-            inPhrase = true;
-            continue;
-          }
-
-          // Check horizontal hold from lastX,lastY to the bend start
-          // Then the bend itself (approximate as straight line from bend start to x,y)
-          const bendWidth = Math.min(40, (x - lastX) * 0.8);
-          const bendStartX = x - bendWidth;
-
-          // Segment 1: horizontal hold (lastX, lastY) → (bendStartX, lastY)
-          const d1 = distToSegmentSq(mouseX, mouseY, lastX, lastY, bendStartX, lastY);
-          if (d1 < thresholdSq && d1 < bestDistSq) {
-            bestDistSq = d1;
-            bestVoiceId = voice.id;
-          }
-
-          // Segment 2: bend (bendStartX, lastY) → (x, y) — simplified as straight line
-          const d2 = distToSegmentSq(mouseX, mouseY, bendStartX, lastY, x, y);
-          if (d2 < thresholdSq && d2 < bestDistSq) {
-            bestDistSq = d2;
-            bestVoiceId = voice.id;
-          }
-
+        if (!inPhrase) {
           lastX = x;
           lastY = y;
+          inPhrase = true;
+          continue;
         }
+
+        // Check horizontal hold from lastX,lastY to the bend start
+        // Then the bend itself (approximate as straight line from bend start to x,y)
+        const bendWidth = Math.min(40, (x - lastX) * 0.8);
+        const bendStartX = x - bendWidth;
+
+        // Segment 1: horizontal hold (lastX, lastY) → (bendStartX, lastY)
+        const d1 = distToSegmentSq(mouseX, mouseY, lastX, lastY, bendStartX, lastY);
+        if (d1 < thresholdSq && d1 < bestDistSq) {
+          bestDistSq = d1;
+          bestVoiceId = voice.id;
+        }
+
+        // Segment 2: bend (bendStartX, lastY) → (x, y) — simplified as straight line
+        const d2 = distToSegmentSq(mouseX, mouseY, bendStartX, lastY, x, y);
+        if (d2 < thresholdSq && d2 < bestDistSq) {
+          bestDistSq = d2;
+          bestVoiceId = voice.id;
+        }
+
+        lastX = x;
+        lastY = y;
       }
     }
 
@@ -1123,15 +1137,17 @@ export function Grid({
       ? (Math.round(camLeft * pxPerT * dpr) / dpr) / pxPerT
       : camLeft;
 
-    // Visible time span and the viewport's right edge in world time.
-    const visDur = visibleDurationT(gridWidth, pxPerT);
-    const viewEnd = camLeftSnapped + visDur;
+    // Use fresh loop state (from the store) so dragging loop handles updates the
+    // canvas immediately (the RAF draw loop will pick up new values without
+    // needing a React re-render).
+    const pb = useAppStore.getState().playback;
+    const loopEnabledNow = pb.loopEnabled;
+    const loopStartNow = pb.loopStart;
+    const loopEndNow = pb.loopEnd;
 
-    // Which tile indices overlap the visible range (forward-only, clamped >= 0).
-    // In one-shot mode (loopEnabled=false), only draw tile 0 — no tiling.
-    const [kStart, kEnd] = loopEnabled
-      ? getTileRange(camLeftSnapped, viewEnd, loopLengthT)
-      : [0, 0] as [number, number];
+    // DAW-style: always draw tile 0 only — no tiling.
+    const kStart = 0;
+    const kEnd = 0;
 
     // Helper: convert a world-time value to a screen X pixel inside the grid area.
     const wToX = (wt: number) => gridLeft + worldTToScreenX(wt, camLeftSnapped, pxPerT);
@@ -1268,7 +1284,6 @@ export function Grid({
           ctx.fillText(`${bar + 1}`, bx, gridTop - 10);
         }
       }
-
       ctx.restore();
     }
 
@@ -1606,7 +1621,7 @@ export function Grid({
             // and lighten the stroke toward white, then fade back to normal.
             // IMPORTANT:
             // Use world time so only this specific tiled copy flashes.
-            const flashKey = `${voice.id}:${nodeWorldT}`;
+            const flashKey = `${voice.id}:${node.t16}`;
             const flashStartMs = nodeFlashStartMsRef.current.get(flashKey);
             const nowMs = window.performance.now();
 
@@ -1696,9 +1711,54 @@ export function Grid({
       ctx.restore();
 
       // Pop the clip rect.
+      // ── Loop region overlay ──
+      // Draw this AFTER contours/nodes so it dims them too.
+      if (loopEnabledNow) {
+        const loopStartX = wToX(loopStartNow);
+        const loopEndX = wToX(loopEndNow);
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+
+        const dimLeftStart = gridLeft;
+        const dimLeftEnd = Math.max(gridLeft, Math.min(gridLeft + gridWidth, loopStartX));
+        if (dimLeftEnd > dimLeftStart) {
+          ctx.fillRect(dimLeftStart, gridTop, dimLeftEnd - dimLeftStart, gridHeight);
+        }
+
+        const dimRightStart = Math.max(gridLeft, Math.min(gridLeft + gridWidth, loopEndX));
+        const dimRightEnd = gridLeft + gridWidth;
+        if (dimRightEnd > dimRightStart) {
+          ctx.fillRect(dimRightStart, gridTop, dimRightEnd - dimRightStart, gridHeight);
+        }
+        ctx.restore();
+
+        // Re-draw boundary lines on top so the handles remain obvious.
+        ctx.save();
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+
+        if (loopStartX >= gridLeft && loopStartX <= gridLeft + gridWidth) {
+          ctx.beginPath();
+          ctx.moveTo(loopStartX, gridTop);
+          ctx.lineTo(loopStartX, gridTop + gridHeight);
+          ctx.stroke();
+        }
+
+        if (loopEndX >= gridLeft && loopEndX <= gridLeft + gridWidth) {
+          ctx.beginPath();
+          ctx.moveTo(loopEndX, gridTop);
+          ctx.lineTo(loopEndX, gridTop + gridHeight);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, createView.cameraWorldT, isPlaying, loopEnabled]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, createView.cameraWorldT, isPlaying, loopEnabled, loopStart, loopEnd]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -2061,33 +2121,27 @@ export function Grid({
         // If, for any reason, the engine-scheduled onNodeEvent callback is not
         // reaching this component, we still want node flashes to be visible.
         //
-        // This uses the playhead crossing node world-times.
-        const loopLenT16 = arr.bars * arr.timeSig.numerator * 4;
+        // This uses the playhead crossing node times.
         const currentWorldT16 = playbackEngine.getWorldPositionT16();
         const nowMs = window.performance.now();
 
         const epsilon = 0.01;
         const lastWorld = lastFlashTriggerWorldT16Ref.current;
-        const effectiveLastWorld = lastWorld === null ? (currentWorldT16 - epsilon) : lastWorld;
+        let effectiveLastWorld = lastWorld === null ? (currentWorldT16 - epsilon) : lastWorld;
 
-        if (loopLenT16 > 0 && currentWorldT16 >= effectiveLastWorld) {
-          // The playhead can cross a loop boundary between frames. We handle that
-          // by scanning the tiles spanned by [lastWorld, currentWorld].
-          const startTile = Math.max(0, Math.floor(effectiveLastWorld / loopLenT16));
-          const endTile = Math.max(0, Math.floor(currentWorldT16 / loopLenT16));
+        // If the playhead jumped backwards (loop wrap), re-arm the range scan
+        // from just before the loop start so nodes at loop start can flash again.
+        if (currentWorldT16 < effectiveLastWorld) {
+          const loopStartT16 = playbackEngine.getLoopStartT16();
+          effectiveLastWorld = loopStartT16 - epsilon;
+        }
 
-          for (let tile = startTile; tile <= endTile; tile++) {
-            const tileOffset = tile * loopLenT16;
-            for (const voice of arr.voices) {
-              for (const node of voice.nodes) {
-                if (node.term) continue;
-                const nodeWorldT = tileOffset + node.t16;
-                if (nodeWorldT <= effectiveLastWorld || nodeWorldT > currentWorldT16) continue;
-
-                const key = `${voice.id}:${nodeWorldT}`;
-                nodeFlashStartMsRef.current.set(key, nowMs);
-              }
-            }
+        for (const voice of arr.voices) {
+          for (const node of voice.nodes) {
+            if (node.term) continue;
+            if (node.t16 <= effectiveLastWorld || node.t16 > currentWorldT16) continue;
+            const key = `${voice.id}:${node.t16}`;
+            nodeFlashStartMsRef.current.set(key, nowMs);
           }
         }
 
@@ -2366,6 +2420,48 @@ export function Grid({
     // ── Middle-mouse button: ignore entirely — global pan handler in App.tsx handles it ──
     if (e.button === 1) return;
 
+    // ── Loop handle drag: check if the user clicked near a loop boundary ──
+    // Only active when loop is enabled and left-clicking.
+    const pb = useAppStore.getState().playback;
+    const loopEnabledNow = pb.loopEnabled;
+    const loopStartNow = pb.loopStart;
+    const loopEndNow = pb.loopEnd;
+
+    if (loopEnabledNow && e.button === 0) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const mouseX = e.clientX - rect.left;
+        const gridLeftPx = GRID_MARGIN.left;
+        const gridWidthPx = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+
+        // Compute screen X of the two loop boundaries
+        const pxPerTVal = followMode.pxPerT;
+        const currentWorldT = mode === 'create'
+          ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+          : (followMode.pendingWorldT !== null
+            ? followMode.pendingWorldT
+            : playbackEngine.getWorldPositionT16());
+        const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
+        const loopStartX = gridLeftPx + worldTToScreenX(loopStartNow, camLeft, pxPerTVal);
+        const loopEndX = gridLeftPx + worldTToScreenX(loopEndNow, camLeft, pxPerTVal);
+
+        // Hit threshold in pixels for grabbing a loop handle
+        const handleHitPx = 8;
+
+// Check which handle is closer (if both are within threshold, prefer the nearest)
+const distToStart = Math.abs(mouseX - loopStartX);
+const distToEnd = Math.abs(mouseX - loopEndX);
+
+if (distToStart <= handleHitPx || distToEnd <= handleHitPx) {
+loopHandleDragRef.current = (distToStart <= distToEnd) ? 'start' : 'end';
+isHoveringLoopHandleRef.current = true;
+setIsHoveringLoopHandle(true);
+e.preventDefault();
+return;
+}
+}
+}
+
     // ── Create mode: right-click drag pans the timeline (horizontal scroll) ──
     // This keeps left-click free for node placement/editing.
     if (mode === 'create' && e.button === 2) {
@@ -2408,7 +2504,14 @@ export function Grid({
             clearAllFocus();
           }
         }
+        // IMPORTANT:
+        // In Play mode we do NOT start timeline dragging on left-click.
+        // Left-click is reserved for selection/focus so loop handles are easy to grab.
+        return;
       }
+
+      // Right-click: timeline scrub/drag
+      if (e.button !== 2) return;
 
       const currentWorldT = playbackEngine.getWorldPositionT16();
       dragStartRef.current = { startX: e.clientX, startWorldT: currentWorldT };
@@ -2530,6 +2633,82 @@ export function Grid({
    */
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!arrangement) return;
+
+    const pb = useAppStore.getState().playback;
+    const loopEnabledNow = pb.loopEnabled;
+    const loopStartNow = pb.loopStart;
+    const loopEndNow = pb.loopEnd;
+
+    // ── Loop handle hover detection (for cursor only) ──
+    // We update this for both Play + Create modes.
+    // IMPORTANT: only commit state updates when the boolean changes to avoid
+    // forcing a React re-render on every mousemove.
+    if (loopEnabledNow && !loopHandleDragRef.current) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const mouseX = e.clientX - rect.left;
+        const gridLeftPx = GRID_MARGIN.left;
+        const gridWidthPx = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+        const pxPerTVal = followMode.pxPerT;
+
+        const currentWorldT = mode === 'create'
+          ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+          : (followMode.pendingWorldT !== null
+            ? followMode.pendingWorldT
+            : playbackEngine.getWorldPositionT16());
+
+        const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
+        const loopStartX = gridLeftPx + worldTToScreenX(loopStartNow, camLeft, pxPerTVal);
+        const loopEndX = gridLeftPx + worldTToScreenX(loopEndNow, camLeft, pxPerTVal);
+
+        const handleHitPx = 8;
+        const hovering = (Math.abs(mouseX - loopStartX) <= handleHitPx) || (Math.abs(mouseX - loopEndX) <= handleHitPx);
+
+        if (hovering !== isHoveringLoopHandleRef.current) {
+          isHoveringLoopHandleRef.current = hovering;
+          setIsHoveringLoopHandle(hovering);
+        }
+      }
+    } else if (!loopEnabledNow) {
+      if (isHoveringLoopHandleRef.current) {
+        isHoveringLoopHandleRef.current = false;
+        setIsHoveringLoopHandle(false);
+      }
+    }
+
+    // ── Loop handle drag: snap the dragged boundary to the nearest 16th note ──
+    if (loopHandleDragRef.current && loopEnabledNow) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const mouseX = e.clientX - rect.left;
+        const gridLeftPx = GRID_MARGIN.left;
+        const gridWidthPx = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+
+        const pxPerTVal = followMode.pxPerT;
+        const currentWorldT = mode === 'create'
+          ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
+          : (followMode.pendingWorldT !== null
+            ? followMode.pendingWorldT
+            : playbackEngine.getWorldPositionT16());
+        const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
+
+        // Convert mouse X to time, then snap to nearest 16th note
+        const rawT = screenXToWorldT(mouseX - gridLeftPx, camLeft, pxPerTVal);
+        const arrangementLen = arrangement.bars * arrangement.timeSig.numerator * 4;
+        const snappedT = Math.round(Math.max(0, Math.min(arrangementLen, rawT)));
+
+        if (loopHandleDragRef.current === 'start') {
+          // Don't let start go past end - 1
+          const newStart = Math.min(snappedT, loopEndNow - 1);
+          setLoopPoints(newStart, loopEndNow);
+        } else {
+          // Don't let end go before start + 1
+          const newEnd = Math.max(snappedT, loopStartNow + 1);
+          setLoopPoints(loopStartNow, newEnd);
+        }
+      }
+      return;
+    }
 
     // ── Create mode: continue right-click pan (horizontal scroll) ──
     if (mode === 'create' && rightDragRef.current) {
@@ -2679,6 +2858,14 @@ export function Grid({
    * In Create mode this commits a new node placement or ends a node drag.
    */
   const handleMouseUp = useCallback(() => {
+    // ── Loop handle drag: release the boundary handle ──
+    if (loopHandleDragRef.current) {
+      loopHandleDragRef.current = null;
+      isHoveringLoopHandleRef.current = false;
+      setIsHoveringLoopHandle(false);
+      return;
+    }
+
     // ── Play mode: commit the timeline scrub (seek-on-release) ──
     if (followMode.isDraggingTimeline) {
       const pending = followMode.pendingWorldT;
@@ -3121,7 +3308,6 @@ export function Grid({
 
                   {/* Chord blocks (synced to grid camera + zoom) */}
                   {(() => {
-                    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
                     const pxPerTVal = followMode.pxPerT;
 
                     // Width of the chord lane's visible area (same as the grid drawing width).
@@ -3138,35 +3324,26 @@ export function Grid({
                       : createView.cameraWorldT;
 
                     const camLeft = cameraLeftWorldT(worldT, laneWidth, pxPerTVal);
-                    const visDur = visibleDurationT(laneWidth, pxPerTVal);
-                    const viewEnd = camLeft + visDur;
 
-                    const [kStart, kEnd] = loopEnabled
-                      ? getTileRange(camLeft, viewEnd, totalT16)
-                      : [0, 0] as [number, number];
-
+                    // DAW-style: no tiling — draw tile 0 only
                     const blocks: React.ReactNode[] = [];
 
-                    for (let k = kStart; k <= kEnd; k++) {
-                      const tileOffsetWorld = k * totalT16;
+                    for (let idx = 0; idx < arrangement.chords!.length; idx++) {
+                      const chord = arrangement.chords![idx];
+                      const drawWorldT = chord.t16;
 
-                      for (let idx = 0; idx < arrangement.chords!.length; idx++) {
-                        const chord = arrangement.chords![idx];
-                        const drawWorldT = chord.t16 + tileOffsetWorld;
-                        if (drawWorldT < 0) continue;
+                      const leftPx = worldTToScreenX(drawWorldT, camLeft, pxPerTVal);
+                      const widthPx = Math.max(1, chord.duration16 * pxPerTVal);
 
-                        const leftPx = worldTToScreenX(drawWorldT, camLeft, pxPerTVal);
-                        const widthPx = Math.max(1, chord.duration16 * pxPerTVal);
+                      // Cull blocks far outside the lane to reduce DOM work.
+                      if (leftPx > laneWidth + 200 || leftPx + widthPx < -200) continue;
 
-                        // Cull blocks far outside the lane to reduce DOM work.
-                        if (leftPx > laneWidth + 200 || leftPx + widthPx < -200) continue;
+                      const isEditing = editingChordIndex === idx;
+                      const isDiatonicChord = isChordDiatonic(chord, arrangement);
 
-                        const isEditing = editingChordIndex === idx;
-                        const isDiatonicChord = isChordDiatonic(chord, arrangement);
-
-                        blocks.push(
-                          <div
-                            key={`${k}-${chord.t16}-${idx}`}
+                      blocks.push(
+                        <div
+                          key={`${chord.t16}-${idx}`}
                             className="absolute top-0 h-full rounded-lg border border-white/10"
                             style={{
                               left: leftPx,
@@ -3216,32 +3393,29 @@ export function Grid({
                               )}
                             </div>
 
-                            {/* Resize handles: only meaningful on the canonical chord track (tile 0) */}
-                            {k === 0 && (
-                              <>
-                                <button
-                                  type="button"
-                                  className="absolute left-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
-                                  title="Drag to resize"
-                                  onMouseDown={(evt) => {
-                                    evt.stopPropagation();
-                                    chordBoundaryDragRef.current = { leftChordIndex: idx - 1 };
-                                  }}
-                                />
-                                <button
-                                  type="button"
-                                  className="absolute right-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
-                                  title="Drag to resize"
-                                  onMouseDown={(evt) => {
-                                    evt.stopPropagation();
-                                    chordBoundaryDragRef.current = { leftChordIndex: idx };
-                                  }}
-                                />
-                              </>
-                            )}
+                            {/* Resize handles */}
+                            <>
+                              <button
+                                type="button"
+                                className="absolute left-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
+                                title="Drag to resize"
+                                onMouseDown={(evt) => {
+                                  evt.stopPropagation();
+                                  chordBoundaryDragRef.current = { leftChordIndex: idx - 1 };
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="absolute right-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
+                                title="Drag to resize"
+                                onMouseDown={(evt) => {
+                                  evt.stopPropagation();
+                                  chordBoundaryDragRef.current = { leftChordIndex: idx };
+                                }}
+                              />
+                            </>
                           </div>
                         );
-                      }
                     }
 
                     return blocks;
@@ -3259,8 +3433,16 @@ export function Grid({
         ref={canvasRef}
         className={`absolute inset-0 w-full h-full ${
           mode === 'create'
-            ? (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringNode ? 'cursor-grab' : 'cursor-crosshair'))
-            : (followMode.isDraggingTimeline ? 'cursor-grabbing' : 'cursor-grab')
+            ? (
+              loopEnabled && (loopHandleDragRef.current || isHoveringLoopHandle)
+                ? 'cursor-ew-resize'
+                : (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringNode ? 'cursor-grab' : 'cursor-crosshair'))
+            )
+            : (
+              followMode.isDraggingTimeline
+                ? 'cursor-grabbing'
+                : (loopEnabled && (loopHandleDragRef.current || isHoveringLoopHandle) ? 'cursor-ew-resize' : 'cursor-default')
+            )
         }`}
         // Promote the canvas to its own compositor layer.
         // Without this, DOM updates from other React components (transport bar,
@@ -3277,6 +3459,8 @@ export function Grid({
         onMouseLeave={() => {
           hoverPreviewRef.current = null;
           hoveredContourVoiceIdRef.current = null;
+          isHoveringLoopHandleRef.current = false;
+          setIsHoveringLoopHandle(false);
           handleMouseUp();
         }}
       />

@@ -18,7 +18,6 @@ import { degreeToSemitoneOffset } from '../../utils/music';
 import {
   visibleDurationT,
   cameraLeftWorldT,
-  worldTToLoopT,
   minimapRectWidth,
 } from '../../utils/followCamera';
 
@@ -54,6 +53,8 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
   const voiceStates = useAppStore((state) => state.voiceStates);
   const followMode = useAppStore((state) => state.followMode);
   const loopEnabled = useAppStore((state) => state.playback.loopEnabled);
+  const loopStart = useAppStore((state) => state.playback.loopStart);
+  const loopEnd = useAppStore((state) => state.playback.loopEnd);
   const startMinimapDrag = useAppStore((state) => state.startMinimapDrag);
   const updatePendingWorldT = useAppStore((state) => state.updatePendingWorldT);
   const commitMinimapDrag = useAppStore((state) => state.commitMinimapDrag);
@@ -253,64 +254,67 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     const camRight = camLeft + visDur;
 
     // Clamp to content range.
-    // - Nothing exists before worldT = 0.
-    // - In one-shot mode, nothing exists after the arrangement end (loopLengthT).
-    // This makes the viewport shrink when either side is empty.
+    // Nothing exists before worldT = 0 or after the arrangement end.
     const effectiveLeft = Math.max(0, camLeft);
-    const effectiveRight = loopEnabled ? camRight : Math.min(loopLengthT, camRight);
+    const effectiveRight = Math.min(loopLengthT, camRight);
     const effectiveVisDur = Math.max(0, effectiveRight - effectiveLeft);
 
-    // Map effective range into minimap-space.
-    // In one-shot mode, we do NOT wrap (no tiling), so we clamp to [0, loopLengthT].
-    const clampedLeftT = loopEnabled
-      ? worldTToLoopT(effectiveLeft, loopLengthT)
-      : Math.max(0, Math.min(loopLengthT, effectiveLeft));
+    // Map effective range into minimap-space (no wrapping — always clamped).
+    const clampedLeftT = Math.max(0, Math.min(loopLengthT, effectiveLeft));
     const vpWidth = minimapRectWidth(drawWidth, effectiveVisDur, loopLengthT);
     const vpLeftX = drawLeft + (clampedLeftT / loopLengthT) * drawWidth;
     const vpRightX = vpLeftX + vpWidth;
 
-    // Playhead position in minimap-space
-    const loopT = loopEnabled
-      ? worldTToLoopT(currentWorldT, loopLengthT)
-      : Math.max(0, Math.min(loopLengthT, currentWorldT));
+    // Playhead position in minimap-space (clamped, no wrapping)
+    const loopT = Math.max(0, Math.min(loopLengthT, currentWorldT));
 
-    // Draw the viewport rectangle (may wrap around edges)
-    // Only draw the fill (no stroke). The stroke edges can read as "extra playheads"
-    // during dragging / wrapping. The only strong vertical line should be the playhead.
+    // ── Loop region overlay on the minimap ──
+    // When the practice loop is enabled, shade the loop region and dim the rest.
+    if (loopEnabled) {
+      // Dim regions outside the loop
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+      const loopStartX = drawLeft + (loopStart / loopLengthT) * drawWidth;
+      const loopEndX = drawLeft + (loopEnd / loopLengthT) * drawWidth;
+
+      // Left dim (before loop start)
+      if (loopStartX > drawLeft) {
+        ctx.fillRect(drawLeft, drawTop, loopStartX - drawLeft, drawHeight);
+      }
+      // Right dim (after loop end)
+      if (loopEndX < drawLeft + drawWidth) {
+        ctx.fillRect(loopEndX, drawTop, (drawLeft + drawWidth) - loopEndX, drawHeight);
+      }
+
+      // Draw loop boundary markers
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+      ctx.lineWidth = 1;
+      if (loopStartX >= drawLeft && loopStartX <= drawLeft + drawWidth) {
+        ctx.beginPath();
+        ctx.moveTo(loopStartX, drawTop);
+        ctx.lineTo(loopStartX, drawTop + drawHeight);
+        ctx.stroke();
+      }
+      if (loopEndX >= drawLeft && loopEndX <= drawLeft + drawWidth) {
+        ctx.beginPath();
+        ctx.moveTo(loopEndX, drawTop);
+        ctx.lineTo(loopEndX, drawTop + drawHeight);
+        ctx.stroke();
+      }
+    }
+
+    // Draw the viewport rectangle (always clamped, no wrapping)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.26)';
     const viewportCornerRadius = 6;
 
     if (vpWidth >= drawWidth) {
       // Viewport is as wide as the full minimap
       fillRoundedRect(drawLeft, drawTop, drawWidth, drawHeight, viewportCornerRadius);
-    } else if (!loopEnabled) {
-      // One-shot mode: never wrap. Clamp rect to the minimap bounds.
+    } else {
+      // Clamp rect to the minimap bounds
       const clampedLeftPx = Math.max(drawLeft, Math.min(drawLeft + drawWidth, vpLeftX));
       const clampedRightPx = Math.max(drawLeft, Math.min(drawLeft + drawWidth, vpRightX));
       const w = Math.max(0, clampedRightPx - clampedLeftPx);
       fillRoundedRect(clampedLeftPx, drawTop, w, drawHeight, viewportCornerRadius);
-    } else if (vpLeftX >= drawLeft && vpRightX <= drawLeft + drawWidth) {
-      // Viewport fits entirely within the minimap — no wrapping
-      fillRoundedRect(vpLeftX, drawTop, vpWidth, drawHeight, viewportCornerRadius);
-    } else {
-      // Viewport wraps around the edges — draw two rectangles
-      if (vpLeftX < drawLeft) {
-        // Left portion wraps to the right side
-        const leftPartWidth = drawLeft - vpLeftX;
-        const rightPartWidth = vpWidth - leftPartWidth;
-        // Right portion (start of viewport)
-        fillRoundedRect(drawLeft + drawWidth - leftPartWidth, drawTop, leftPartWidth, drawHeight, viewportCornerRadius);
-        // Left portion (main)
-        fillRoundedRect(drawLeft, drawTop, rightPartWidth, drawHeight, viewportCornerRadius);
-      } else {
-        // Right portion wraps to the left side
-        const rightOverflow = vpRightX - (drawLeft + drawWidth);
-        const mainWidth = vpWidth - rightOverflow;
-        // Main portion
-        fillRoundedRect(vpLeftX, drawTop, mainWidth, drawHeight, viewportCornerRadius);
-        // Wrapped portion
-        fillRoundedRect(drawLeft, drawTop, rightOverflow, drawHeight, viewportCornerRadius);
-      }
     }
 
     // ── Draw playhead position marker ──
@@ -322,7 +326,7 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     ctx.lineTo(playheadX, drawTop + drawHeight);
     ctx.stroke();
 
-  }, [arrangement, voiceStates, followMode.pxPerT, followMode.minPxPerT, followMode.viewportWidthPx, followMode.pendingWorldT, loopEnabled, getPitchBounds]);
+  }, [arrangement, voiceStates, followMode.pxPerT, followMode.minPxPerT, followMode.viewportWidthPx, followMode.pendingWorldT, loopEnabled, loopStart, loopEnd, getPitchBounds]);
 
   // ── Animation loop ──
   useEffect(() => {
