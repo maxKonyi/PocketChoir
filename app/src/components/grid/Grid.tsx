@@ -10,6 +10,7 @@
    ============================================================ */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Arrangement, Voice, PitchPoint, Chord } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
@@ -26,6 +27,20 @@ import {
   dragPixelsToTimeDelta,
   resolveToCanonical,
 } from '../../utils/followCamera';
+import {
+  type SmartCamState,
+  isStaticState,
+  evaluateSmartCamState,
+  stepSmartCam,
+  snapIfPlayheadOffscreen,
+  LOOP_ZOOM_PADDING,
+} from '../../utils/smartCam';
+import {
+  getCameraCenterWorldT,
+  setCameraCenterWorldT,
+  isFreeLook,
+  setFreeLook,
+} from '../../utils/cameraState';
 
 /* ------------------------------------------------------------
    Types
@@ -380,6 +395,12 @@ export function Grid({
   const [isHoveringLoopHandle, setIsHoveringLoopHandle] = useState(false);
   const isHoveringLoopHandleRef = useRef(false);
 
+  // True when the smart cam is in a "static" state (camera not following playhead).
+  // Used to show the "Jump to Playhead" button in the UI.
+  const [smartCamIsStatic, setSmartCamIsStatic] = useState(false);
+  // Ref mirror so the RAF loop can check the value without causing re-renders.
+  const smartCamIsStaticRef = useRef(false);
+
   // Get arrangement from store to ensure we always have latest (for create mode updates)
   const arrangementFromStore = useAppStore((state) => state.arrangement);
   const arrangement = arrangementFromStore || arrangementProp;
@@ -480,18 +501,45 @@ export function Grid({
   const startTimelineDrag = useAppStore((state) => state.startTimelineDrag);
   const updatePendingWorldT = useAppStore((state) => state.updatePendingWorldT);
   const commitTimelineDrag = useAppStore((state) => state.commitTimelineDrag);
-
   // Create-mode view state and actions
   const createView = useAppStore((state) => state.createView);
   const setCreateCameraWorldT = useAppStore((state) => state.setCreateCameraWorldT);
   const adjustCreatePitchPanSemitones = useAppStore((state) => state.adjustCreatePitchPanSemitones);
+  const adjustPlayPitchPanSemitones = useAppStore((state) => state.adjustPlayPitchPanSemitones);
+  const setCameraMode = useAppStore((state) => state.setCameraMode);
   const resetCreateView = useAppStore((state) => state.resetCreateView);
 
-  // Ref to track drag start position for scrub gestures
-  const dragStartRef = useRef<{ startX: number; startWorldT: number } | null>(null);
+  // ── Smart Cam state ──
+  // The smart-cam state ref is updated every animation frame.
+  // Camera center position lives in the cameraState module (single source of truth).
+  // null means "no previous state" — forces a fresh evaluation with no
+  // follow/static persistence.  Set to null by external triggers like loop toggle.
+  const smartCamStateRef = useRef<SmartCamState | null>('FOLLOW_CENTER');
 
-  // Ref to track right-click panning in Create mode
-  const rightDragRef = useRef<{ startX: number; startWorldT: number } | null>(null);
+  // Ref to track drag start position for seek gestures (Alt+left-drag, seek-on-release)
+  const seekDragRef = useRef<{ startX: number; startWorldT: number } | null>(null);
+
+  // Ref to track right-click horizontal pan drag.
+  // Used in BOTH Create and Play modes — right-drag always pans the camera horizontally.
+  // Vertical pitch panning is handled by scroll wheel instead.
+  const panDragRef = useRef<{
+    startX: number;
+    startCameraWorldT: number;
+  } | null>(null);
+
+  // React state mirror for freeLook so the Jump-to-Playhead button re-renders.
+  // The authoritative value is in cameraState module (isFreeLook()), but React
+  // needs a state variable to know when to show/hide the button.
+  const [freeLookReact, setFreeLookReact] = useState(false);
+
+  // The Recenter button should not be affected by the grid's fade masks.
+  // App.tsx provides a sibling overlay root outside the masked layers.
+  const [gridOverlayRoot, setGridOverlayRoot] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    setGridOverlayRoot(document.getElementById('grid-overlay-root'));
+  }, []);
 
   // Ref to track loop handle dragging ('start' or 'end' boundary, or null if not dragging)
   const loopHandleDragRef = useRef<'start' | 'end' | null>(null);
@@ -517,25 +565,178 @@ export function Grid({
     setCreateCameraWorldT(playbackEngine.getWorldPositionT16());
   }, [mode, isPlaying, setCreateCameraWorldT]);
 
-  // If the mouse is released outside the canvas, we still need to stop the right-click pan.
+  // If the mouse is released outside the canvas, stop any active pan drag.
   // Without this, the grid can get "stuck" in panning mode.
+  // This covers BOTH Create and Play mode since right-drag pan is now universal.
   useEffect(() => {
-    if (mode !== 'create') return;
-
-    const stopRightPan = () => {
-      if (rightDragRef.current) {
-        rightDragRef.current = null;
+    const stopPanDrag = () => {
+      if (panDragRef.current) {
+        panDragRef.current = null;
       }
     };
 
-    window.addEventListener('mouseup', stopRightPan);
-    window.addEventListener('blur', stopRightPan);
+    window.addEventListener('mouseup', stopPanDrag);
+    window.addEventListener('blur', stopPanDrag);
 
     return () => {
-      window.removeEventListener('mouseup', stopRightPan);
-      window.removeEventListener('blur', stopRightPan);
+      window.removeEventListener('mouseup', stopPanDrag);
+      window.removeEventListener('blur', stopPanDrag);
     };
-  }, [mode]);
+  }, []);
+
+  // When playback STARTS in Play mode, decide camera behavior based on
+  // the camera mode:
+  //
+  //   Follow mode  → always snap camera to playhead.
+  //   Static mode  → do nothing (camera stays where it is).
+  //   Smart mode   → clear free-look, snap to playhead, resume follow.
+  //                  Exception: if looping is active (STATIC_LOOP), stay static.
+  //
+  // When playback STOPS, keep the camera where it is (don't snap).
+  useEffect(() => {
+    if (mode !== 'play') return;
+    if (!isPlaying) return; // stop pressed — camera stays put
+
+    const cameraMode = useAppStore.getState().followMode.cameraMode;
+
+    if (cameraMode === 'follow') {
+      // Follow mode: always snap camera to playhead.
+      const worldT = playbackEngine.getWorldPositionT16();
+      setCameraCenterWorldT(worldT);
+      setFreeLook(false);
+      setFreeLookReact(false);
+      smartCamStateRef.current = 'FOLLOW_CENTER';
+      smartCamIsStaticRef.current = false;
+      setSmartCamIsStatic(false);
+      return;
+    }
+
+    if (cameraMode === 'static') {
+      // Static mode: camera stays where it is, nothing to do.
+      return;
+    }
+
+    // ── Smart mode ──
+    // If loop is active, stay in STATIC_LOOP (already zoomed to fit).
+    if (useAppStore.getState().playback.loopEnabled) {
+      return;
+    }
+
+    // Otherwise: clear free-look and snap to playhead for strict follow.
+    const worldT = playbackEngine.getWorldPositionT16();
+    setCameraCenterWorldT(worldT);
+    setFreeLook(false);
+    setFreeLookReact(false);
+    smartCamStateRef.current = 'FOLLOW_CENTER';
+    smartCamIsStaticRef.current = false;
+    setSmartCamIsStatic(false);
+  }, [mode, isPlaying]);
+
+  // When the loop is toggled ON in Smart mode, auto-zoom the viewport to
+  // fit the entire loop with padding, and center the camera on the loop.
+  // When toggled OFF, clear free-look and snap back to follow behaviour.
+  useEffect(() => {
+    if (mode !== 'play') return;
+    const cameraMode = useAppStore.getState().followMode.cameraMode;
+
+    if (loopEnabled && cameraMode === 'smart') {
+      // Auto-zoom to fit the loop in the viewport.
+      const curPb = useAppStore.getState().playback;
+      // Seek the playhead to the loop start.
+      // - If we were playing already, playback continues from the loop start.
+      // - If we were paused, we remain paused but the playhead moves.
+      playbackEngine.seekWorld(curPb.loopStart);
+      setPosition(curPb.loopStart);
+      // Keep visual playhead in sync immediately (prevents a one-frame mismatch).
+      visualWorldTRef.current = curPb.loopStart;
+
+      const loopDuration = curPb.loopEnd - curPb.loopStart;
+      if (loopDuration > 0) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        const gridW = rect
+          ? rect.width - GRID_MARGIN.left - GRID_MARGIN.right
+          : useAppStore.getState().followMode.viewportWidthPx;
+
+        if (gridW > 0) {
+          // Calculate pxPerT so the loop fills the viewport with padding.
+          const paddedDuration = loopDuration * (1 + 2 * LOOP_ZOOM_PADDING);
+          const targetPxPerT = gridW / paddedDuration;
+          setPxPerT(targetPxPerT);
+
+          // Center camera on the loop.
+          const loopCenter = (curPb.loopStart + curPb.loopEnd) / 2;
+          setCameraCenterWorldT(loopCenter);
+        }
+      }
+      // Clear free-look so evaluator returns STATIC_LOOP.
+      setFreeLook(false);
+      setFreeLookReact(false);
+      smartCamStateRef.current = 'STATIC_LOOP';
+      smartCamIsStaticRef.current = true;
+      setSmartCamIsStatic(true);
+    } else {
+      // Loop disabled (or not in smart mode): clear free-look and let the
+      // evaluator return to FOLLOW_CENTER on the next frame.
+      setFreeLook(false);
+      setFreeLookReact(false);
+      // Snap camera back to playhead so follow is immediate.
+      if (cameraMode === 'smart') {
+        const worldT = playbackEngine.getWorldPositionT16();
+        setCameraCenterWorldT(worldT);
+        smartCamStateRef.current = 'FOLLOW_CENTER';
+        smartCamIsStaticRef.current = false;
+        setSmartCamIsStatic(false);
+      }
+    }
+  }, [mode, loopEnabled]);
+
+  // When the user toggles the camera mode via the transport bar, apply
+  // side effects so the mode change takes effect visually:
+  //   Follow → clear free-look, snap camera to playhead.
+  //   Smart  → clear free-look so the evaluator runs a fresh check.
+  //   Static → no special action (evaluator returns FREE_LOOK automatically).
+  useEffect(() => {
+    if (mode !== 'play') return;
+    const cameraMode = followMode.cameraMode;
+
+    if (cameraMode === 'follow') {
+      // Snap camera to playhead immediately.
+      const worldT = playbackEngine.getWorldPositionT16();
+      setCameraCenterWorldT(worldT);
+      setFreeLook(false);
+      setFreeLookReact(false);
+      smartCamStateRef.current = 'FOLLOW_CENTER';
+      smartCamIsStaticRef.current = false;
+      setSmartCamIsStatic(false);
+    } else if (cameraMode === 'smart') {
+      // Clear free-look so the evaluator can freshly determine the state
+      // (e.g., STATIC_LOOP if loop is visible, or follow otherwise).
+      setFreeLook(false);
+      setFreeLookReact(false);
+    }
+    // Static mode: evaluator will return FREE_LOOK on the next frame.
+  }, [mode, followMode.cameraMode]);
+
+  // When the restart button is pressed, reset camera to follow mode.
+  // The restart button increments cameraFollowResetCount in the store;
+  // this effect watches it and snaps the camera to the playhead (now at 0).
+  useEffect(() => {
+    if (mode !== 'play') return;
+    // Skip the initial mount (count = 0).
+    if (followMode.cameraFollowResetCount === 0) return;
+
+    const cameraMode = useAppStore.getState().followMode.cameraMode;
+    // Only reset in smart mode (follow always follows; static stays put).
+    if (cameraMode !== 'smart') return;
+
+    const worldT = playbackEngine.getWorldPositionT16();
+    setCameraCenterWorldT(worldT);
+    setFreeLook(false);
+    setFreeLookReact(false);
+    smartCamStateRef.current = 'FOLLOW_CENTER';
+    smartCamIsStaticRef.current = false;
+    setSmartCamIsStatic(false);
+  }, [mode, followMode.cameraFollowResetCount]);
 
   // While scrubbing in Play mode (right-click drag), prevent the browser context menu.
   // If the mouse-up happens outside the canvas, the browser may try to open the menu anyway.
@@ -954,8 +1155,10 @@ export function Grid({
     const zoomedRange = anchor.paddedRangeSemitones / zoomFactor;
 
     // Calculate final min/max centered on the arrangement anchor.
-    // Pitch panning should apply in BOTH Create and Play modes (middle-mouse pan uses this).
-    const pitchPan = createView.pitchPanSemitones;
+    // Pitch panning applies in BOTH modes but reads from separate stores.
+    const pitchPan = mode === 'create'
+      ? createView.pitchPanSemitones
+      : followMode.pitchPanSemitones;
     const finalMin = Math.floor(anchor.centerSemitone - zoomedRange / 2 + pitchPan);
     const finalMax = Math.ceil(anchor.centerSemitone + zoomedRange / 2 + pitchPan);
 
@@ -971,7 +1174,7 @@ export function Grid({
     const maxFreq = midiToFrequency(effectiveTonicMidi + finalMax);
 
     return { minSemitone: finalMin, maxSemitone: finalMax, minFreq, maxFreq, effectiveTonicMidi };
-  }, [arrangement, display.zoomLevel, pitchRangeAnchor, computePitchRangeAnchor, transposition, mode, createView.pitchPanSemitones]);
+  }, [arrangement, display.zoomLevel, pitchRangeAnchor, computePitchRangeAnchor, transposition, mode, createView.pitchPanSemitones, followMode.pitchPanSemitones]);
 
   /**
    * Given a mouse event, compute the nearest legal grid point for Create mode.
@@ -1111,19 +1314,35 @@ export function Grid({
     // Horizontal zoom: pixels per 16th note
     const pxPerT = followMode.pxPerT;
 
-    // World time at the playhead (viewport center):
-    // - Play mode follows playback (or pending drag)
-    // - Create mode uses the independent camera position
-    // We prefer a smoothed visual world time while playing to avoid uneven stepping
-    // from the engine's audio-clock-derived world time.
+    // ── Camera center ("worldT") and playhead position ──
+    //
+    // In Create mode the camera is independent (user pans with right-click).
+    // In Play mode the Smart Cam decides the camera center each frame
+    // and stores it in the cameraState module.  The playhead may NOT be at
+    // the viewport center (static states let it drift).
+    //
+    // We track both:
+    //   worldT       – camera center (determines what the viewport shows)
+    //   playheadWorldT – actual transport position (for drawing the playhead line)
     const engineWorldT = playbackEngine.getWorldPositionT16();
     const visualWorldT = visualWorldTRef.current ?? engineWorldT;
 
-    const worldT = mode === 'create'
+    // Playhead position (always the transport position, used for the playhead line)
+    const playheadWorldT = mode === 'create'
       ? (isPlaying ? visualWorldT : createView.cameraWorldT)
       : (followMode.pendingWorldT !== null
         ? followMode.pendingWorldT
         : visualWorldT);
+
+    // Camera center — single source of truth from cameraState module.
+    // In Play mode, both the main grid AND the chord overlay read from
+    // getCameraCenterWorldT(), so they are always perfectly synchronized.
+    // During a pending seek drag, override with the drag position.
+    const worldT = mode === 'create'
+      ? (isPlaying ? visualWorldT : createView.cameraWorldT)
+      : (followMode.pendingWorldT !== null
+        ? followMode.pendingWorldT
+        : getCameraCenterWorldT());
 
     // Camera left edge in world time (may be negative near the start).
     const camLeft = cameraLeftWorldT(worldT, gridWidth, pxPerT);
@@ -1450,16 +1669,17 @@ export function Grid({
         const voice = voiceIndex >= 0 ? arrangement.voices[voiceIndex] : null;
         const traceColor = voice?.color || cssColors.voiceFallback[voiceIndex] || '#ffffff';
 
-        // The playhead is always at the horizontal center of the grid area.
-        // We pin the glow "tip" of the live pitch trace to this X while recording,
-        // so it always visually matches the playhead even if pitch callbacks arrive late.
-        const playheadXUnsnapped = gridLeft + gridWidth / 2;
+        // Compute the playhead screen X from the actual transport position.
+        // In follow states the playhead is near viewport center; in static
+        // states it can drift to either side.
+        const playheadXUnsnapped = gridLeft + worldTToScreenX(playheadWorldT, camLeftSnapped, pxPerT);
         const playheadX = Math.round(playheadXUnsnapped * dpr) / dpr;
 
         // Identify which tile the playhead is currently in, so we only draw ONE head flare.
         // (The trace itself still renders on every tile so looping looks continuous.)
+        // Use playheadWorldT (transport position), NOT worldT (camera center).
         const playheadTile = loopLengthT > 0
-          ? Math.floor(Math.max(0, worldT) / loopLengthT)
+          ? Math.floor(Math.max(0, playheadWorldT) / loopLengthT)
           : 0;
 
         // Draw the same live trace for each visible tile.
@@ -1538,8 +1758,9 @@ export function Grid({
       }
 
       // Draw playhead above contour lines but below nodes.
-      // The playhead is always at the horizontal center of the grid area.
-      const playheadXUnsnapped = gridLeft + gridWidth / 2;
+      // In follow states the playhead is near viewport center;
+      // in static states it can be anywhere on screen.
+      const playheadXUnsnapped = gridLeft + worldTToScreenX(playheadWorldT, camLeftSnapped, pxPerT);
       const playheadX = Math.round(playheadXUnsnapped * dpr) / dpr;
 
       ctx.strokeStyle = playheadColor;
@@ -2202,6 +2423,94 @@ export function Grid({
         lastFlashTriggerWorldT16Ref.current = null;
       }
 
+      // ── Smart Cam: compute camera center for this frame ──
+      // In Play mode while playing, the smart cam decides whether the camera
+      // follows the playhead (follow states) or stays put (static states).
+      // In Create mode or when paused, we fall back to existing behavior.
+      const curState = useAppStore.getState();
+      const curMode = curState.mode;
+      const curPb = curState.playback;
+      const curArr = curState.arrangement;
+      const curFm = curState.followMode;
+
+      if (curMode === 'play' && curPb.isPlaying && curArr && !playbackEngine.getIsCountingIn() && !onlyChords) {
+        const playheadWorldT = visualWorldTRef.current ?? playbackEngine.getWorldPositionT16();
+        const rect = containerRef.current?.getBoundingClientRect();
+        const gridW = rect
+          ? rect.width - GRID_MARGIN.left - GRID_MARGIN.right
+          : curFm.viewportWidthPx;
+
+        // Run one smart-cam step using the simplified interface.
+        const prevCamera = getCameraCenterWorldT();
+        const result = stepSmartCam(prevCamera, {
+          cameraMode: curFm.cameraMode,
+          freeLook: isFreeLook(),
+          loopEnabled: curPb.loopEnabled,
+          cameraCenterWorldT: prevCamera,
+          playheadWorldT,
+        });
+
+        // Apply off-screen playhead snap (follow states only).
+        const snapped = snapIfPlayheadOffscreen(
+          result.state,
+          result.cameraCenterWorldT,
+          playheadWorldT,
+          gridW,
+          curFm.pxPerT,
+        );
+
+        smartCamStateRef.current = result.state;
+        // Write to the single source of truth (module-level state).
+        // Both main grid and chord overlay read from here — no throttling needed.
+        setCameraCenterWorldT(snapped);
+
+        // Update the React state that drives the "Jump to Playhead" button.
+        // Only trigger a React re-render when the static/follow status actually changes.
+        const nowStatic = isStaticState(result.state);
+        if (nowStatic !== smartCamIsStaticRef.current) {
+          smartCamIsStaticRef.current = nowStatic;
+          setSmartCamIsStatic(nowStatic);
+        }
+
+        // If we re-enter a follow state, free-look is no longer needed.
+        // (This prevents the Jump-to-Playhead pill from lingering.)
+        if (!nowStatic && isFreeLook()) {
+          setFreeLook(false);
+          setFreeLookReact(false);
+        }
+      } else if (curMode === 'play' && curPb.isPlaying && playbackEngine.getIsCountingIn() && !onlyChords) {
+        // During count-in we don't run the smart cam step, but we also don't
+        // want the "Jump to Playhead" pill to linger from a previous static state.
+        if (smartCamIsStaticRef.current) {
+          smartCamIsStaticRef.current = false;
+          setSmartCamIsStatic(false);
+        }
+      } else if (curMode === 'play' && !curPb.isPlaying && curArr && !onlyChords) {
+        // Paused in Play mode: keep the camera wherever it currently is.
+        // We still evaluate the smart cam state so the Jump-to-Playhead pill
+        // appears/disappears correctly.
+        const playheadWorldT = playbackEngine.getWorldPositionT16();
+
+        const state = evaluateSmartCamState({
+          cameraMode: curFm.cameraMode,
+          freeLook: isFreeLook(),
+          loopEnabled: curPb.loopEnabled,
+          cameraCenterWorldT: getCameraCenterWorldT(),
+          playheadWorldT,
+        });
+
+        // Keep smartCamStateRef in sync even while paused so the play-start
+        // effect reads the correct state (e.g., if loop was toggled while paused).
+        smartCamStateRef.current = state;
+
+        const nowStatic = isStaticState(state);
+        if (nowStatic !== smartCamIsStaticRef.current) {
+          smartCamIsStaticRef.current = nowStatic;
+          setSmartCamIsStatic(nowStatic);
+        }
+      }
+      // (Create mode is handled separately inside draw() — unchanged.)
+
       drawRef.current();
 
       animationId = requestAnimationFrame(animate);
@@ -2434,13 +2743,15 @@ export function Grid({
         const gridLeftPx = GRID_MARGIN.left;
         const gridWidthPx = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
 
-        // Compute screen X of the two loop boundaries
+        // Compute screen X of the two loop boundaries.
+        // In Play mode, use the smart-cam camera center (not the playhead)
+        // so hit-testing is correct when the camera is in a static state.
         const pxPerTVal = followMode.pxPerT;
         const currentWorldT = mode === 'create'
           ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
           : (followMode.pendingWorldT !== null
             ? followMode.pendingWorldT
-            : playbackEngine.getWorldPositionT16());
+            : getCameraCenterWorldT());
         const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
         const loopStartX = gridLeftPx + worldTToScreenX(loopStartNow, camLeft, pxPerTVal);
         const loopEndX = gridLeftPx + worldTToScreenX(loopEndNow, camLeft, pxPerTVal);
@@ -2462,61 +2773,71 @@ return;
 }
 }
 
-    // ── Create mode: right-click drag pans the timeline (horizontal scroll) ──
-    // This keeps left-click free for node placement/editing.
-    if (mode === 'create' && e.button === 2) {
+    // ── Right-click drag = horizontal pan in BOTH modes ──
+    // Right-drag pans the camera along the timeline only.
+    // Vertical pitch panning is done via scroll wheel.
+    if (e.button === 2) {
       e.preventDefault();
-      const startWorldT = createView.cameraWorldT;
-      rightDragRef.current = { startX: e.clientX, startWorldT };
+      const camWorldT = mode === 'create'
+        ? createView.cameraWorldT
+        : getCameraCenterWorldT();
+
+      panDragRef.current = {
+        startX: e.clientX,
+        startCameraWorldT: camWorldT,
+      };
+
+      // In Play mode, panning makes the camera static.
+      // - Follow mode: permanently switch to Static (user must manually switch back).
+      // - Smart mode: enter FREE_LOOK (recoverable on play restart).
+      if (mode === 'play') {
+        const curCameraMode = useAppStore.getState().followMode.cameraMode;
+        if (curCameraMode === 'follow') {
+          setCameraMode('static');
+        } else {
+          setFreeLook(true);
+          setFreeLookReact(true);
+        }
+      }
       return;
     }
 
-    // ── Play mode: contour click-to-focus, or timeline scrub/drag ──
-    if (mode === 'play') {
-      // Prevent the browser context menu / drag behaviors while we use right-click for scrubbing.
-      if (e.button === 2) {
-        e.preventDefault();
-      }
+    // ── Alt + left-click = seek/scrub (both modes) ──
+    // Starts a drag that seeks the playhead on release.
+    if (e.button === 0 && e.altKey) {
+      e.preventDefault();
+      const currentWorldT = playbackEngine.getWorldPositionT16();
+      seekDragRef.current = { startX: e.clientX, startWorldT: currentWorldT };
+      startTimelineDrag();
+      updatePendingWorldT(currentWorldT);
+      return;
+    }
 
-      // Left-click: check if we clicked on a contour line (for focus toggling).
-      // Right-click skips this and goes straight to timeline drag.
+    // ── Play mode: left-click on contour = focus toggle, else nothing ──
+    if (mode === 'play') {
       if (e.button === 0) {
         const rect = containerRef.current?.getBoundingClientRect();
         if (rect) {
           const mouseX = e.clientX - rect.left;
           const mouseY = e.clientY - rect.top;
-          const gridLeft = GRID_MARGIN.left;
-          const gridTop = GRID_MARGIN.top;
-          const gridWidth = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
-          const gridHeight = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+          const gridLeftVal = GRID_MARGIN.left;
+          const gridTopVal = GRID_MARGIN.top;
+          const gridWidthVal = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+          const gridHeightVal = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
           const { minSemitone, maxSemitone } = getPitchRange();
 
           const hitVoiceId = getContourHitAtMouse(
-            mouseX, mouseY, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone
+            mouseX, mouseY, gridLeftVal, gridTopVal, gridWidthVal, gridHeightVal, minSemitone, maxSemitone
           );
 
           if (hitVoiceId) {
-            // Clicked on a contour line — toggle focus for that voice
             toggleFocus(hitVoiceId);
             return;
           } else {
-            // Clicked on empty space — clear all focus
             clearAllFocus();
           }
         }
-        // IMPORTANT:
-        // In Play mode we do NOT start timeline dragging on left-click.
-        // Left-click is reserved for selection/focus so loop handles are easy to grab.
-        return;
       }
-
-      // Right-click: timeline scrub/drag
-      if (e.button !== 2) return;
-
-      const currentWorldT = playbackEngine.getWorldPositionT16();
-      dragStartRef.current = { startX: e.clientX, startWorldT: currentWorldT };
-      startTimelineDrag();
-      updatePendingWorldT(currentWorldT);
       return;
     }
 
@@ -2571,7 +2892,7 @@ return;
       placingNewNodeRef.current = null;
 
       // If a right-click pan was in progress, cancel it.
-      rightDragRef.current = null;
+      panDragRef.current = null;
       auditionRef.current = null;
       playbackEngine.previewSynthRelease(voiceId);
       return;
@@ -2651,11 +2972,13 @@ return;
         const gridWidthPx = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
         const pxPerTVal = followMode.pxPerT;
 
+        // In Play mode, the camera center may differ from the playhead
+        // (smart-cam static states), so read from the ref.
         const currentWorldT = mode === 'create'
           ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
           : (followMode.pendingWorldT !== null
             ? followMode.pendingWorldT
-            : playbackEngine.getWorldPositionT16());
+            : getCameraCenterWorldT());
 
         const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
         const loopStartX = gridLeftPx + worldTToScreenX(loopStartNow, camLeft, pxPerTVal);
@@ -2685,11 +3008,13 @@ return;
         const gridWidthPx = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
 
         const pxPerTVal = followMode.pxPerT;
+        // Use the smart-cam camera center in Play mode so the drag
+        // maps to the correct world time even in static camera states.
         const currentWorldT = mode === 'create'
           ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
           : (followMode.pendingWorldT !== null
             ? followMode.pendingWorldT
-            : playbackEngine.getWorldPositionT16());
+            : getCameraCenterWorldT());
         const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
 
         // Convert mouse X to time, then snap to nearest 16th note
@@ -2710,23 +3035,29 @@ return;
       return;
     }
 
-    // ── Create mode: continue right-click pan (horizontal scroll) ──
-    if (mode === 'create' && rightDragRef.current) {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) return;
+    // ── Right-click horizontal pan drag (both Create and Play modes) ──
+    if (panDragRef.current) {
+      const dx = e.clientX - panDragRef.current.startX;
 
-      const dx = e.clientX - rightDragRef.current.startX;
+      // Dragging left → camera moves forward in time (positive delta)
       const dT = dragPixelsToTimeDelta(dx, followMode.pxPerT);
-      setCreateCameraAndMaybeSeek(rightDragRef.current.startWorldT + dT);
+      const newCameraWorldT = Math.max(0, panDragRef.current.startCameraWorldT + dT);
+
+      if (mode === 'create') {
+        setCreateCameraAndMaybeSeek(newCameraWorldT);
+      } else {
+        // Play mode: write directly to the single source of truth
+        setCameraCenterWorldT(newCameraWorldT);
+      }
       return;
     }
 
-    // ── Play mode: update pending world time during a drag ──
-    if (mode === 'play' && followMode.isDraggingTimeline && dragStartRef.current) {
-      const dx = e.clientX - dragStartRef.current.startX;
+    // ── Seek drag (Alt+left-click, both modes) ──
+    if (followMode.isDraggingTimeline && seekDragRef.current) {
+      const dx = e.clientX - seekDragRef.current.startX;
       // Dragging left → time moves forward (positive delta)
       const dT = dragPixelsToTimeDelta(dx, followMode.pxPerT);
-      const newWorldT = Math.max(0, dragStartRef.current.startWorldT + dT);
+      const newWorldT = Math.max(0, seekDragRef.current.startWorldT + dT);
       updatePendingWorldT(newWorldT);
       return;
     }
@@ -2866,14 +3197,29 @@ return;
       return;
     }
 
+    // ── Play mode: end a static-state pan drag (no transport change) ──
+    if (panDragRef.current) {
+      panDragRef.current = null;
+      return;
+    }
+
     // ── Play mode: commit the timeline scrub (seek-on-release) ──
+    // After seeking, snap the camera to the new position and force
+    // FOLLOW_CENTER so there is no catchup animation — the playhead
+    // is immediately locked to camera center.
     if (followMode.isDraggingTimeline) {
       const pending = followMode.pendingWorldT;
       if (pending !== null) {
         playbackEngine.seekWorld(pending);
+        // Snap camera to the seeked position so FOLLOW_CENTER takes
+        // over cleanly with no drift or lerp.
+        setCameraCenterWorldT(pending);
+        smartCamStateRef.current = 'FOLLOW_CENTER';
+        smartCamIsStaticRef.current = false;
+        setSmartCamIsStatic(false);
       }
       commitTimelineDrag();
-      dragStartRef.current = null;
+      seekDragRef.current = null;
       return;
     }
 
@@ -3012,21 +3358,32 @@ return;
         return;
       }
 
-      // Alt (or trackpad horizontal scroll) pans time by seeking.
+      // Alt (or trackpad horizontal scroll) pans camera horizontally.
+      // This enters FREE_LOOK so the smart cam stops auto-following.
       const wantsHorizontalPan = e.altKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
       if (wantsHorizontalPan) {
         e.preventDefault();
-        const dT = dragPixelsToTimeDelta(e.deltaX, followMode.pxPerT);
-        const currentWorldT = followMode.pendingWorldT ?? playbackEngine.getWorldPositionT16();
-        const nextWorldT = Math.max(0, currentWorldT + dT);
-        playbackEngine.seekWorld(nextWorldT);
+        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        const dT = dragPixelsToTimeDelta(delta, followMode.pxPerT);
+        const currentCam = getCameraCenterWorldT();
+        setCameraCenterWorldT(Math.max(0, currentCam + dT));
+        // Panning makes the camera static.
+        // Follow mode → permanently switch to Static.
+        // Smart mode  → enter FREE_LOOK (recoverable on play restart).
+        const curCameraMode = useAppStore.getState().followMode.cameraMode;
+        if (curCameraMode === 'follow') {
+          setCameraMode('static');
+        } else {
+          setFreeLook(true);
+          setFreeLookReact(true);
+        }
         return;
       }
 
-      // Default: vertical pitch pan (same as Create mode).
+      // Default: vertical pitch pan (Play mode uses its own store).
       e.preventDefault();
       const semitonesPerWheel = 0.03;
-      adjustCreatePitchPanSemitones(e.deltaY * semitonesPerWheel);
+      adjustPlayPitchPanSemitones(e.deltaY * semitonesPerWheel);
       return;
     }
 
@@ -3065,7 +3422,7 @@ return;
     e.preventDefault();
     const semitonesPerWheel = 0.03;
     adjustCreatePitchPanSemitones(e.deltaY * semitonesPerWheel);
-  }, [arrangement, mode, setHorizontalZoom, followMode.pxPerT, setCreateCameraAndMaybeSeek, createView.cameraWorldT, adjustCreatePitchPanSemitones, display.zoomLevel, setZoomLevel]);
+  }, [arrangement, mode, setHorizontalZoom, followMode.pxPerT, setCreateCameraAndMaybeSeek, createView.cameraWorldT, adjustCreatePitchPanSemitones, adjustPlayPitchPanSemitones, display.zoomLevel, setZoomLevel]);
 
   // Keyboard navigation + hotkeys
   useEffect(() => {
@@ -3134,15 +3491,20 @@ return;
       }
 
       // Vertical pan with W/S (hold Shift for bigger steps)
+      // Gated by mode so Play-mode panning doesn't corrupt Create-mode state.
       if (e.key.toLowerCase() === 'w') {
         e.preventDefault();
-        adjustCreatePitchPanSemitones(1 * (e.shiftKey ? 4 : 1));
+        const delta = 1 * (e.shiftKey ? 4 : 1);
+        if (mode === 'create') adjustCreatePitchPanSemitones(delta);
+        else adjustPlayPitchPanSemitones(delta);
         return;
       }
 
       if (e.key.toLowerCase() === 's') {
         e.preventDefault();
-        adjustCreatePitchPanSemitones(-1 * (e.shiftKey ? 4 : 1));
+        const delta = -1 * (e.shiftKey ? 4 : 1);
+        if (mode === 'create') adjustCreatePitchPanSemitones(delta);
+        else adjustPlayPitchPanSemitones(delta);
         return;
       }
 
@@ -3169,7 +3531,7 @@ return;
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, arrangement, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId, clearAllFocus]);
+  }, [mode, arrangement, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, adjustPlayPitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId, clearAllFocus]);
 
   // Prevent the browser context menu when right-clicking the grid.
   // (Right-click is used for panning in Create mode.)
@@ -3177,11 +3539,91 @@ return;
     e.preventDefault();
   }, []);
 
+  /**
+   * Jump to Playhead: snap the camera to the playhead and return to
+   * smart-cam behavior.  The evaluator runs a fresh check (no prevState
+   * stickiness) so it naturally picks the right state:
+   *   - Loop enabled & visible → STATIC_LOOP
+   *   - Otherwise → FOLLOW_CENTER
+   *
+   * Also switches cameraMode to 'smart' if it was 'static' so auto-
+   * evaluation resumes.
+   */
+  const jumpToPlayhead = useCallback(() => {
+    const playheadWorldT = playbackEngine.getWorldPositionT16();
+    // Snap camera to the playhead position.
+    setCameraCenterWorldT(playheadWorldT);
+    // Clear free-look so the evaluator doesn't return FREE_LOOK.
+    setFreeLook(false);
+    setFreeLookReact(false);
+    // Switch to smart mode if currently in static (so auto-follow resumes).
+    // If already in smart or follow, this is harmless.
+    const curCameraMode = useAppStore.getState().followMode.cameraMode;
+    if (curCameraMode === 'static') {
+      setCameraMode('smart');
+    }
+    // Reset prevState so evaluator runs a fresh check with no stickiness.
+    // After snapping, camera center = playhead → evaluator will likely
+    // return FOLLOW_CENTER (or STATIC_LOOP if loop is visible).
+    smartCamStateRef.current = null;
+    smartCamIsStaticRef.current = false;
+    setSmartCamIsStatic(false);
+  }, [setCameraMode]);
+
   return (
     <div
       ref={containerRef}
+      data-grid-container
       className={`relative w-full h-full ${className}`}
     >
+      {/* ── Recenter button (Play mode, static cam states or user-panned) ── */}
+      {mode === 'play' && !onlyChords && (smartCamIsStatic || freeLookReact) && (
+        gridOverlayRoot
+          ? createPortal(
+              <button
+                type="button"
+                onClick={jumpToPlayhead}
+                className="absolute z-40 pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full
+                           bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
+                           shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
+                style={{
+                  bottom: 12,
+                  left: 'calc(50% + 15px)',
+                  transform: 'translateX(-50%)',
+                }}
+                title="Re-center camera on the playhead"
+              >
+                {/* Simple arrow-to-center icon using SVG */}
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M7 1v12M7 1L3 5M7 1l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Recenter
+              </button>,
+              gridOverlayRoot,
+            )
+          : (
+              <button
+                type="button"
+                onClick={jumpToPlayhead}
+                className="absolute z-40 pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full
+                           bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
+                           shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
+                style={{
+                  bottom: 12,
+                  left: 'calc(50% + 15px)',
+                  transform: 'translateX(-50%)',
+                }}
+                title="Re-center camera on the playhead"
+              >
+                {/* Simple arrow-to-center icon using SVG */}
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M7 1v12M7 1L3 5M7 1l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Recenter
+              </button>
+            )
+      )}
+
       {/*
         Chord Track Editor (Create mode)
 

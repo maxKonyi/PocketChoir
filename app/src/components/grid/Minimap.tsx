@@ -20,6 +20,7 @@ import {
   cameraLeftWorldT,
   minimapRectWidth,
 } from '../../utils/followCamera';
+import { getCameraCenterWorldT } from '../../utils/cameraState';
 
 /* ------------------------------------------------------------
    Types
@@ -237,10 +238,17 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     // The viewport rect must reflect exactly what content is visible in the
     // main grid.  When the playhead is near t=0 the camera's left edge is
     // negative (empty space), so we clamp to 0 and shrink the rect.
+    //
+    // In Play mode, the camera center may differ from the playhead (smart-cam
+    // static states or free-look), so we read from the cameraState module.
+    // In Create mode, we use the createView camera position.
     const pxPerT = followMode.pxPerT;
+    const mode = useAppStore.getState().mode;
     const currentWorldT = followMode.pendingWorldT !== null
       ? followMode.pendingWorldT
-      : playbackEngine.getWorldPositionT16();
+      : (mode === 'play'
+        ? getCameraCenterWorldT()
+        : useAppStore.getState().createView.cameraWorldT);
 
     // Use the real measured main-grid viewport width (stored by Grid.tsx).
     // Fallback: if it's not measured yet (0), approximate using the old minPxPerT method.
@@ -265,8 +273,11 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     const vpLeftX = drawLeft + (clampedLeftT / loopLengthT) * drawWidth;
     const vpRightX = vpLeftX + vpWidth;
 
-    // Playhead position in minimap-space (clamped, no wrapping)
-    const loopT = Math.max(0, Math.min(loopLengthT, currentWorldT));
+    // Playhead position in minimap-space (always the actual transport position,
+    // NOT the camera center — so the playhead marker moves even when the camera
+    // is static / in free-look).
+    const actualPlayheadWorldT = playbackEngine.getWorldPositionT16();
+    const loopT = Math.max(0, Math.min(loopLengthT, actualPlayheadWorldT));
 
     // ── Loop region overlay on the minimap ──
     // When the practice loop is enabled, shade the loop region and dim the rest.

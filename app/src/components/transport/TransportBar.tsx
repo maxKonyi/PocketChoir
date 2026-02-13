@@ -12,6 +12,7 @@ import { ChevronDown, ChevronUp, Maximize2, Pause, Play, Repeat, SkipBack, ZoomI
 import { useAppStore } from '../../stores/appStore';
 import { playbackEngine } from '../../services/PlaybackEngine';
 import { transposeTonic } from '../../utils/music';
+import type { CameraMode } from '../../utils/smartCam';
 
 /* ------------------------------------------------------------
    Helper: Format position as Bar:Beat
@@ -60,6 +61,8 @@ export function TransportBar() {
   const resetCreateView = useAppStore((state) => state.resetCreateView);
   const setTransposition = useAppStore((state) => state.setTransposition);
   const updateArrangementParams = useAppStore((state) => state.updateArrangementParams);
+  const cameraMode = useAppStore((state) => state.followMode.cameraMode);
+  const setCameraMode = useAppStore((state) => state.setCameraMode);
   // setPosition is unused here because we use playbackEngine.seek directly for interactions that need immediate engine response
   // const setPosition = useAppStore((state) => state.setPosition);
 
@@ -127,10 +130,13 @@ export function TransportBar() {
 
   /**
    * Reset to beginning.
+   * Also triggers a camera follow reset so the smart cam snaps back to
+   * the playhead instead of staying in free-look / static.
    */
   const handleRestart = () => {
-    // const wasPlaying = playback.isPlaying; // Unused, seek maintains state
     playbackEngine.seek(0);
+    // Signal Grid.tsx to reset camera to follow mode.
+    useAppStore.getState().triggerCameraFollowReset();
   };
 
   // Symmetrical Widths:
@@ -378,6 +384,29 @@ export function TransportBar() {
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="w-px h-6 bg-white/8" />
+
+          {/* Camera mode toggle: Smart / Follow / Static */}
+          <div className="flex items-center bg-white/5 rounded-full p-0.5 border border-white/8">
+            {(['smart', 'follow', 'static'] as CameraMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setCameraMode(m)}
+                className={`
+                  px-2 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider
+                  transition-all duration-150 cursor-pointer
+                  ${cameraMode === m
+                    ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/8'
+                  }
+                `}
+                title={`Camera: ${m.charAt(0).toUpperCase() + m.slice(1)}`}
+              >
+                {m === 'smart' ? 'Smart' : m === 'follow' ? 'Follow' : 'Static'}
+              </button>
+            ))}
+          </div>
+
           <div className="w-px h-6 bg-white/8" />
 
           {/* Zoom control group: horizontal pair | vertical pair | fit-to-view */}

@@ -23,6 +23,7 @@ import type {
 import type { ThemeName } from '../utils/colors';
 import { getArrangementFrequencyRange, noteNameToFrequency, suggestTranspositionToFitRange } from '../utils/music';
 import { DEFAULT_VOICE_COLORS } from '../utils/colors';
+import type { CameraMode } from '../utils/smartCam';
 
 /* ------------------------------------------------------------
    State Types
@@ -79,6 +80,9 @@ interface FollowModeState {
   pendingWorldT: number | null;    // During a drag/scrub, the pending seek position. null = not dragging.
   isDraggingTimeline: boolean;     // True while the user is dragging the main timeline view.
   isDraggingMinimap: boolean;      // True while the user is dragging inside the minimap.
+  cameraMode: CameraMode;         // User-selected camera behaviour: 'smart' | 'follow' | 'static'.
+  pitchPanSemitones: number;       // Play-mode vertical pan offset (semitones). Separate from Create mode's.
+  cameraFollowResetCount: number;  // Incremented when the restart button is pressed. Grid watches this to reset camera to follow.
 }
 
 /**
@@ -382,6 +386,7 @@ interface AppActions {
   setMinPxPerT: (minPxPerT: number) => void;
   setFollowViewportWidthPx: (viewportWidthPx: number) => void;
   setHorizontalZoom: (direction: 'in' | 'out') => void;
+  setCameraMode: (mode: CameraMode) => void;
   startTimelineDrag: () => void;
   updatePendingWorldT: (worldT: number) => void;
   commitTimelineDrag: () => void;
@@ -389,6 +394,13 @@ interface AppActions {
   startMinimapDrag: () => void;
   commitMinimapDrag: () => void;
   cancelMinimapDrag: () => void;
+
+  // Camera follow reset (used by restart button to signal Grid)
+  triggerCameraFollowReset: () => void;
+
+  // Play-mode vertical pan (separate from Create mode)
+  setPlayPitchPanSemitones: (semitones: number) => void;
+  adjustPlayPitchPanSemitones: (deltaSemitones: number) => void;
 
   // Create-mode navigation
   setCreateCameraWorldT: (worldT: number) => void;
@@ -484,6 +496,9 @@ const initialFollowModeState: FollowModeState = {
   pendingWorldT: null,
   isDraggingTimeline: false,
   isDraggingMinimap: false,
+  cameraMode: 'smart',              // Default camera mode: Smart (auto follow/static)
+  pitchPanSemitones: 0,             // Play-mode vertical pan offset (separate from Create mode)
+  cameraFollowResetCount: 0,        // Incremented by restart button so Grid resets camera to follow
 };
 
 const initialCreateViewState: CreateViewState = {
@@ -1643,6 +1658,25 @@ export const useAppStore = create<AppState & AppActions>()(
   }),
 
   /**
+   * Set the user-selected camera mode (smart / follow / static).
+   */
+  setCameraMode: (mode) => set((state) => ({
+    followMode: { ...state.followMode, cameraMode: mode },
+  })),
+
+  /**
+   * Increment the camera follow reset counter.
+   * The restart button calls this so Grid.tsx can watch the counter
+   * and reset the camera to follow mode.
+   */
+  triggerCameraFollowReset: () => set((state) => ({
+    followMode: {
+      ...state.followMode,
+      cameraFollowResetCount: state.followMode.cameraFollowResetCount + 1,
+    },
+  })),
+
+  /**
    * Begin a scrub/drag gesture on the main timeline.
    */
   startTimelineDrag: () => set((state) => ({
@@ -1711,6 +1745,19 @@ export const useAppStore = create<AppState & AppActions>()(
       pendingWorldT: null,
     },
   })),
+
+  // -- Play-mode vertical pan (separate from Create) --
+
+  setPlayPitchPanSemitones: (semitones) => set((state) => {
+    const clamped = Math.max(-72, Math.min(72, semitones));
+    return { followMode: { ...state.followMode, pitchPanSemitones: clamped } };
+  }),
+
+  adjustPlayPitchPanSemitones: (deltaSemitones) => set((state) => {
+    const next = state.followMode.pitchPanSemitones + deltaSemitones;
+    const clamped = Math.max(-72, Math.min(72, next));
+    return { followMode: { ...state.followMode, pitchPanSemitones: clamped } };
+  }),
 
   // -- Create-mode navigation --
 

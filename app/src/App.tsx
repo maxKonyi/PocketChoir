@@ -20,6 +20,7 @@ import { playbackEngine } from './services/PlaybackEngine';
 import { useRecording } from './hooks/useRecording';
 import { applyTheme } from './utils/colors';
 import { dragPixelsToTimeDelta } from './utils/followCamera';
+import { getCameraCenterWorldT, setCameraCenterWorldT, setFreeLook } from './utils/cameraState';
 import { sixPartStressTest } from './data/arrangements';
 
 function App() {
@@ -127,6 +128,7 @@ function App() {
         if (arrangement && !playbackEngine.getIsPlaying()) {
           playbackEngine.initialize(arrangement, {
             onPositionUpdate: onEnginePositionUpdate,
+            onAutoStop: () => setPlaying(false),
           });
         }
 
@@ -178,6 +180,7 @@ function App() {
     if (AudioService.isReady()) {
       playbackEngine.initialize(arrangement, {
         onPositionUpdate: onEnginePositionUpdate,
+        onAutoStop: () => setPlaying(false),
         onLoop: () => {
           // Intentionally empty — loop transitions are handled by the engine.
           // NOTE: Do NOT add console.log here. It fires every loop iteration
@@ -243,6 +246,7 @@ function App() {
         await AudioService.initialize();
         playbackEngine.initialize(arrangement, {
           onPositionUpdate: onEnginePositionUpdate,
+          onAutoStop: () => setPlaying(false),
           onCountIn: (beat, total) => {
             // Show count-in visual feedback
             setCountInDisplay(total - beat + 1);
@@ -457,13 +461,13 @@ function App() {
   }, [setPlaying, stopRecording]);
 
   // ── Global middle-mouse-button pan ──
-  // Holding middle-mouse (button 1) and dragging pans in both directions simultaneously.
-  // Horizontal panning moves the timeline; vertical panning shifts the pitch view.
+  // Holding middle-mouse (button 1) and dragging pans the camera in both
+  // directions simultaneously. In Play mode this enters FREE_LOOK (camera
+  // pans freely, playhead is unaffected). Vertical pitch pan is gated by
+  // mode so Play-mode panning doesn't corrupt Create-mode state.
   const setCreateCameraWorldT = useAppStore((state) => state.setCreateCameraWorldT);
   const adjustCreatePitchPanSemitones = useAppStore((state) => state.adjustCreatePitchPanSemitones);
-  const startTimelineDrag = useAppStore((state) => state.startTimelineDrag);
-  const updatePendingWorldT = useAppStore((state) => state.updatePendingWorldT);
-  const commitTimelineDrag = useAppStore((state) => state.commitTimelineDrag);
+  const adjustPlayPitchPanSemitones = useAppStore((state) => state.adjustPlayPitchPanSemitones);
 
   useEffect(() => {
     let middleDrag: {
@@ -471,7 +475,7 @@ function App() {
       startY: number;
       lastX: number;
       lastY: number;
-      startWorldT: number;
+      startCameraWorldT: number;
       modeAtStart: 'create' | 'play';
     } | null = null;
 
@@ -480,51 +484,63 @@ function App() {
       if (e.button !== 1) return;
       e.preventDefault();
       const modeAtStart = useAppStore.getState().mode;
-      const pendingWorldT = useAppStore.getState().followMode.pendingWorldT;
-      const startWorldT = modeAtStart === 'create'
+
+      // Read current camera center for the active mode
+      const startCameraWorldT = modeAtStart === 'create'
         ? useAppStore.getState().createView.cameraWorldT
-        : (pendingWorldT ?? playbackEngine.getWorldPositionT16());
+        : getCameraCenterWorldT();
 
       middleDrag = {
         startX: e.clientX,
         startY: e.clientY,
         lastX: e.clientX,
         lastY: e.clientY,
-        startWorldT,
+        startCameraWorldT,
         modeAtStart,
       };
 
-      // In Play mode, treat middle-drag as a scrub gesture (pending seek).
+      // In Play mode, panning makes the camera static.
+      // Follow mode → permanently switch to Static (user must switch back manually).
+      // Smart mode  → enter FREE_LOOK (recoverable on play restart).
       if (modeAtStart === 'play') {
-        startTimelineDrag();
-        updatePendingWorldT(startWorldT);
+        const curCameraMode = useAppStore.getState().followMode.cameraMode;
+        if (curCameraMode === 'follow') {
+          useAppStore.getState().setCameraMode('static');
+        } else {
+          setFreeLook(true);
+        }
       }
     };
 
     const onMouseMove = (e: MouseEvent) => {
       if (!middleDrag) return;
-      // Horizontal delta → time pan
+      // Horizontal delta → camera pan (both modes)
       const dx = e.clientX - middleDrag.lastX;
       if (dx !== 0) {
         const pxPerT = useAppStore.getState().followMode.pxPerT;
         const dT = dragPixelsToTimeDelta(dx, pxPerT);
 
         if (middleDrag.modeAtStart === 'create') {
-          // Dragging right moves camera left (earlier in time), like scrolling a map.
+          // Dragging right moves camera left (earlier in time).
           const currentCam = useAppStore.getState().createView.cameraWorldT;
           setCreateCameraWorldT(currentCam + dT);
         } else {
-          const newWorldT = Math.max(0, middleDrag.startWorldT + dragPixelsToTimeDelta(e.clientX - middleDrag.startX, pxPerT));
-          updatePendingWorldT(newWorldT);
+          // Play mode: pan the camera (not seek the playhead).
+          const currentCam = getCameraCenterWorldT();
+          setCameraCenterWorldT(Math.max(0, currentCam + dT));
         }
       }
 
-      // Vertical delta → pitch pan (Create + Play modes)
+      // Vertical delta → pitch pan, gated by mode
       const dy = e.clientY - middleDrag.lastY;
       if (dy !== 0) {
-        // Dragging up moves pitch view up (positive semitones).
         const semitonesPerPixel = 0.05;
-        adjustCreatePitchPanSemitones(dy * semitonesPerPixel);
+        if (middleDrag.modeAtStart === 'create') {
+          adjustCreatePitchPanSemitones(dy * semitonesPerPixel);
+        } else {
+          // Play mode: use the separate play-mode pitch pan
+          adjustPlayPitchPanSemitones(dy * semitonesPerPixel);
+        }
       }
 
       middleDrag.lastX = e.clientX;
@@ -533,13 +549,7 @@ function App() {
 
     const onMouseUp = (e: MouseEvent) => {
       if (e.button === 1) {
-        if (middleDrag?.modeAtStart === 'play') {
-          const pending = useAppStore.getState().followMode.pendingWorldT;
-          if (pending !== null) {
-            playbackEngine.seekWorld(pending);
-          }
-          commitTimelineDrag();
-        }
+        // Middle-drag now pans (no seek-on-release needed).
         middleDrag = null;
       }
     };
@@ -559,7 +569,7 @@ function App() {
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('auxclick', onAuxClick);
     };
-  }, [setCreateCameraWorldT, adjustCreatePitchPanSemitones, startTimelineDrag, updatePendingWorldT, commitTimelineDrag]);
+  }, [setCreateCameraWorldT, adjustCreatePitchPanSemitones, adjustPlayPitchPanSemitones]);
 
   useEffect(() => {
     const handleUndoRedo = (e: KeyboardEvent) => {
@@ -650,36 +660,53 @@ function App() {
       {/* Main grid visualization - background layer (masked lines/voices) */}
       {/* Extra top padding (pt-[7.5rem]) makes room for top bar + minimap above chord bar */}
       <div className={`absolute inset-0 ${showMinimap ? 'pt-[9rem]' : 'pt-[6rem]'} pb-20 pl-44 pr-8`}>
-        {/* Right-edge fade uses a real mask (not a color overlay) so it fades to transparency. */}
-        <div className="relative h-full w-full mask-right-fade">
-          <div className="relative h-full w-full mask-vertical-fade">
-            <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
+        {/*
+          This wrapper is the positioning context for any UI that must sit ABOVE the
+          grid fade masks (for example, the Recenter pill).
+        */}
+        <div className="relative h-full w-full">
+          {/* Right-edge fade uses a real mask (not a color overlay) so it fades to transparency. */}
+          <div className="relative h-full w-full mask-right-fade">
+            <div className="relative h-full w-full mask-vertical-fade">
+              <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
+            </div>
+
+            {/* Chord Track layer - floating on top, not vertically masked, but DOES right-fade */}
+            <div className="absolute inset-0 pointer-events-none">
+              <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} />
+            </div>
           </div>
 
-          {/* Chord Track layer - floating on top, not vertically masked, but DOES right-fade */}
-          <div className="absolute inset-0 pointer-events-none">
-            <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} />
-          </div>
+          {/*
+            Overlay root for UI that must NOT be affected by the grid masks.
+            - pointer-events-none so it does not block grid interaction.
+            - children (like buttons) should use pointer-events-auto.
+          */}
+          <div
+            id="grid-overlay-root"
+            data-grid-overlay-root
+            className="absolute inset-0 z-40 pointer-events-none"
+          />
+
+          {/* Chord Track disable button rendered ABOVE the right-edge fade mask. */}
+          {mode === 'create' && showChordTrack && arrangement?.chords && arrangement.chords.length > 0 && (
+            <button
+              type="button"
+              className="absolute pointer-events-auto w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-[var(--text-muted)] hover:text-red-300 hover:bg-red-500/10 hover:border-red-500/20 transition-colors"
+              style={{
+                right: '2.25rem',
+                top: showMinimap ? '9.25rem' : '6.25rem',
+              }}
+              title="Disable Chord Track"
+              onClick={(e) => {
+                e.stopPropagation();
+                disableChordTrack();
+              }}
+            >
+              🗑
+            </button>
+          )}
         </div>
-
-        {/* Chord Track disable button rendered ABOVE the right-edge fade mask. */}
-        {mode === 'create' && showChordTrack && arrangement?.chords && arrangement.chords.length > 0 && (
-          <button
-            type="button"
-            className="absolute pointer-events-auto w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-[var(--text-muted)] hover:text-red-300 hover:bg-red-500/10 hover:border-red-500/20 transition-colors"
-            style={{
-              right: '2.25rem',
-              top: showMinimap ? '9.25rem' : '6.25rem',
-            }}
-            title="Disable Chord Track"
-            onClick={(e) => {
-              e.stopPropagation();
-              disableChordTrack();
-            }}
-          >
-            🗑
-          </button>
-        )}
       </div>
 
       {/* UI Overlays - Floating panes */}

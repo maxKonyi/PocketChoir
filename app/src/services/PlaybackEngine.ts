@@ -60,6 +60,9 @@ interface PlaybackConfig {
   onCountIn?: (beat: number, total: number) => void;
   onStart?: () => void;
   onNodeEvent?: NodeEventCallback;
+  /** Called when the engine auto-stops (e.g. arrangement ended without looping).
+   *  Use this to sync the store's isPlaying state with the engine. */
+  onAutoStop?: () => void;
   metronomeEnabled?: boolean;
   // Positive values make recordings play earlier (skip initial input latency).
   recordingLagMs?: number;
@@ -1335,6 +1338,8 @@ export class PlaybackEngine {
         const oneShotEndMs = t16ToMs(this.arrangementEndT16 + oneBarT16, this.getEffectiveTempo(), this.timeSig);
         if (currentMs >= oneShotEndMs) {
           this.stop();
+          // Notify the UI so the store's isPlaying flag stays in sync.
+          this.config.onAutoStop?.();
           return;
         }
       }
