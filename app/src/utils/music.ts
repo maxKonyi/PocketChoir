@@ -34,6 +34,13 @@ const SEMITONE_TO_NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 
 export const CHROMATIC_LABELS = ['1', 'b2', '2', 'b3', '3', '4', '#4', '5', 'b6', '6', 'b7', '7'];
 
 /**
+ * Solfege syllables for chromatic scale degrees (key-agnostic, fixed-Do approach).
+ * Index 0 = tonic (Do), index 1 = minor 2nd (Ra), etc.
+ * Follows the same order as CHROMATIC_LABELS: 1-b2-2-b3-3-4-#4-5-b6-6-b7-7
+ */
+export const SOLFEGE_LABELS = ['Do', 'Ra', 'Re', 'Me', 'Mi', 'Fa', 'Fi', 'Sol', 'Le', 'La', 'Te', 'Ti'];
+
+/**
  * Get the chromatic label for a semitone offset from tonic.
  * @param semitoneOffset - Semitones above tonic (0-11, wraps for higher/lower octaves)
  * @returns Label like "1", "b3", "#4", etc.
@@ -42,6 +49,40 @@ export function semitoneToLabel(semitoneOffset: number): string {
   // Normalize to 0-11 range
   const normalized = ((semitoneOffset % 12) + 12) % 12;
   return CHROMATIC_LABELS[normalized];
+}
+
+/**
+ * Get the solfege syllable for a semitone offset from tonic.
+ * Key-agnostic: 0 = Do, 2 = Re, 4 = Mi, etc.
+ * @param semitoneOffset - Semitones above tonic (0-11, wraps for higher/lower octaves)
+ * @returns Solfege syllable like "Do", "Re", "Mi", etc.
+ */
+export function semitoneToSolfege(semitoneOffset: number): string {
+  const normalized = ((semitoneOffset % 12) + 12) % 12;
+  return SOLFEGE_LABELS[normalized];
+}
+
+/**
+ * Get the letter name for a semitone offset from tonic, accounting for transposition.
+ * 
+ * The semitone offset (0-11) follows the app convention:
+ *   0=1, 1=b2, 2=2, 3=b3, 4=3, 5=4, 6=#4, 7=5, 8=b6, 9=6, 10=b7, 11=7
+ * 
+ * Given a tonic (e.g. "C") and a transposition (semitones), this returns the
+ * actual sounding note letter name (e.g. "D", "F#", "Bb").
+ * 
+ * @param semitoneOffset - Semitones above tonic (wraps for higher/lower octaves)
+ * @param tonic - The arrangement's tonic note name (e.g. "C", "F#")
+ * @param transposition - Semitones of transposition applied to the arrangement (default 0)
+ * @returns Letter name like "C", "F#", "Bb", etc.
+ */
+export function semitoneToLetterName(semitoneOffset: number, tonic: string, transposition: number = 0): string {
+  const tonicSemitone = NOTE_TO_SEMITONE[tonic];
+  if (tonicSemitone === undefined) return '?';
+
+  // Absolute semitone = tonic + offset + transposition, wrapped to 0-11
+  const absoluteSemitone = ((tonicSemitone + semitoneOffset + transposition) % 12 + 12) % 12;
+  return SEMITONE_TO_NOTE[absoluteSemitone];
 }
 
 /**

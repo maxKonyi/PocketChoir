@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import type { Arrangement, Voice, PitchPoint, Chord } from '../../types';
 import { useAppStore } from '../../stores/appStore';
-import { degreeToSemitoneOffset, semitoneToLabel, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
+import { degreeToSemitoneOffset, semitoneToLabel, semitoneToSolfege, semitoneToLetterName, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 import { darkenColor } from '../../utils/colors';
 import { playbackEngine, type NodeEvent } from '../../services/PlaybackEngine';
@@ -786,21 +786,21 @@ export function Grid({
   // We cache all the colors here and only re-read when the theme or display settings change.
   const cssColors = useMemo(() => {
     return {
-      barLine:              getCssVar('--grid-line-bar')              || 'rgba(255, 255, 255, 0.15)',
-      beatLine:             getCssVar('--grid-line-beat')             || 'rgba(255, 255, 255, 0.08)',
-      subdivLine:           getCssVar('--grid-line-subdivision')      || 'rgba(255, 255, 255, 0.04)',
-      pitchLineTonic:       getCssVar('--grid-pitch-line-tonic')      || 'rgba(255, 255, 255, 0.35)',
-      pitchLine:            getCssVar('--grid-pitch-line')            || 'rgba(255, 255, 255, 0.05)',
-      playhead:             getCssVar('--playhead-color')             || '#ffffff',
-      text:                 getCssVar('--text-secondary')             || '#a8a3b8',
-      chordFillTop:         getCssVar('--chord-fill-top')             || '#5a4c80',
-      chordFillBottom:      getCssVar('--chord-fill-bottom')          || '#342656',
-      chordFillTensionTop:  getCssVar('--chord-fill-tension-top')     || '#8a2e47',
-      chordFillTensionBot:  getCssVar('--chord-fill-tension-bottom')  || '#4a1a28',
-      chordStroke:          getCssVar('--chord-stroke')               || 'rgba(255, 255, 255, 0.35)',
-      chordStrokeTension:   getCssVar('--chord-stroke-tension')       || 'rgba(255, 148, 180, 0.7)',
-      chordText:            getCssVar('--chord-text')                 || '#fefaff',
-      chordTextTension:     getCssVar('--chord-text-tension')         || '#ffe6ef',
+      barLine: getCssVar('--grid-line-bar') || 'rgba(255, 255, 255, 0.15)',
+      beatLine: getCssVar('--grid-line-beat') || 'rgba(255, 255, 255, 0.08)',
+      subdivLine: getCssVar('--grid-line-subdivision') || 'rgba(255, 255, 255, 0.04)',
+      pitchLineTonic: getCssVar('--grid-pitch-line-tonic') || 'rgba(255, 255, 255, 0.35)',
+      pitchLine: getCssVar('--grid-pitch-line') || 'rgba(255, 255, 255, 0.05)',
+      playhead: getCssVar('--playhead-color') || '#ffffff',
+      text: getCssVar('--text-secondary') || '#a8a3b8',
+      chordFillTop: getCssVar('--chord-fill-top') || '#5a4c80',
+      chordFillBottom: getCssVar('--chord-fill-bottom') || '#342656',
+      chordFillTensionTop: getCssVar('--chord-fill-tension-top') || '#8a2e47',
+      chordFillTensionBot: getCssVar('--chord-fill-tension-bottom') || '#4a1a28',
+      chordStroke: getCssVar('--chord-stroke') || 'rgba(255, 255, 255, 0.35)',
+      chordStrokeTension: getCssVar('--chord-stroke-tension') || 'rgba(255, 148, 180, 0.7)',
+      chordText: getCssVar('--chord-text') || '#fefaff',
+      chordTextTension: getCssVar('--chord-text-tension') || '#ffe6ef',
       // Pre-cache voice fallback colors (--voice-1 through --voice-8).
       // These are used when a voice object doesn't have its own `color` property.
       // Previously getCssVar was called inside draw() every frame (~60fps),
@@ -922,7 +922,7 @@ export function Grid({
     const voice = arrangement.voices.find((v) => v.id === voiceId);
     if (!voice) return null;
 
-    const hitRadius = 14;
+    const hitRadius = 14 * display.noteSize;
 
     // ── Compute camera to position nodes on screen ──
     const pxPerTVal = followMode.pxPerT;
@@ -935,7 +935,7 @@ export function Grid({
 
     // Check tile 0 only (no tiling)
     for (const node of voice.nodes) {
-      const r = node.term ? 9 : hitRadius;
+      const r = node.term ? 9 * display.noteSize : hitRadius;
 
       const nodeWorldT = node.t16;
       const x = gridLeft + worldTToScreenX(nodeWorldT, camLeft, pxPerTVal);
@@ -978,7 +978,7 @@ export function Grid({
     if (!arrangement) return null;
 
     // How close the mouse must be to the contour line (in CSS pixels)
-    const hitThreshold = 12;
+    const hitThreshold = 12 * display.lineThickness;
 
     const pxPerTVal = followMode.pxPerT;
     const currentWorldT = mode === 'create'
@@ -1713,7 +1713,7 @@ export function Grid({
       // Node sizes are shared across voices.
       // We draw *all* contour lines first, then draw *all* nodes afterwards.
       // This guarantees nodes always sit on top.
-      const nodeRadius = 12;
+      const nodeRadius = 12 * display.noteSize;
       const anchorRadius = nodeRadius * 0.5;
 
       // Pass A: Contour lines only (including glow) — for each visible tile
@@ -1734,7 +1734,8 @@ export function Grid({
 
           // Contour lines get thicker when the mouse hovers over them (play mode only).
           const isHoveredContour = hoveredContourVoiceIdRef.current === voice.id;
-          const contourLineWidth = isHoveredContour ? 5 : 3;
+          const baseContourWidth = 3 * display.lineThickness;
+          const contourLineWidth = isHoveredContour ? baseContourWidth * 1.67 : baseContourWidth;
 
           // Draw contour with glow effect
           ctx.save();
@@ -1885,12 +1886,41 @@ export function Grid({
 
             ctx.shadowBlur = 0;
 
-            // Scale degree number inside node
-            ctx.fillStyle = isSynthMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
-            ctx.font = 'bold 12px system-ui';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(node.semi !== undefined ? semitoneToLabel(node.semi) : String(node.deg ?? 0), x, y + 0.5);
+            // Note label inside node (controlled by showNoteLabels toggle)
+            if (display.showNoteLabels) {
+              const labelFontSize = Math.round(12 * display.noteSize);
+              ctx.fillStyle = isSynthMuted ? 'rgba(255, 255, 255, 0.5)' : '#ffffff';
+              ctx.font = `bold ${labelFontSize}px system-ui`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+
+              // Determine label text based on labelFormat setting
+              let labelText: string;
+              if (node.semi !== undefined) {
+                // Node stored as raw semitone offset
+                if (display.labelFormat === 'solfege') {
+                  labelText = semitoneToSolfege(node.semi);
+                } else if (display.labelFormat === 'noteName') {
+                  labelText = semitoneToLetterName(node.semi, arrangement.tonic || 'C', transposition);
+                } else {
+                  labelText = semitoneToLabel(node.semi);
+                }
+              } else {
+                // Node stored as scale degree
+                const deg = node.deg ?? 0;
+                if (display.labelFormat === 'solfege') {
+                  const semi = degreeToSemitoneOffset(deg, 0, arrangement.scale);
+                  labelText = semitoneToSolfege(semi);
+                } else if (display.labelFormat === 'noteName') {
+                  const semi = degreeToSemitoneOffset(deg, 0, arrangement.scale);
+                  labelText = semitoneToLetterName(semi, arrangement.tonic || 'C', transposition);
+                } else {
+                  labelText = String(deg);
+                }
+              }
+
+              ctx.fillText(labelText, x, y + 0.5);
+            }
           }
 
           // Create mode hover preview ("phantom" node) — only draw once (not per tile)
@@ -1918,11 +1948,36 @@ export function Grid({
               ctx.lineWidth = 1.5;
               ctx.stroke();
 
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-              ctx.font = 'bold 12px system-ui';
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.fillText(preview.semi !== undefined ? semitoneToLabel(preview.semi) : String(preview.deg), px, py + 0.5);
+              if (display.showNoteLabels) {
+                const labelFontSize = Math.round(12 * display.noteSize);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                ctx.font = `bold ${labelFontSize}px system-ui`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                let previewLabel: string;
+                if (preview.semi !== undefined) {
+                  if (display.labelFormat === 'solfege') {
+                    previewLabel = semitoneToSolfege(preview.semi);
+                  } else if (display.labelFormat === 'noteName') {
+                    previewLabel = semitoneToLetterName(preview.semi, arrangement.tonic || 'C', transposition);
+                  } else {
+                    previewLabel = semitoneToLabel(preview.semi);
+                  }
+                } else {
+                  if (display.labelFormat === 'solfege') {
+                    const semi = degreeToSemitoneOffset(preview.deg, 0, arrangement.scale);
+                    previewLabel = semitoneToSolfege(semi);
+                  } else if (display.labelFormat === 'noteName') {
+                    const semi = degreeToSemitoneOffset(preview.deg, 0, arrangement.scale);
+                    previewLabel = semitoneToLetterName(semi, arrangement.tonic || 'C', transposition);
+                  } else {
+                    previewLabel = String(preview.deg);
+                  }
+                }
+
+                ctx.fillText(previewLabel, px, py + 0.5);
+              }
 
               ctx.restore();
             }
@@ -2046,7 +2101,7 @@ export function Grid({
       }
 
       // Draw curved connection from previous node to this one
-      const nodeRadius = 12;
+      const nodeRadius = 12 * display.noteSize;
       const bendWidth = Math.min(40, (x - lastX) * 0.8);
       const bendStartX = x - bendWidth;
 
@@ -2134,7 +2189,7 @@ export function Grid({
     if (trace.length < 2) return;
 
     const { color, lineWidth, opacity, isLive, effectiveTonicMidi, minSemitone, maxSemitone,
-            worldTimeOffset, camLeft: optCamLeft, pxPerT: optPxPerT, headXOverride } = options;
+      worldTimeOffset, camLeft: optCamLeft, pxPerT: optPxPerT, headXOverride } = options;
 
     // Helper: convert a local t16 to screen X via world time
     const traceToX = (localT16: number) =>
@@ -2759,19 +2814,19 @@ export function Grid({
         // Hit threshold in pixels for grabbing a loop handle
         const handleHitPx = 8;
 
-// Check which handle is closer (if both are within threshold, prefer the nearest)
-const distToStart = Math.abs(mouseX - loopStartX);
-const distToEnd = Math.abs(mouseX - loopEndX);
+        // Check which handle is closer (if both are within threshold, prefer the nearest)
+        const distToStart = Math.abs(mouseX - loopStartX);
+        const distToEnd = Math.abs(mouseX - loopEndX);
 
-if (distToStart <= handleHitPx || distToEnd <= handleHitPx) {
-loopHandleDragRef.current = (distToStart <= distToEnd) ? 'start' : 'end';
-isHoveringLoopHandleRef.current = true;
-setIsHoveringLoopHandle(true);
-e.preventDefault();
-return;
-}
-}
-}
+        if (distToStart <= handleHitPx || distToEnd <= handleHitPx) {
+          loopHandleDragRef.current = (distToStart <= distToEnd) ? 'start' : 'end';
+          isHoveringLoopHandleRef.current = true;
+          setIsHoveringLoopHandle(true);
+          e.preventDefault();
+          return;
+        }
+      }
+    }
 
     // ── Right-click drag = horizontal pan in BOTH modes ──
     // Right-drag pans the camera along the timeline only.
@@ -3580,48 +3635,48 @@ return;
       {mode === 'play' && !onlyChords && (smartCamIsStatic || freeLookReact) && (
         gridOverlayRoot
           ? createPortal(
-              <button
-                type="button"
-                onClick={jumpToPlayhead}
-                className="absolute z-40 pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full
+            <button
+              type="button"
+              onClick={jumpToPlayhead}
+              className="absolute z-40 pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full
                            bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
                            shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
-                style={{
-                  bottom: 20,
-                  left: 'calc(50% + 15px)',
-                  transform: 'translateX(-50%)',
-                }}
-                title="Re-center camera on the playhead"
-              >
-                {/* Simple arrow-to-center icon using SVG */}
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M7 1v12M7 1L3 5M7 1l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Recenter
-              </button>,
-              gridOverlayRoot,
-            )
+              style={{
+                bottom: 20,
+                left: 'calc(50% + 15px)',
+                transform: 'translateX(-50%)',
+              }}
+              title="Re-center camera on the playhead"
+            >
+              {/* Simple arrow-to-center icon using SVG */}
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 1v12M7 1L3 5M7 1l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Recenter
+            </button>,
+            gridOverlayRoot,
+          )
           : (
-              <button
-                type="button"
-                onClick={jumpToPlayhead}
-                className="absolute z-40 pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full
+            <button
+              type="button"
+              onClick={jumpToPlayhead}
+              className="absolute z-40 pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full
                            bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
                            shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
-                style={{
-                  bottom: 20,
-                  left: 'calc(50% + 15px)',
-                  transform: 'translateX(-50%)',
-                }}
-                title="Re-center camera on the playhead"
-              >
-                {/* Simple arrow-to-center icon using SVG */}
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M7 1v12M7 1L3 5M7 1l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Recenter
-              </button>
-            )
+              style={{
+                bottom: 20,
+                left: 'calc(50% + 15px)',
+                transform: 'translateX(-50%)',
+              }}
+              title="Re-center camera on the playhead"
+            >
+              {/* Simple arrow-to-center icon using SVG */}
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 1v12M7 1L3 5M7 1l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Recenter
+            </button>
+          )
       )}
 
       {/*
@@ -3786,78 +3841,78 @@ return;
                       blocks.push(
                         <div
                           key={`${chord.t16}-${idx}`}
-                            className="absolute top-0 h-full rounded-lg border border-white/10"
-                            style={{
-                              left: leftPx,
-                              width: widthPx,
-                              background: isDiatonicChord
-                                ? `linear-gradient(to bottom, var(--chord-fill-top), var(--chord-fill-bottom))`
-                                : `linear-gradient(to bottom, var(--chord-fill-tension-top), var(--chord-fill-tension-bottom))`,
-                              borderColor: isDiatonicChord ? 'var(--chord-stroke)' : 'var(--chord-stroke-tension)',
-                            }}
-                            title="Shift+click to delete. Drag edges to stretch or overwrite."
-                            onDoubleClick={(evt) => {
-                              evt.stopPropagation();
-                              setEditingChordIndex(idx);
-                              setEditingChordName(chord.name);
-                            }}
-                            onClick={(evt) => {
-                              evt.stopPropagation();
-                              if (evt.shiftKey) {
-                                deleteChord(idx);
-                              }
-                            }}
-                          >
-                            <div className="absolute inset-0 flex items-center justify-center px-2">
-                              {isEditing ? (
-                                <input
-                                  value={editingChordName}
-                                  autoFocus
-                                  className={`w-full bg-transparent text-center text-xs font-bold outline-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
-                                  onChange={(evt) => setEditingChordName(evt.target.value)}
-                                  onBlur={() => commitChordNameEdit()}
-                                  onKeyDown={(evt) => {
-                                    if (evt.key === 'Enter') {
-                                      evt.preventDefault();
-                                      commitChordNameEdit();
-                                    }
-                                    if (evt.key === 'Escape') {
-                                      evt.preventDefault();
-                                      setEditingChordIndex(null);
-                                      setEditingChordName('');
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <span className={`text-xs font-bold ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}>
-                                  {chord.name}
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Resize handles */}
-                            <>
-                              <button
-                                type="button"
-                                className="absolute left-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
-                                title="Drag to resize"
-                                onMouseDown={(evt) => {
-                                  evt.stopPropagation();
-                                  chordBoundaryDragRef.current = { leftChordIndex: idx - 1 };
+                          className="absolute top-0 h-full rounded-lg border border-white/10"
+                          style={{
+                            left: leftPx,
+                            width: widthPx,
+                            background: isDiatonicChord
+                              ? `linear-gradient(to bottom, var(--chord-fill-top), var(--chord-fill-bottom))`
+                              : `linear-gradient(to bottom, var(--chord-fill-tension-top), var(--chord-fill-tension-bottom))`,
+                            borderColor: isDiatonicChord ? 'var(--chord-stroke)' : 'var(--chord-stroke-tension)',
+                          }}
+                          title="Shift+click to delete. Drag edges to stretch or overwrite."
+                          onDoubleClick={(evt) => {
+                            evt.stopPropagation();
+                            setEditingChordIndex(idx);
+                            setEditingChordName(chord.name);
+                          }}
+                          onClick={(evt) => {
+                            evt.stopPropagation();
+                            if (evt.shiftKey) {
+                              deleteChord(idx);
+                            }
+                          }}
+                        >
+                          <div className="absolute inset-0 flex items-center justify-center px-2">
+                            {isEditing ? (
+                              <input
+                                value={editingChordName}
+                                autoFocus
+                                className={`w-full bg-transparent text-center text-xs font-bold outline-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
+                                onChange={(evt) => setEditingChordName(evt.target.value)}
+                                onBlur={() => commitChordNameEdit()}
+                                onKeyDown={(evt) => {
+                                  if (evt.key === 'Enter') {
+                                    evt.preventDefault();
+                                    commitChordNameEdit();
+                                  }
+                                  if (evt.key === 'Escape') {
+                                    evt.preventDefault();
+                                    setEditingChordIndex(null);
+                                    setEditingChordName('');
+                                  }
                                 }}
                               />
-                              <button
-                                type="button"
-                                className="absolute right-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
-                                title="Drag to resize"
-                                onMouseDown={(evt) => {
-                                  evt.stopPropagation();
-                                  chordBoundaryDragRef.current = { leftChordIndex: idx };
-                                }}
-                              />
-                            </>
+                            ) : (
+                              <span className={`text-xs font-bold ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}>
+                                {chord.name}
+                              </span>
+                            )}
                           </div>
-                        );
+
+                          {/* Resize handles */}
+                          <>
+                            <button
+                              type="button"
+                              className="absolute left-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
+                              title="Drag to resize"
+                              onMouseDown={(evt) => {
+                                evt.stopPropagation();
+                                chordBoundaryDragRef.current = { leftChordIndex: idx - 1 };
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="absolute right-0 top-0 h-full w-3 cursor-ew-resize bg-transparent hover:bg-white/10"
+                              title="Drag to resize"
+                              onMouseDown={(evt) => {
+                                evt.stopPropagation();
+                                chordBoundaryDragRef.current = { leftChordIndex: idx };
+                              }}
+                            />
+                          </>
+                        </div>
+                      );
                     }
 
                     return blocks;
@@ -3873,19 +3928,18 @@ return;
 
       <canvas
         ref={canvasRef}
-        className={`absolute inset-0 w-full h-full ${
-          mode === 'create'
-            ? (
-              loopEnabled && (loopHandleDragRef.current || isHoveringLoopHandle)
-                ? 'cursor-ew-resize'
-                : (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringNode ? 'cursor-grab' : 'cursor-crosshair'))
-            )
-            : (
-              followMode.isDraggingTimeline
-                ? 'cursor-grabbing'
-                : (loopEnabled && (loopHandleDragRef.current || isHoveringLoopHandle) ? 'cursor-ew-resize' : 'cursor-default')
-            )
-        }`}
+        className={`absolute inset-0 w-full h-full ${mode === 'create'
+          ? (
+            loopEnabled && (loopHandleDragRef.current || isHoveringLoopHandle)
+              ? 'cursor-ew-resize'
+              : (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringNode ? 'cursor-grab' : 'cursor-crosshair'))
+          )
+          : (
+            followMode.isDraggingTimeline
+              ? 'cursor-grabbing'
+              : (loopEnabled && (loopHandleDragRef.current || isHoveringLoopHandle) ? 'cursor-ew-resize' : 'cursor-default')
+          )
+          }`}
         // Promote the canvas to its own compositor layer.
         // Without this, DOM updates from other React components (transport bar,
         // sidebar, etc.) can force the browser to re-composite the canvas's

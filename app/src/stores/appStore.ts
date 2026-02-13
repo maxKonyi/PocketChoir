@@ -57,9 +57,10 @@ interface VoiceState {
 interface DisplaySettings {
   showMinimap: boolean;         // Show/hide the minimap (overview strip above the grid)
   showChordTrack: boolean;      // Show chord labels above grid
-  showScaleDegrees: boolean;    // Show numbers on nodes
-  showPitchLabels: boolean;     // Show note names
+  showNoteLabels: boolean;      // Show labels on nodes (degree, solfege, or note name)
   labelFormat: 'degree' | 'solfege' | 'noteName';
+  noteSize: number;             // 0.5-2.0, scale factor for node circles and their labels
+  lineThickness: number;        // 0.5-2.0, scale factor for contour line stroke width
   zoomLevel: number;            // 1 = fit all, higher = zoomed in (vertical / pitch zoom)
   glowIntensity: number;        // 0-2, multiplier for glow effects
   gridOpacity: number;          // 0-1, opacity of grid elements
@@ -474,9 +475,10 @@ const initialVocalRange: VocalRange = {
 const initialDisplaySettings: DisplaySettings = {
   showMinimap: true,
   showChordTrack: true,
-  showScaleDegrees: true,
-  showPitchLabels: false,
+  showNoteLabels: true,
   labelFormat: 'degree',
+  noteSize: 1.0,
+  lineThickness: 1.0,
   zoomLevel: 1,
   glowIntensity: 0,
   gridOpacity: 0.6,
@@ -566,1323 +568,1323 @@ export const useAppStore = create<AppState & AppActions>()(
     (set, get) => ({
       ...initialState,
 
-  // -- Helpers (Chord Track) --
+      // -- Helpers (Chord Track) --
 
-  /**
-   * Total length of the arrangement timeline in 16th-note steps.
-   * Example: 4 bars of 4/4 = 4 * (4 beats) * (4 sixteenths per beat) = 64.
-   */
-  getTotalT16: (arrangement: Arrangement): number => {
-    return arrangement.bars * arrangement.timeSig.numerator * 4;
-  },
-
-  /**
-   * Create one chord per bar as the default chord track.
-   * We use "C" as the starter label (user can rename).
-   */
-  createDefaultChordTrack: (arrangement: Arrangement): Chord[] => {
-    const barLength16 = arrangement.timeSig.numerator * 4;
-    const chords: Chord[] = [];
-    for (let bar = 0; bar < arrangement.bars; bar++) {
-      chords.push({
-        t16: bar * barLength16,
-        duration16: barLength16,
-        name: 'C',
-      });
-    }
-    return chords;
-  },
-
-  /**
-   * Normalize a chord list so it always covers the full timeline with no gaps.
-   * This is the core rule for the chord editor.
-   */
-  normalizeChordTrack: (chords: Chord[], totalT16: number): Chord[] => {
-    const sorted = [...chords]
-      .filter((c) => c.duration16 > 0)
-      .sort((a, b) => a.t16 - b.t16);
-
-    if (sorted.length === 0) return [];
-
-    // Rebuild as a contiguous set of segments starting at 0.
-    const normalized: Chord[] = [];
-    let cursor = 0;
-
-    for (let i = 0; i < sorted.length; i++) {
-      const chord = sorted[i];
-      const dur = Math.max(1, Math.round(chord.duration16));
-      normalized.push({
-        ...chord,
-        t16: cursor,
-        duration16: dur,
-      });
-      cursor += dur;
-    }
-
-    // Force the last chord to end exactly at totalT16.
-    const last = normalized[normalized.length - 1];
-    const overshoot = cursor - totalT16;
-    if (overshoot !== 0) {
-      last.duration16 = Math.max(1, last.duration16 - overshoot);
-    }
-
-    // If we still don't hit totalT16 (because durations were tiny), pad the last chord.
-    const end = last.t16 + last.duration16;
-    if (end < totalT16) {
-      last.duration16 += totalT16 - end;
-    }
-
-    // If we still overshoot, clamp again.
-    const end2 = last.t16 + last.duration16;
-    if (end2 > totalT16) {
-      last.duration16 = Math.max(1, last.duration16 - (end2 - totalT16));
-    }
-
-    return normalized;
-  },
-
-  // -- Arrangement --
-  setArrangement: (arrangement) => {
-    // Clear recordings and armed voice when changing arrangement
-    set({
-      arrangement,
-      transposition: 0,
-      recordings: new Map(),
-      livePitchTrace: [],
-      livePitchTraceVoiceId: null,
-      armedVoiceId: null,
-      // Reset navigation/view state so a new arrangement starts "fresh".
-      // Horizontal zoom will be auto-fit by the Grid once it can measure the viewport.
-      followMode: {
-        ...get().followMode,
-        pxPerT: initialFollowModeState.pxPerT,
-        minPxPerT: initialFollowModeState.minPxPerT,
-        viewportWidthPx: initialFollowModeState.viewportWidthPx,
-        pendingWorldT: null,
-        isDraggingTimeline: false,
-        isDraggingMinimap: false,
+      /**
+       * Total length of the arrangement timeline in 16th-note steps.
+       * Example: 4 bars of 4/4 = 4 * (4 beats) * (4 sixteenths per beat) = 64.
+       */
+      getTotalT16: (arrangement: Arrangement): number => {
+        return arrangement.bars * arrangement.timeSig.numerator * 4;
       },
-      createView: initialCreateViewState,
-      display: { ...get().display, zoomLevel: 1 },
-      history: [],
-      future: [],
-      canUndo: false,
-      canRedo: false,
-    });
-    if (arrangement) {
-      // Ensure any chord track we load covers the full timeline with no gaps.
-      // (This is especially important for imported JSON arrangements.)
-      const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-      const normalizedChords = arrangement.chords && arrangement.chords.length > 0
-        ? get().normalizeChordTrack(arrangement.chords, totalT16)
-        : arrangement.chords;
 
-      if (normalizedChords) {
-        arrangement = { ...arrangement, chords: normalizedChords };
-        set({ arrangement });
-      }
-
-      // In Create mode, always default the editor to the first available voice.
-      // This prevents stale selection from a previous arrangement (e.g. selecting Voice 3
-      // when the new arrangement only has Voice 1).
-      const firstVoiceId = arrangement.voices[0]?.id ?? null;
-      set({ selectedVoiceId: firstVoiceId });
-
-      get().initializeVoiceStates(arrangement.voices);
-      // Set loop end to arrangement length and reset position
-      const totalSixteenths = arrangement.bars * arrangement.timeSig.numerator * 4;
-      set((state) => ({
-        playback: {
-          ...state.playback,
-          loopEnabled: false,       // Every new arrangement starts in one-shot mode
-          loopStart: 0,             // Reset practice loop range to full arrangement
-          loopEnd: totalSixteenths,
-          position: 0,
-          isPlaying: false,
-          isRecording: false,
-        },
-      }));
-    }
-
-    // After picking a new arrangement, try to auto-transpose it to match the user's range.
-    // We announce here because selecting a new arrangement is one of the requested triggers.
-    get().applyAutoTranspositionIfPossible(true);
-  },
-
-  setTransposition: (semitones) => set({ transposition: semitones }),
-
-  addVoiceTrack: () => set((state) => {
-    // Guard: must have an arrangement loaded to add a track.
-    if (!state.arrangement) return state;
-    // Respect the global track cap so the UI and synth engine stay in sync.
-    if (state.arrangement.voices.length >= MAX_VOICES) return state;
-
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
-
-    const newVoiceIndex = state.arrangement.voices.length;
-    const newVoiceId = generateVoiceId(state.arrangement.voices);
-    const palette = DEFAULT_VOICE_COLORS[newVoiceIndex % DEFAULT_VOICE_COLORS.length];
-
-    // Build the hydrated arrangement voice entry with empty nodes.
-    const newVoice: Voice = {
-      id: newVoiceId,
-      name: `Voice ${newVoiceIndex + 1}`,
-      color: palette.color,
-      nodes: [],
-    };
-
-    const updatedArrangement: Arrangement = {
-      ...state.arrangement,
-      voices: [...state.arrangement.voices, newVoice],
-    };
-
-    return {
-      ...historyUpdate,
-      arrangement: updatedArrangement,
-      voiceStates: [...state.voiceStates, createVoiceState(newVoiceId, newVoiceIndex)],
-      selectedVoiceId: state.mode === 'create' ? newVoiceId : state.selectedVoiceId,
-    };
-  }),
-
-  undo: () => set((state) => {
-    if (!state.canUndo || state.history.length === 0) return state;
-    const snapshot = state.history[state.history.length - 1];
-    const previousHistory = state.history.slice(0, -1);
-    const currentSnapshot = createSnapshot(state);
-    const nextFuture = currentSnapshot
-      ? [currentSnapshot, ...state.future].slice(0, HISTORY_LIMIT)
-      : state.future;
-
-    return {
-      ...applySnapshot(snapshot),
-      history: previousHistory,
-      future: nextFuture,
-      canUndo: previousHistory.length > 0,
-      canRedo: true,
-    };
-  }),
-
-  redo: () => set((state) => {
-    if (!state.canRedo || state.future.length === 0) return state;
-    const snapshot = state.future[0];
-    const remainingFuture = state.future.slice(1);
-    const currentSnapshot = createSnapshot(state);
-    if (!currentSnapshot) return state;
-
-    const nextHistory = [...state.history, currentSnapshot];
-    if (nextHistory.length > HISTORY_LIMIT) {
-      nextHistory.shift();
-    }
-
-    return {
-      ...applySnapshot(snapshot),
-      history: nextHistory,
-      future: remainingFuture,
-      canUndo: nextHistory.length > 0,
-      canRedo: remainingFuture.length > 0,
-    };
-  }),
-
-  applyAutoTranspositionIfPossible: (announce) => {
-    const arrangement = get().arrangement;
-    const vocalRange = get().vocalRange;
-
-    // Nothing to do if we don't have an arrangement loaded.
-    if (!arrangement) return;
-
-    // Map voices so each node's deg defaults to 0 (the type expects deg: number, not deg?: number).
-    const voicesWithDeg = arrangement.voices.map((v) => ({
-      ...v,
-      nodes: v.nodes.map((n) => ({ ...n, deg: n.deg ?? 0 })),
-    }));
-    const arrangementRange = getArrangementFrequencyRange(
-      voicesWithDeg,
-      arrangement.tonic,
-      arrangement.scale
-    );
-
-    // Prefer the stored frequencies (they are kept in sync in setVocalRange).
-    const userRange = {
-      lowFrequency: vocalRange.lowFrequency,
-      highFrequency: vocalRange.highFrequency,
-    };
-
-    const suggested = suggestTranspositionToFitRange(arrangementRange, userRange);
-
-    set({ transposition: suggested });
-
-    if (!announce) return;
-
-    const msg = suggested === 0
-      ? 'Arrangement fits your vocal range — no transposition needed.'
-      : `Arrangement auto-transposed by ${suggested > 0 ? '+' : ''}${suggested} semitones to fit your range.`;
-
-    set({ autoTranspositionNotice: msg });
-    window.setTimeout(() => {
-      // Only clear if nothing newer has replaced it.
-      if (get().autoTranspositionNotice === msg) {
-        set({ autoTranspositionNotice: null });
-      }
-    }, 4500);
-  },
-
-  // -- Create Mode - Node Editing --
-  addNode: (voiceId, t16, deg, octave = 0, semi) => set((state) => {
-    if (!state.arrangement) return state;
-
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
-
-    // Find and update the voice
-    const updatedVoices = state.arrangement.voices.map((voice) => {
-      if (voice.id !== voiceId) return voice;
-
-      // Remove any existing node at this t16, then add new one
-      const filteredNodes = voice.nodes.filter((n) => n.t16 !== t16);
-      const newNode: ArrangementNode = { t16, deg, octave, ...(semi !== undefined ? { semi } : {}) };
-      let newNodes: ArrangementNode[] = [...filteredNodes, newNode].sort((a, b) => a.t16 - b.t16);
-
-      // ── Fix orphaned anchors ──
-      // After inserting the new node, any anchor (term=true) in this node's
-      // "held segment" must update its pitch to match.
-      // The held segment spans from this node's t16 up to the NEXT non-term node.
-      const nextNonTerm = newNodes
-        .filter((n) => !n.term && n.t16 > t16)
-        .sort((a, b) => a.t16 - b.t16)[0];
-      const segmentEnd = nextNonTerm ? nextNonTerm.t16 : Infinity;
-
-      newNodes = newNodes.map((n) => {
-        // Only update anchors that sit inside this node's held segment.
-        if (n.term && n.t16 > t16 && n.t16 < segmentEnd) {
-          return {
-            ...n,
-            deg,
-            octave,
-            ...(semi !== undefined ? { semi } : {}),
-          };
+      /**
+       * Create one chord per bar as the default chord track.
+       * We use "C" as the starter label (user can rename).
+       */
+      createDefaultChordTrack: (arrangement: Arrangement): Chord[] => {
+        const barLength16 = arrangement.timeSig.numerator * 4;
+        const chords: Chord[] = [];
+        for (let bar = 0; bar < arrangement.bars; bar++) {
+          chords.push({
+            t16: bar * barLength16,
+            duration16: barLength16,
+            name: 'C',
+          });
         }
-        return n;
-      });
+        return chords;
+      },
 
-      return { ...voice, nodes: newNodes };
-    });
+      /**
+       * Normalize a chord list so it always covers the full timeline with no gaps.
+       * This is the core rule for the chord editor.
+       */
+      normalizeChordTrack: (chords: Chord[], totalT16: number): Chord[] => {
+        const sorted = [...chords]
+          .filter((c) => c.duration16 > 0)
+          .sort((a, b) => a.t16 - b.t16);
 
-    return {
-      ...historyUpdate,
-      arrangement: { ...state.arrangement, voices: updatedVoices },
-    };
-  }),
+        if (sorted.length === 0) return [];
 
-  removeNode: (voiceId, t16) => set((state) => {
-    if (!state.arrangement) return state;
+        // Rebuild as a contiguous set of segments starting at 0.
+        const normalized: Chord[] = [];
+        let cursor = 0;
 
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
-
-    const updatedVoices = state.arrangement.voices.map((voice) => {
-      if (voice.id !== voiceId) return voice;
-
-      // If the node being removed is a "real" note, we also remove its attached anchor
-      // (the first termination node after it, up to the next real note).
-      // This prevents leaving behind an orphaned anchor that still affects phrase logic.
-      const nodeToRemove = voice.nodes.find((n) => n.t16 === t16);
-      if (nodeToRemove && !nodeToRemove.term) {
-        const nextNonTerm = voice.nodes
-          .filter((n) => !n.term && n.t16 > t16)
-          .sort((a, b) => a.t16 - b.t16)[0];
-
-        const attachedAnchor = voice.nodes
-          .filter((n) => n.term && n.t16 > t16 && (!nextNonTerm || n.t16 < nextNonTerm.t16))
-          .sort((a, b) => a.t16 - b.t16)[0];
-
-        const attachedAnchorT16 = attachedAnchor ? attachedAnchor.t16 : null;
-        return {
-          ...voice,
-          nodes: voice.nodes.filter((n) => n.t16 !== t16 && (attachedAnchorT16 === null || n.t16 !== attachedAnchorT16)),
-        };
-      }
-
-      return {
-        ...voice,
-        nodes: voice.nodes.filter((n) => n.t16 !== t16),
-      };
-    });
-
-    return {
-      ...historyUpdate,
-      arrangement: { ...state.arrangement, voices: updatedVoices },
-    };
-  }),
-
-  updateNode: (voiceId, oldT16, newT16, deg, octave = 0, term = false, semi) => set((state) => {
-    if (!state.arrangement) return state;
-
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
-
-    const updatedVoices = state.arrangement.voices.map((voice) => {
-      if (voice.id !== voiceId) return voice;
-
-      // Locate the node being updated so we can keep track of any anchor it drives.
-      const originalNode = voice.nodes.find((n) => n.t16 === oldT16);
-      if (!originalNode) {
-        return voice;
-      }
-
-      // Start from the list without the original node (and without any accidental duplicate at newT16).
-      const nodesWithoutTarget = voice.nodes.filter((n) => n.t16 !== oldT16 && n.t16 !== newT16);
-
-      // If we're updating/creating an anchor (term === true), it MUST inherit the pitch
-      // from the previous real note so it never appears on the wrong row.
-      const anchorParent = term
-        ? voice.nodes
-          .filter((n) => !n.term && n.t16 < newT16)
-          .sort((a, b) => a.t16 - b.t16)
-          .pop()
-        : null;
-
-      // If there's no previous real note, we cannot create a valid anchor.
-      if (term && !anchorParent) {
-        return voice;
-      }
-
-      // If there's already an anchor between the previous note and this time,
-      // this note is the FIRST note of a phrase and must NOT become an anchor.
-      if (term && anchorParent) {
-        const hasPhraseBreak = voice.nodes.some(
-          (n) => n.term && n.t16 > anchorParent.t16 && n.t16 < newT16,
-        );
-        if (hasPhraseBreak) {
-          return voice;
+        for (let i = 0; i < sorted.length; i++) {
+          const chord = sorted[i];
+          const dur = Math.max(1, Math.round(chord.duration16));
+          normalized.push({
+            ...chord,
+            t16: cursor,
+            duration16: dur,
+          });
+          cursor += dur;
         }
-      }
 
-      const resolvedDeg = anchorParent ? (anchorParent.deg ?? 0) : deg;
-      const resolvedOctave = anchorParent ? (anchorParent.octave ?? 0) : octave;
-      const resolvedSemi = anchorParent ? anchorParent.semi : semi;
+        // Force the last chord to end exactly at totalT16.
+        const last = normalized[normalized.length - 1];
+        const overshoot = cursor - totalT16;
+        if (overshoot !== 0) {
+          last.duration16 = Math.max(1, last.duration16 - overshoot);
+        }
 
-      const updatedNode = {
-        t16: newT16,
-        deg: resolvedDeg,
-        octave: resolvedOctave,
-        ...(resolvedSemi !== undefined ? { semi: resolvedSemi } : {}),
-        ...(term ? { term: true } : {}),
-      };
+        // If we still don't hit totalT16 (because durations were tiny), pad the last chord.
+        const end = last.t16 + last.duration16;
+        if (end < totalT16) {
+          last.duration16 += totalT16 - end;
+        }
 
-      let newNodes = [...nodesWithoutTarget, updatedNode];
+        // If we still overshoot, clamp again.
+        const end2 = last.t16 + last.duration16;
+        if (end2 > totalT16) {
+          last.duration16 = Math.max(1, last.duration16 - (end2 - totalT16));
+        }
 
-      // If we're moving a "real" note (term === false), keep its associated anchor (if any) in sync.
-      if (!term) {
-        // Determine the next real note after the original position.
-        const nextNonTermAfterOriginal = voice.nodes
-          .filter((n) => !n.term && n.t16 > oldT16)
-          .sort((a, b) => a.t16 - b.t16)[0];
+        return normalized;
+      },
 
-        // Find the anchor that belonged to this note (first term between the note and the next note).
-        const attachedAnchor = voice.nodes
-          .filter((n) => n.term && n.t16 > oldT16 && (!nextNonTermAfterOriginal || n.t16 < nextNonTermAfterOriginal.t16))
-          .sort((a, b) => a.t16 - b.t16)[0];
+      // -- Arrangement --
+      setArrangement: (arrangement) => {
+        // Clear recordings and armed voice when changing arrangement
+        set({
+          arrangement,
+          transposition: 0,
+          recordings: new Map(),
+          livePitchTrace: [],
+          livePitchTraceVoiceId: null,
+          armedVoiceId: null,
+          // Reset navigation/view state so a new arrangement starts "fresh".
+          // Horizontal zoom will be auto-fit by the Grid once it can measure the viewport.
+          followMode: {
+            ...get().followMode,
+            pxPerT: initialFollowModeState.pxPerT,
+            minPxPerT: initialFollowModeState.minPxPerT,
+            viewportWidthPx: initialFollowModeState.viewportWidthPx,
+            pendingWorldT: null,
+            isDraggingTimeline: false,
+            isDraggingMinimap: false,
+          },
+          createView: initialCreateViewState,
+          display: { ...get().display, zoomLevel: 1 },
+          history: [],
+          future: [],
+          canUndo: false,
+          canRedo: false,
+        });
+        if (arrangement) {
+          // Ensure any chord track we load covers the full timeline with no gaps.
+          // (This is especially important for imported JSON arrangements.)
+          const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+          const normalizedChords = arrangement.chords && arrangement.chords.length > 0
+            ? get().normalizeChordTrack(arrangement.chords, totalT16)
+            : arrangement.chords;
 
-        if (attachedAnchor) {
-          // Remove the old anchor instance before we re-add it in its new position.
-          newNodes = newNodes.filter((n) => n.t16 !== attachedAnchor.t16);
-
-          const holdOffset = attachedAnchor.t16 - oldT16;
-          const desiredMin = newT16 + 1; // Anchor must remain at least one 16th to the right of the parent note.
-          let desiredT16 = newT16 + holdOffset;
-          desiredT16 = Math.max(desiredT16, desiredMin);
-
-          // Prevent the anchor from running into the next note (if one exists) after the move.
-          const nextNonTermAfterNew = newNodes
-            .filter((n) => !n.term && n.t16 > newT16)
-            .sort((a, b) => a.t16 - b.t16)[0];
-          if (nextNonTermAfterNew) {
-            desiredT16 = Math.min(desiredT16, nextNonTermAfterNew.t16 - 1);
+          if (normalizedChords) {
+            arrangement = { ...arrangement, chords: normalizedChords };
+            set({ arrangement });
           }
 
-          const updatedAnchor = {
-            t16: desiredT16,
-            deg,
-            octave,
-            ...(semi !== undefined ? { semi } : {}),
-            term: true,
+          // In Create mode, always default the editor to the first available voice.
+          // This prevents stale selection from a previous arrangement (e.g. selecting Voice 3
+          // when the new arrangement only has Voice 1).
+          const firstVoiceId = arrangement.voices[0]?.id ?? null;
+          set({ selectedVoiceId: firstVoiceId });
+
+          get().initializeVoiceStates(arrangement.voices);
+          // Set loop end to arrangement length and reset position
+          const totalSixteenths = arrangement.bars * arrangement.timeSig.numerator * 4;
+          set((state) => ({
+            playback: {
+              ...state.playback,
+              loopEnabled: false,       // Every new arrangement starts in one-shot mode
+              loopStart: 0,             // Reset practice loop range to full arrangement
+              loopEnd: totalSixteenths,
+              position: 0,
+              isPlaying: false,
+              isRecording: false,
+            },
+          }));
+        }
+
+        // After picking a new arrangement, try to auto-transpose it to match the user's range.
+        // We announce here because selecting a new arrangement is one of the requested triggers.
+        get().applyAutoTranspositionIfPossible(true);
+      },
+
+      setTransposition: (semitones) => set({ transposition: semitones }),
+
+      addVoiceTrack: () => set((state) => {
+        // Guard: must have an arrangement loaded to add a track.
+        if (!state.arrangement) return state;
+        // Respect the global track cap so the UI and synth engine stay in sync.
+        if (state.arrangement.voices.length >= MAX_VOICES) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const newVoiceIndex = state.arrangement.voices.length;
+        const newVoiceId = generateVoiceId(state.arrangement.voices);
+        const palette = DEFAULT_VOICE_COLORS[newVoiceIndex % DEFAULT_VOICE_COLORS.length];
+
+        // Build the hydrated arrangement voice entry with empty nodes.
+        const newVoice: Voice = {
+          id: newVoiceId,
+          name: `Voice ${newVoiceIndex + 1}`,
+          color: palette.color,
+          nodes: [],
+        };
+
+        const updatedArrangement: Arrangement = {
+          ...state.arrangement,
+          voices: [...state.arrangement.voices, newVoice],
+        };
+
+        return {
+          ...historyUpdate,
+          arrangement: updatedArrangement,
+          voiceStates: [...state.voiceStates, createVoiceState(newVoiceId, newVoiceIndex)],
+          selectedVoiceId: state.mode === 'create' ? newVoiceId : state.selectedVoiceId,
+        };
+      }),
+
+      undo: () => set((state) => {
+        if (!state.canUndo || state.history.length === 0) return state;
+        const snapshot = state.history[state.history.length - 1];
+        const previousHistory = state.history.slice(0, -1);
+        const currentSnapshot = createSnapshot(state);
+        const nextFuture = currentSnapshot
+          ? [currentSnapshot, ...state.future].slice(0, HISTORY_LIMIT)
+          : state.future;
+
+        return {
+          ...applySnapshot(snapshot),
+          history: previousHistory,
+          future: nextFuture,
+          canUndo: previousHistory.length > 0,
+          canRedo: true,
+        };
+      }),
+
+      redo: () => set((state) => {
+        if (!state.canRedo || state.future.length === 0) return state;
+        const snapshot = state.future[0];
+        const remainingFuture = state.future.slice(1);
+        const currentSnapshot = createSnapshot(state);
+        if (!currentSnapshot) return state;
+
+        const nextHistory = [...state.history, currentSnapshot];
+        if (nextHistory.length > HISTORY_LIMIT) {
+          nextHistory.shift();
+        }
+
+        return {
+          ...applySnapshot(snapshot),
+          history: nextHistory,
+          future: remainingFuture,
+          canUndo: nextHistory.length > 0,
+          canRedo: remainingFuture.length > 0,
+        };
+      }),
+
+      applyAutoTranspositionIfPossible: (announce) => {
+        const arrangement = get().arrangement;
+        const vocalRange = get().vocalRange;
+
+        // Nothing to do if we don't have an arrangement loaded.
+        if (!arrangement) return;
+
+        // Map voices so each node's deg defaults to 0 (the type expects deg: number, not deg?: number).
+        const voicesWithDeg = arrangement.voices.map((v) => ({
+          ...v,
+          nodes: v.nodes.map((n) => ({ ...n, deg: n.deg ?? 0 })),
+        }));
+        const arrangementRange = getArrangementFrequencyRange(
+          voicesWithDeg,
+          arrangement.tonic,
+          arrangement.scale
+        );
+
+        // Prefer the stored frequencies (they are kept in sync in setVocalRange).
+        const userRange = {
+          lowFrequency: vocalRange.lowFrequency,
+          highFrequency: vocalRange.highFrequency,
+        };
+
+        const suggested = suggestTranspositionToFitRange(arrangementRange, userRange);
+
+        set({ transposition: suggested });
+
+        if (!announce) return;
+
+        const msg = suggested === 0
+          ? 'Arrangement fits your vocal range — no transposition needed.'
+          : `Arrangement auto-transposed by ${suggested > 0 ? '+' : ''}${suggested} semitones to fit your range.`;
+
+        set({ autoTranspositionNotice: msg });
+        window.setTimeout(() => {
+          // Only clear if nothing newer has replaced it.
+          if (get().autoTranspositionNotice === msg) {
+            set({ autoTranspositionNotice: null });
+          }
+        }, 4500);
+      },
+
+      // -- Create Mode - Node Editing --
+      addNode: (voiceId, t16, deg, octave = 0, semi) => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        // Find and update the voice
+        const updatedVoices = state.arrangement.voices.map((voice) => {
+          if (voice.id !== voiceId) return voice;
+
+          // Remove any existing node at this t16, then add new one
+          const filteredNodes = voice.nodes.filter((n) => n.t16 !== t16);
+          const newNode: ArrangementNode = { t16, deg, octave, ...(semi !== undefined ? { semi } : {}) };
+          let newNodes: ArrangementNode[] = [...filteredNodes, newNode].sort((a, b) => a.t16 - b.t16);
+
+          // ── Fix orphaned anchors ──
+          // After inserting the new node, any anchor (term=true) in this node's
+          // "held segment" must update its pitch to match.
+          // The held segment spans from this node's t16 up to the NEXT non-term node.
+          const nextNonTerm = newNodes
+            .filter((n) => !n.term && n.t16 > t16)
+            .sort((a, b) => a.t16 - b.t16)[0];
+          const segmentEnd = nextNonTerm ? nextNonTerm.t16 : Infinity;
+
+          newNodes = newNodes.map((n) => {
+            // Only update anchors that sit inside this node's held segment.
+            if (n.term && n.t16 > t16 && n.t16 < segmentEnd) {
+              return {
+                ...n,
+                deg,
+                octave,
+                ...(semi !== undefined ? { semi } : {}),
+              };
+            }
+            return n;
+          });
+
+          return { ...voice, nodes: newNodes };
+        });
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+        };
+      }),
+
+      removeNode: (voiceId, t16) => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const updatedVoices = state.arrangement.voices.map((voice) => {
+          if (voice.id !== voiceId) return voice;
+
+          // If the node being removed is a "real" note, we also remove its attached anchor
+          // (the first termination node after it, up to the next real note).
+          // This prevents leaving behind an orphaned anchor that still affects phrase logic.
+          const nodeToRemove = voice.nodes.find((n) => n.t16 === t16);
+          if (nodeToRemove && !nodeToRemove.term) {
+            const nextNonTerm = voice.nodes
+              .filter((n) => !n.term && n.t16 > t16)
+              .sort((a, b) => a.t16 - b.t16)[0];
+
+            const attachedAnchor = voice.nodes
+              .filter((n) => n.term && n.t16 > t16 && (!nextNonTerm || n.t16 < nextNonTerm.t16))
+              .sort((a, b) => a.t16 - b.t16)[0];
+
+            const attachedAnchorT16 = attachedAnchor ? attachedAnchor.t16 : null;
+            return {
+              ...voice,
+              nodes: voice.nodes.filter((n) => n.t16 !== t16 && (attachedAnchorT16 === null || n.t16 !== attachedAnchorT16)),
+            };
+          }
+
+          return {
+            ...voice,
+            nodes: voice.nodes.filter((n) => n.t16 !== t16),
+          };
+        });
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+        };
+      }),
+
+      updateNode: (voiceId, oldT16, newT16, deg, octave = 0, term = false, semi) => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const updatedVoices = state.arrangement.voices.map((voice) => {
+          if (voice.id !== voiceId) return voice;
+
+          // Locate the node being updated so we can keep track of any anchor it drives.
+          const originalNode = voice.nodes.find((n) => n.t16 === oldT16);
+          if (!originalNode) {
+            return voice;
+          }
+
+          // Start from the list without the original node (and without any accidental duplicate at newT16).
+          const nodesWithoutTarget = voice.nodes.filter((n) => n.t16 !== oldT16 && n.t16 !== newT16);
+
+          // If we're updating/creating an anchor (term === true), it MUST inherit the pitch
+          // from the previous real note so it never appears on the wrong row.
+          const anchorParent = term
+            ? voice.nodes
+              .filter((n) => !n.term && n.t16 < newT16)
+              .sort((a, b) => a.t16 - b.t16)
+              .pop()
+            : null;
+
+          // If there's no previous real note, we cannot create a valid anchor.
+          if (term && !anchorParent) {
+            return voice;
+          }
+
+          // If there's already an anchor between the previous note and this time,
+          // this note is the FIRST note of a phrase and must NOT become an anchor.
+          if (term && anchorParent) {
+            const hasPhraseBreak = voice.nodes.some(
+              (n) => n.term && n.t16 > anchorParent.t16 && n.t16 < newT16,
+            );
+            if (hasPhraseBreak) {
+              return voice;
+            }
+          }
+
+          const resolvedDeg = anchorParent ? (anchorParent.deg ?? 0) : deg;
+          const resolvedOctave = anchorParent ? (anchorParent.octave ?? 0) : octave;
+          const resolvedSemi = anchorParent ? anchorParent.semi : semi;
+
+          const updatedNode = {
+            t16: newT16,
+            deg: resolvedDeg,
+            octave: resolvedOctave,
+            ...(resolvedSemi !== undefined ? { semi: resolvedSemi } : {}),
+            ...(term ? { term: true } : {}),
           };
 
-          newNodes.push(updatedAnchor);
+          let newNodes = [...nodesWithoutTarget, updatedNode];
+
+          // If we're moving a "real" note (term === false), keep its associated anchor (if any) in sync.
+          if (!term) {
+            // Determine the next real note after the original position.
+            const nextNonTermAfterOriginal = voice.nodes
+              .filter((n) => !n.term && n.t16 > oldT16)
+              .sort((a, b) => a.t16 - b.t16)[0];
+
+            // Find the anchor that belonged to this note (first term between the note and the next note).
+            const attachedAnchor = voice.nodes
+              .filter((n) => n.term && n.t16 > oldT16 && (!nextNonTermAfterOriginal || n.t16 < nextNonTermAfterOriginal.t16))
+              .sort((a, b) => a.t16 - b.t16)[0];
+
+            if (attachedAnchor) {
+              // Remove the old anchor instance before we re-add it in its new position.
+              newNodes = newNodes.filter((n) => n.t16 !== attachedAnchor.t16);
+
+              const holdOffset = attachedAnchor.t16 - oldT16;
+              const desiredMin = newT16 + 1; // Anchor must remain at least one 16th to the right of the parent note.
+              let desiredT16 = newT16 + holdOffset;
+              desiredT16 = Math.max(desiredT16, desiredMin);
+
+              // Prevent the anchor from running into the next note (if one exists) after the move.
+              const nextNonTermAfterNew = newNodes
+                .filter((n) => !n.term && n.t16 > newT16)
+                .sort((a, b) => a.t16 - b.t16)[0];
+              if (nextNonTermAfterNew) {
+                desiredT16 = Math.min(desiredT16, nextNonTermAfterNew.t16 - 1);
+              }
+
+              const updatedAnchor = {
+                t16: desiredT16,
+                deg,
+                octave,
+                ...(semi !== undefined ? { semi } : {}),
+                term: true,
+              };
+
+              newNodes.push(updatedAnchor);
+            }
+          }
+
+          const sortedNodes = newNodes.sort((a, b) => a.t16 - b.t16);
+          return { ...voice, nodes: sortedNodes };
+        });
+
+        return {
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+        };
+      }),
+
+      setSelectedVoiceId: (voiceId) => set({ selectedVoiceId: voiceId }),
+
+      // -- Create Mode - Voice Management --
+
+      // Rename a voice track (updates the arrangement voice name).
+      renameVoice: (voiceId, newName) => set((state) => {
+        if (!state.arrangement) return state;
+        const trimmed = newName.trim();
+        if (!trimmed) return state; // Don't allow empty names
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const updatedVoices = state.arrangement.voices.map((voice) =>
+          voice.id === voiceId ? { ...voice, name: trimmed } : voice
+        );
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+        };
+      }),
+
+      // Clear all nodes from a single voice track.
+      clearVoiceNodes: (voiceId) => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const updatedVoices = state.arrangement.voices.map((voice) =>
+          voice.id === voiceId ? { ...voice, nodes: [] } : voice
+        );
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+        };
+      }),
+
+      // Clear all nodes from ALL voice tracks.
+      clearAllVoiceNodes: () => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const updatedVoices = state.arrangement.voices.map((voice) => ({
+          ...voice,
+          nodes: [],
+        }));
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+        };
+      }),
+
+      // -- Create Mode - Chord Track Editing --
+
+      /**
+       * Enable chord track by generating a default set of one chord per bar.
+       */
+      enableChordTrack: () => set((state) => {
+        if (!state.arrangement) return state;
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+        const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+        const defaults = get().createDefaultChordTrack(state.arrangement);
+        return {
+          ...historyUpdate,
+          arrangement: {
+            ...state.arrangement,
+            chords: get().normalizeChordTrack(defaults, totalT16),
+          },
+        };
+      }),
+
+      /**
+       * Disable chord track by removing all chord blocks.
+       * The UI will show the "Enable Chord Track" button again.
+       */
+      disableChordTrack: () => set((state) => {
+        if (!state.arrangement) return state;
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+        return {
+          ...historyUpdate,
+          arrangement: {
+            ...state.arrangement,
+            chords: [],
+          },
+        };
+      }),
+
+      /**
+       * Update arrangement parameters while staying in Create mode.
+       *
+       * IMPORTANT:
+       * - We do NOT call setArrangement() here because that resets voice states/recordings/history.
+       * - We keep voice nodes, but clamp any nodes that fall beyond the new arrangement length.
+       * - If a chord track exists, we normalize it so it covers the new full timeline.
+       */
+      updateArrangementParams: (update) => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const prev = state.arrangement;
+        const nextBars = Math.max(1, Math.min(32, Math.round(update.bars)));
+        const nextTempo = Math.max(40, Math.min(240, Math.round(update.tempo)));
+        const nextTimeSigNum = Math.max(2, Math.min(12, Math.round(update.timeSig.numerator)));
+        const nextTimeSigDen = update.timeSig.denominator;
+        const nextTotalT16 = nextBars * nextTimeSigNum * 4;
+
+        const nextVoices: Voice[] = prev.voices.map((v) => ({
+          ...v,
+          nodes: v.nodes.filter((n) => n.t16 <= nextTotalT16),
+        }));
+
+        let nextChords = prev.chords;
+        if (nextChords && nextChords.length > 0) {
+          nextChords = get().normalizeChordTrack(nextChords, nextTotalT16);
         }
-      }
 
-      const sortedNodes = newNodes.sort((a, b) => a.t16 - b.t16);
-      return { ...voice, nodes: sortedNodes };
-    });
+        const nextArrangement: Arrangement = {
+          ...prev,
+          title: update.title,
+          tempo: nextTempo,
+          tonic: update.tonic,
+          scale: update.scale,
+          bars: nextBars,
+          timeSig: { numerator: nextTimeSigNum, denominator: nextTimeSigDen },
+          voices: nextVoices,
+          chords: nextChords,
+        };
 
-    return {
-      arrangement: { ...state.arrangement, voices: updatedVoices },
-    };
-  }),
+        const nextPosition = Math.max(0, Math.min(state.playback.position, nextTotalT16));
 
-  setSelectedVoiceId: (voiceId) => set({ selectedVoiceId: voiceId }),
+        return {
+          ...historyUpdate,
+          arrangement: nextArrangement,
+          playback: {
+            ...state.playback,
+            loopEnd: nextTotalT16,
+            position: nextPosition,
+          },
+        };
+      }),
 
-  // -- Create Mode - Voice Management --
+      /**
+       * Rename a chord label.
+       */
+      setChordName: (chordIndex, name) => set((state) => {
+        if (!state.arrangement) return state;
+        const chords = state.arrangement.chords || [];
+        if (chordIndex < 0 || chordIndex >= chords.length) return state;
 
-  // Rename a voice track (updates the arrangement voice name).
-  renameVoice: (voiceId, newName) => set((state) => {
-    if (!state.arrangement) return state;
-    const trimmed = newName.trim();
-    if (!trimmed) return state; // Don't allow empty names
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
 
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
+        const updated = chords.map((c, idx) => idx === chordIndex ? { ...c, name } : c);
+        return {
+          ...historyUpdate,
+          arrangement: {
+            ...state.arrangement,
+            chords: updated,
+          },
+        };
+      }),
 
-    const updatedVoices = state.arrangement.voices.map((voice) =>
-      voice.id === voiceId ? { ...voice, name: trimmed } : voice
-    );
+      /**
+       * Split a chord at a given time, creating a new chord segment to the right.
+       * The new segment uses the default name "C".
+       */
+      splitChordAt: (t16) => set((state) => {
+        if (!state.arrangement) return state;
+        const chords = state.arrangement.chords || [];
+        if (chords.length === 0) return state;
 
-    return {
-      ...historyUpdate,
-      arrangement: { ...state.arrangement, voices: updatedVoices },
-    };
-  }),
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
 
-  // Clear all nodes from a single voice track.
-  clearVoiceNodes: (voiceId) => set((state) => {
-    if (!state.arrangement) return state;
+        const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+        const snappedT16 = Math.round(t16);
 
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
+        // Minimum length of any chord segment (in 16ths).
+        const minDur16 = 1;
 
-    const updatedVoices = state.arrangement.voices.map((voice) =>
-      voice.id === voiceId ? { ...voice, nodes: [] } : voice
-    );
+        // Helper: insert a new chord by stealing `minDur16` from a donor chord.
+        const insertChordAtIndex = (insertIndex: number, donorIndex: number) => {
+          const donor = chords[donorIndex];
+          if (!donor || donor.duration16 <= minDur16) return null;
 
-    return {
-      ...historyUpdate,
-      arrangement: { ...state.arrangement, voices: updatedVoices },
-    };
-  }),
+          const updatedDonor: Chord = { ...donor, duration16: donor.duration16 - minDur16 };
+          const newChord: Chord = { t16: 0, duration16: minDur16, name: 'C' };
 
-  // Clear all nodes from ALL voice tracks.
-  clearAllVoiceNodes: () => set((state) => {
-    if (!state.arrangement) return state;
+          const next = [...chords];
+          next[donorIndex] = updatedDonor;
+          next.splice(insertIndex, 0, newChord);
+          return next;
+        };
 
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
+        // If you Shift+click right at the very start/end, we still want to create a chord.
+        // We do this by inserting a 1/16th chord at the edge.
+        if (snappedT16 <= 0) {
+          const next = insertChordAtIndex(0, 0);
+          if (!next) return state;
+          return {
+            ...historyUpdate,
+            arrangement: {
+              ...state.arrangement,
+              chords: get().normalizeChordTrack(next, totalT16),
+            },
+          };
+        }
 
-    const updatedVoices = state.arrangement.voices.map((voice) => ({
-      ...voice,
-      nodes: [],
-    }));
+        if (snappedT16 >= totalT16) {
+          const next = insertChordAtIndex(chords.length, chords.length - 1);
+          if (!next) return state;
+          return {
+            ...historyUpdate,
+            arrangement: {
+              ...state.arrangement,
+              chords: get().normalizeChordTrack(next, totalT16),
+            },
+          };
+        }
 
-    return {
-      ...historyUpdate,
-      arrangement: { ...state.arrangement, voices: updatedVoices },
-    };
-  }),
+        // Clamp for the "split inside a chord" case.
+        const clampedT16 = Math.max(1, Math.min(totalT16 - 1, snappedT16));
 
-  // -- Create Mode - Chord Track Editing --
+        const idx = chords.findIndex((c) => clampedT16 > c.t16 && clampedT16 < c.t16 + c.duration16);
+        if (idx === -1) {
+          // If you click exactly on a boundary, insert a small chord segment at that boundary.
+          // Example: boundary between chord i-1 and i is represented by chords[i].t16.
+          const boundaryRightIndex = chords.findIndex((c) => c.t16 === clampedT16);
+          if (boundaryRightIndex === -1) return state;
 
-  /**
-   * Enable chord track by generating a default set of one chord per bar.
-   */
-  enableChordTrack: () => set((state) => {
-    if (!state.arrangement) return state;
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
-    const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
-    const defaults = get().createDefaultChordTrack(state.arrangement);
-    return {
-      ...historyUpdate,
-      arrangement: {
-        ...state.arrangement,
-        chords: get().normalizeChordTrack(defaults, totalT16),
-      },
-    };
-  }),
+          const next = insertChordAtIndex(boundaryRightIndex, boundaryRightIndex);
+          if (!next) return state;
 
-  /**
-   * Disable chord track by removing all chord blocks.
-   * The UI will show the "Enable Chord Track" button again.
-   */
-  disableChordTrack: () => set((state) => {
-    if (!state.arrangement) return state;
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
-    return {
-      ...historyUpdate,
-      arrangement: {
-        ...state.arrangement,
-        chords: [],
-      },
-    };
-  }),
+          return {
+            ...historyUpdate,
+            arrangement: {
+              ...state.arrangement,
+              chords: get().normalizeChordTrack(next, totalT16),
+            },
+          };
+        }
 
-  /**
-   * Update arrangement parameters while staying in Create mode.
-   *
-   * IMPORTANT:
-   * - We do NOT call setArrangement() here because that resets voice states/recordings/history.
-   * - We keep voice nodes, but clamp any nodes that fall beyond the new arrangement length.
-   * - If a chord track exists, we normalize it so it covers the new full timeline.
-   */
-  updateArrangementParams: (update) => set((state) => {
-    if (!state.arrangement) return state;
+        const chord = chords[idx];
+        const leftDur = clampedT16 - chord.t16;
+        const rightDur = (chord.t16 + chord.duration16) - clampedT16;
+        if (leftDur < 1 || rightDur < 1) return state;
 
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
+        const left: Chord = { ...chord, duration16: leftDur };
+        const right: Chord = { ...chord, t16: clampedT16, duration16: rightDur, name: 'C' };
 
-    const prev = state.arrangement;
-    const nextBars = Math.max(1, Math.min(32, Math.round(update.bars)));
-    const nextTempo = Math.max(40, Math.min(240, Math.round(update.tempo)));
-    const nextTimeSigNum = Math.max(2, Math.min(12, Math.round(update.timeSig.numerator)));
-    const nextTimeSigDen = update.timeSig.denominator;
-    const nextTotalT16 = nextBars * nextTimeSigNum * 4;
+        const next = [...chords.slice(0, idx), left, right, ...chords.slice(idx + 1)];
+        return {
+          ...historyUpdate,
+          arrangement: {
+            ...state.arrangement,
+            chords: get().normalizeChordTrack(next, totalT16),
+          },
+        };
+      }),
 
-    const nextVoices: Voice[] = prev.voices.map((v) => ({
-      ...v,
-      nodes: v.nodes.filter((n) => n.t16 <= nextTotalT16),
-    }));
+      /**
+       * Resize the boundary between two neighboring chords.
+       * `leftChordIndex` is the index of the chord on the left side of the boundary.
+       */
+      resizeChordBoundary: (leftChordIndex, newBoundaryT16) => set((state) => {
+        if (!state.arrangement) return state;
+        const chords = state.arrangement.chords || [];
+        if (leftChordIndex < 0 || leftChordIndex >= chords.length - 1) return state;
 
-    let nextChords = prev.chords;
-    if (nextChords && nextChords.length > 0) {
-      nextChords = get().normalizeChordTrack(nextChords, nextTotalT16);
-    }
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
 
-    const nextArrangement: Arrangement = {
-      ...prev,
-      title: update.title,
-      tempo: nextTempo,
-      tonic: update.tonic,
-      scale: update.scale,
-      bars: nextBars,
-      timeSig: { numerator: nextTimeSigNum, denominator: nextTimeSigDen },
-      voices: nextVoices,
-      chords: nextChords,
-    };
+        const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
 
-    const nextPosition = Math.max(0, Math.min(state.playback.position, nextTotalT16));
+        const left = chords[leftChordIndex];
+        const right = chords[leftChordIndex + 1];
+        const leftStart = left.t16;
+        const rightEnd = right.t16 + right.duration16;
 
-    return {
-      ...historyUpdate,
-      arrangement: nextArrangement,
-      playback: {
-        ...state.playback,
-        loopEnd: nextTotalT16,
-        position: nextPosition,
-      },
-    };
-  }),
+        const snappedBoundary = Math.round(newBoundaryT16);
+        const minDur16 = 1;
 
-  /**
-   * Rename a chord label.
-   */
-  setChordName: (chordIndex, name) => set((state) => {
-    if (!state.arrangement) return state;
-    const chords = state.arrangement.chords || [];
-    if (chordIndex < 0 || chordIndex >= chords.length) return state;
+        if (snappedBoundary <= leftStart) {
+          // Delete the left chord and let the right chord extend over it.
+          const remaining = chords.filter((_, idx) => idx !== leftChordIndex);
+          const mergedRight: Chord = { ...right, t16: leftStart, duration16: rightEnd - leftStart };
+          remaining[leftChordIndex] = mergedRight;
+          return {
+            ...historyUpdate,
+            arrangement: {
+              ...state.arrangement,
+              chords: get().normalizeChordTrack(remaining, totalT16),
+            },
+          };
+        }
 
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
+        if (snappedBoundary >= rightEnd) {
+          // Delete the right chord and extend the left chord through it.
+          const remaining = chords.filter((_, idx) => idx !== leftChordIndex + 1);
+          const mergedLeft: Chord = { ...left, duration16: rightEnd - leftStart };
+          remaining[leftChordIndex] = mergedLeft;
+          return {
+            ...historyUpdate,
+            arrangement: {
+              ...state.arrangement,
+              chords: get().normalizeChordTrack(remaining, totalT16),
+            },
+          };
+        }
 
-    const updated = chords.map((c, idx) => idx === chordIndex ? { ...c, name } : c);
-    return {
-      ...historyUpdate,
-      arrangement: {
-        ...state.arrangement,
-        chords: updated,
-      },
-    };
-  }),
+        const minBoundary = leftStart + minDur16;
+        const maxBoundary = rightEnd - minDur16;
+        const boundary = Math.max(minBoundary, Math.min(maxBoundary, snappedBoundary));
 
-  /**
-   * Split a chord at a given time, creating a new chord segment to the right.
-   * The new segment uses the default name "C".
-   */
-  splitChordAt: (t16) => set((state) => {
-    if (!state.arrangement) return state;
-    const chords = state.arrangement.chords || [];
-    if (chords.length === 0) return state;
+        const updatedLeft: Chord = { ...left, duration16: boundary - leftStart };
+        const updatedRight: Chord = { ...right, t16: boundary, duration16: rightEnd - boundary };
 
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
+        const next = chords.map((c, idx) => {
+          if (idx === leftChordIndex) return updatedLeft;
+          if (idx === leftChordIndex + 1) return updatedRight;
+          return c;
+        });
 
-    const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
-    const snappedT16 = Math.round(t16);
+        return {
+          ...historyUpdate,
+          arrangement: {
+            ...state.arrangement,
+            chords: get().normalizeChordTrack(next, totalT16),
+          },
+        };
+      }),
 
-    // Minimum length of any chord segment (in 16ths).
-    const minDur16 = 1;
+      /**
+       * Delete a chord segment.
+       * The neighbor chord expands to cover the deleted time so there are no gaps.
+       */
+      deleteChord: (chordIndex) => set((state) => {
+        if (!state.arrangement) return state;
+        const chords = state.arrangement.chords || [];
+        if (chordIndex < 0 || chordIndex >= chords.length) return state;
 
-    // Helper: insert a new chord by stealing `minDur16` from a donor chord.
-    const insertChordAtIndex = (insertIndex: number, donorIndex: number) => {
-      const donor = chords[donorIndex];
-      if (!donor || donor.duration16 <= minDur16) return null;
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
 
-      const updatedDonor: Chord = { ...donor, duration16: donor.duration16 - minDur16 };
-      const newChord: Chord = { t16: 0, duration16: minDur16, name: 'C' };
+        const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
 
-      const next = [...chords];
-      next[donorIndex] = updatedDonor;
-      next.splice(insertIndex, 0, newChord);
-      return next;
-    };
+        // If there is only one chord, deleting it disables the chord track.
+        if (chords.length === 1) {
+          return {
+            ...historyUpdate,
+            arrangement: {
+              ...state.arrangement,
+              chords: [],
+            },
+          };
+        }
 
-    // If you Shift+click right at the very start/end, we still want to create a chord.
-    // We do this by inserting a 1/16th chord at the edge.
-    if (snappedT16 <= 0) {
-      const next = insertChordAtIndex(0, 0);
-      if (!next) return state;
-      return {
-        ...historyUpdate,
-        arrangement: {
-          ...state.arrangement,
-          chords: get().normalizeChordTrack(next, totalT16),
+        const target = chords[chordIndex];
+        const remaining = chords.filter((_, idx) => idx !== chordIndex);
+
+        if (chordIndex > 0) {
+          // Expand the previous chord.
+          const prevIndex = chordIndex - 1;
+          const prev = remaining[prevIndex];
+          remaining[prevIndex] = { ...prev, duration16: prev.duration16 + target.duration16 };
+        } else {
+          // Expand the new first chord and shift it to start at 0.
+          const first = remaining[0];
+          remaining[0] = { ...first, t16: 0, duration16: first.duration16 + target.duration16 };
+        }
+
+        return {
+          ...historyUpdate,
+          arrangement: {
+            ...state.arrangement,
+            chords: get().normalizeChordTrack(remaining, totalT16),
+          },
+        };
+      }),
+
+      // -- Voice Controls --
+      setVoiceSynthVolume: (voiceId, volume) => set((state) => ({
+        voiceStates: state.voiceStates.map((v) =>
+          v.voiceId === voiceId ? { ...v, synthVolume: Math.max(0, Math.min(1, volume)) } : v
+        ),
+      })),
+
+      setVoiceSynthMuted: (voiceId, muted) => set((state) => ({
+        voiceStates: state.voiceStates.map((v) =>
+          v.voiceId === voiceId ? { ...v, synthMuted: muted } : v
+        ),
+      })),
+
+      setVoiceSynthSolo: (voiceId, solo) => set((state) => ({
+        voiceStates: state.voiceStates.map((v) =>
+          v.voiceId === voiceId ? { ...v, synthSolo: solo } : v
+        ),
+      })),
+
+      setVoiceSynthPan: (voiceId, pan) => set((state) => ({
+        voiceStates: state.voiceStates.map((v) =>
+          v.voiceId === voiceId ? { ...v, synthPan: Math.max(-1, Math.min(1, pan)) } : v
+        ),
+      })),
+
+      setVoiceVocalVolume: (voiceId, volume) => set((state) => ({
+        voiceStates: state.voiceStates.map((v) =>
+          v.voiceId === voiceId ? { ...v, vocalVolume: Math.max(0, Math.min(1, volume)) } : v
+        ),
+      })),
+
+      setVoiceVocalMuted: (voiceId, muted) => set((state) => ({
+        voiceStates: state.voiceStates.map((v) =>
+          v.voiceId === voiceId ? { ...v, vocalMuted: muted } : v
+        ),
+      })),
+
+      setVoiceVocalSolo: (voiceId, solo) => set((state) => ({
+        voiceStates: state.voiceStates.map((v) =>
+          v.voiceId === voiceId ? { ...v, vocalSolo: solo } : v
+        ),
+      })),
+
+      setVoiceVocalPan: (voiceId, pan) => set((state) => ({
+        voiceStates: state.voiceStates.map((v) =>
+          v.voiceId === voiceId ? { ...v, vocalPan: Math.max(-1, Math.min(1, pan)) } : v
+        ),
+      })),
+
+      setVoiceVocalReverb: (voiceId, reverb) => set((state) => ({
+        voiceStates: state.voiceStates.map(vs =>
+          vs.voiceId === voiceId ? { ...vs, vocalReverb: reverb } : vs
+        )
+      })),
+
+      // -- Focus (combined synth+vocal solo toggle) --
+      // Clicking a contour line toggles "focus" for that voice.
+      // Focus means both synthSolo AND vocalSolo are set to true.
+      // If already focused, clicking again removes the focus.
+      toggleFocus: (voiceId) => set((state) => {
+        const vs = state.voiceStates.find(v => v.voiceId === voiceId);
+        if (!vs) return state;
+
+        // If this voice is already focused (both solos on), turn it off.
+        const isFocused = vs.synthSolo && vs.vocalSolo;
+        const newSolo = !isFocused;
+
+        return {
+          voiceStates: state.voiceStates.map(v =>
+            v.voiceId === voiceId
+              ? { ...v, synthSolo: newSolo, vocalSolo: newSolo }
+              : v
+          ),
+        };
+      }),
+
+      // Clear all focus: remove all solo states from every voice.
+      // Triggered by clicking empty grid space or pressing Escape.
+      clearAllFocus: () => set((state) => ({
+        voiceStates: state.voiceStates.map(v => ({
+          ...v,
+          synthSolo: false,
+          vocalSolo: false,
+        })),
+      })),
+
+      // Global Mix
+      setGlobalVolume: (volume) => set({ globalVolume: volume }),
+      setGlobalReverb: (reverb) => set({ globalReverb: reverb }),
+
+      // Recording
+      armVoice: (voiceId) => set({ armedVoiceId: voiceId }),
+
+      addRecording: (voiceId, recording) => set((state) => {
+        const newRecordings = new Map(state.recordings);
+        newRecordings.set(voiceId, recording);
+        return {
+          recordings: newRecordings,
+          voiceStates: state.voiceStates.map((v) =>
+            v.voiceId === voiceId ? { ...v, hasRecording: true } : v
+          ),
+        };
+      }),
+
+      clearRecording: (voiceId) => set((state) => {
+        const newRecordings = new Map(state.recordings);
+        newRecordings.delete(voiceId);
+        return {
+          recordings: newRecordings,
+          voiceStates: state.voiceStates.map((v) =>
+            v.voiceId === voiceId ? { ...v, hasRecording: false } : v
+          ),
+        };
+      }),
+
+      clearAllRecordings: () => set((state) => ({
+        recordings: new Map(),
+        voiceStates: state.voiceStates.map((v) => ({ ...v, hasRecording: false })),
+        livePitchTrace: [],
+        livePitchTraceVoiceId: null,
+      })),
+
+      setLivePitchTrace: (trace, voiceId) => set((state) => ({
+        livePitchTrace: trace,
+        // If voiceId is explicitly provided, always use it (even if trace is empty —
+        // this is how startRecording "tags" the trace before data arrives).
+        // If voiceId is NOT provided: keep the existing value when trace has data,
+        // clear it when trace is emptied (recording finished).
+        livePitchTraceVoiceId: voiceId !== undefined
+          ? voiceId
+          : (trace.length === 0 ? null : state.livePitchTraceVoiceId),
+      })),
+
+      addPitchPoint: (point) => set((state) => ({
+        livePitchTrace: [...state.livePitchTrace, point],
+      })),
+
+      // -- Playback --
+      setPlaying: (playing) => set((state) => ({
+        playback: { ...state.playback, isPlaying: playing },
+      })),
+
+      setMetronomeEnabled: (enabled: boolean) => set((state) => ({
+        playback: { ...state.playback, metronomeEnabled: enabled },
+      })),
+
+      setRecording: (recording) => set((state) => ({
+        playback: { ...state.playback, isRecording: recording },
+      })),
+
+      setPosition: (t16) => set((state) => ({
+        playback: { ...state.playback, position: t16 },
+      })),
+
+      setPositionMs: (ms) => set((state) => ({
+        playback: { ...state.playback, positionMs: ms },
+      })),
+
+      setLoopEnabled: (enabled) => set((state) => ({
+        playback: { ...state.playback, loopEnabled: enabled },
+      })),
+
+      setLoopPoints: (start, end) => set((state) => ({
+        playback: { ...state.playback, loopStart: start, loopEnd: end },
+      })),
+
+      setTempoMultiplier: (multiplier) => set((state) => ({
+        playback: { ...state.playback, tempoMultiplier: multiplier },
+      })),
+
+      // -- Microphone --
+      setMicrophoneState: (newState) => set((state) => ({
+        microphoneState: { ...state.microphoneState, ...newState },
+      })),
+
+      // -- Count-in --
+      setCountIn: (settings) => set((state) => ({
+        countIn: { ...state.countIn, ...settings },
+      })),
+
+      // -- Vocal Range --
+      setVocalRange: (range) => set((state) => {
+        const nextRange: VocalRange = { ...state.vocalRange, ...range };
+
+        // Keep note-name and frequency fields in sync.
+        // This ensures transposition suggestions work even when you set notes via the mic modal.
+        if (range.lowNote) {
+          nextRange.lowFrequency = noteNameToFrequency(range.lowNote) ?? nextRange.lowFrequency;
+        }
+        if (range.highNote) {
+          nextRange.highFrequency = noteNameToFrequency(range.highNote) ?? nextRange.highFrequency;
+        }
+
+        return {
+          vocalRange: nextRange,
+        };
+      }),
+
+      // -- Display --
+      setDisplaySettings: (settings) => set((state) => ({
+        display: { ...state.display, ...settings },
+      })),
+
+      setZoomLevel: (zoom) => set((state) => ({
+        display: { ...state.display, zoomLevel: zoom },
+      })),
+
+      // -- Follow-mode timeline --
+
+      /**
+       * Set the exact horizontal zoom value (pixels per 16th note).
+       */
+      setPxPerT: (pxPerT) => set((state) => ({
+        followMode: { ...state.followMode, pxPerT: Math.max(0.5, Math.min(60, pxPerT)) },
+      })),
+
+      /**
+       * Update the minimum pxPerT floor (set by the Grid on resize).
+       * Also clamp current pxPerT upward if it's below the new floor.
+       */
+      setMinPxPerT: (minPxPerT) => set((state) => {
+        const clamped = Math.max(minPxPerT, state.followMode.pxPerT);
+        return { followMode: { ...state.followMode, minPxPerT, pxPerT: clamped } };
+      }),
+
+      /**
+       * Store the actual drawable width of the main grid.
+       *
+       * We keep this in the store so other components (like the minimap) can
+       * compute the camera viewport correctly without guessing based on zoom floors.
+       */
+      setFollowViewportWidthPx: (viewportWidthPx) => set((state) => ({
+        followMode: {
+          ...state.followMode,
+          viewportWidthPx: Math.max(0, viewportWidthPx),
         },
-      };
-    }
+      })),
 
-    if (snappedT16 >= totalT16) {
-      const next = insertChordAtIndex(chords.length, chords.length - 1);
-      if (!next) return state;
-      return {
-        ...historyUpdate,
-        arrangement: {
-          ...state.arrangement,
-          chords: get().normalizeChordTrack(next, totalT16),
+      setHorizontalZoom: (direction) => set((state) => {
+        const factor = direction === 'in' ? 1.15 : 1 / 1.15;
+        const floor = state.followMode.minPxPerT;
+        const next = Math.max(floor, Math.min(60, state.followMode.pxPerT * factor));
+        return { followMode: { ...state.followMode, pxPerT: next } };
+      }),
+
+      /**
+       * Set the user-selected camera mode (smart / follow / static).
+       */
+      setCameraMode: (mode) => set((state) => ({
+        followMode: { ...state.followMode, cameraMode: mode },
+      })),
+
+      /**
+       * Increment the camera follow reset counter.
+       * The restart button calls this so Grid.tsx can watch the counter
+       * and reset the camera to follow mode.
+       */
+      triggerCameraFollowReset: () => set((state) => ({
+        followMode: {
+          ...state.followMode,
+          cameraFollowResetCount: state.followMode.cameraFollowResetCount + 1,
         },
-      };
-    }
+      })),
 
-    // Clamp for the "split inside a chord" case.
-    const clampedT16 = Math.max(1, Math.min(totalT16 - 1, snappedT16));
+      /**
+       * Begin a scrub/drag gesture on the main timeline.
+       */
+      startTimelineDrag: () => set((state) => ({
+        followMode: { ...state.followMode, isDraggingTimeline: true },
+      })),
 
-    const idx = chords.findIndex((c) => clampedT16 > c.t16 && clampedT16 < c.t16 + c.duration16);
-    if (idx === -1) {
-      // If you click exactly on a boundary, insert a small chord segment at that boundary.
-      // Example: boundary between chord i-1 and i is represented by chords[i].t16.
-      const boundaryRightIndex = chords.findIndex((c) => c.t16 === clampedT16);
-      if (boundaryRightIndex === -1) return state;
+      /**
+       * Update the pending seek position while dragging.
+       * The grid renders using this value instead of the transport worldT.
+       */
+      updatePendingWorldT: (worldT) => set((state) => ({
+        followMode: { ...state.followMode, pendingWorldT: Math.max(0, worldT) },
+      })),
 
-      const next = insertChordAtIndex(boundaryRightIndex, boundaryRightIndex);
-      if (!next) return state;
+      /**
+       * Commit the drag: seek the transport to the pending position, then clear drag state.
+       */
+      commitTimelineDrag: () => set((state) => {
+        // The actual seek is handled by the component that calls this
+        // (it reads pendingWorldT and calls playbackEngine.seekWorld).
+        return {
+          followMode: {
+            ...state.followMode,
+            isDraggingTimeline: false,
+            pendingWorldT: null,
+          },
+        };
+      }),
 
-      return {
-        ...historyUpdate,
-        arrangement: {
-          ...state.arrangement,
-          chords: get().normalizeChordTrack(next, totalT16),
+      /**
+       * Cancel the drag without seeking.
+       */
+      cancelTimelineDrag: () => set((state) => ({
+        followMode: {
+          ...state.followMode,
+          isDraggingTimeline: false,
+          pendingWorldT: null,
         },
-      };
-    }
+      })),
 
-    const chord = chords[idx];
-    const leftDur = clampedT16 - chord.t16;
-    const rightDur = (chord.t16 + chord.duration16) - clampedT16;
-    if (leftDur < 1 || rightDur < 1) return state;
+      /**
+       * Begin a drag gesture on the minimap.
+       */
+      startMinimapDrag: () => set((state) => ({
+        followMode: { ...state.followMode, isDraggingMinimap: true },
+      })),
 
-    const left: Chord = { ...chord, duration16: leftDur };
-    const right: Chord = { ...chord, t16: clampedT16, duration16: rightDur, name: 'C' };
-
-    const next = [...chords.slice(0, idx), left, right, ...chords.slice(idx + 1)];
-    return {
-      ...historyUpdate,
-      arrangement: {
-        ...state.arrangement,
-        chords: get().normalizeChordTrack(next, totalT16),
-      },
-    };
-  }),
-
-  /**
-   * Resize the boundary between two neighboring chords.
-   * `leftChordIndex` is the index of the chord on the left side of the boundary.
-   */
-  resizeChordBoundary: (leftChordIndex, newBoundaryT16) => set((state) => {
-    if (!state.arrangement) return state;
-    const chords = state.arrangement.chords || [];
-    if (leftChordIndex < 0 || leftChordIndex >= chords.length - 1) return state;
-
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
-
-    const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
-
-    const left = chords[leftChordIndex];
-    const right = chords[leftChordIndex + 1];
-    const leftStart = left.t16;
-    const rightEnd = right.t16 + right.duration16;
-
-    const snappedBoundary = Math.round(newBoundaryT16);
-    const minDur16 = 1;
-
-    if (snappedBoundary <= leftStart) {
-      // Delete the left chord and let the right chord extend over it.
-      const remaining = chords.filter((_, idx) => idx !== leftChordIndex);
-      const mergedRight: Chord = { ...right, t16: leftStart, duration16: rightEnd - leftStart };
-      remaining[leftChordIndex] = mergedRight;
-      return {
-        ...historyUpdate,
-        arrangement: {
-          ...state.arrangement,
-          chords: get().normalizeChordTrack(remaining, totalT16),
+      /**
+       * Commit the minimap drag: seek the transport to the pending position.
+       */
+      commitMinimapDrag: () => set((state) => ({
+        followMode: {
+          ...state.followMode,
+          isDraggingMinimap: false,
+          pendingWorldT: null,
         },
-      };
-    }
+      })),
 
-    if (snappedBoundary >= rightEnd) {
-      // Delete the right chord and extend the left chord through it.
-      const remaining = chords.filter((_, idx) => idx !== leftChordIndex + 1);
-      const mergedLeft: Chord = { ...left, duration16: rightEnd - leftStart };
-      remaining[leftChordIndex] = mergedLeft;
-      return {
-        ...historyUpdate,
-        arrangement: {
-          ...state.arrangement,
-          chords: get().normalizeChordTrack(remaining, totalT16),
+      /**
+       * Cancel the minimap drag without seeking.
+       */
+      cancelMinimapDrag: () => set((state) => ({
+        followMode: {
+          ...state.followMode,
+          isDraggingMinimap: false,
+          pendingWorldT: null,
         },
-      };
-    }
-
-    const minBoundary = leftStart + minDur16;
-    const maxBoundary = rightEnd - minDur16;
-    const boundary = Math.max(minBoundary, Math.min(maxBoundary, snappedBoundary));
-
-    const updatedLeft: Chord = { ...left, duration16: boundary - leftStart };
-    const updatedRight: Chord = { ...right, t16: boundary, duration16: rightEnd - boundary };
-
-    const next = chords.map((c, idx) => {
-      if (idx === leftChordIndex) return updatedLeft;
-      if (idx === leftChordIndex + 1) return updatedRight;
-      return c;
-    });
-
-    return {
-      ...historyUpdate,
-      arrangement: {
-        ...state.arrangement,
-        chords: get().normalizeChordTrack(next, totalT16),
-      },
-    };
-  }),
-
-  /**
-   * Delete a chord segment.
-   * The neighbor chord expands to cover the deleted time so there are no gaps.
-   */
-  deleteChord: (chordIndex) => set((state) => {
-    if (!state.arrangement) return state;
-    const chords = state.arrangement.chords || [];
-    if (chordIndex < 0 || chordIndex >= chords.length) return state;
-
-    const historyUpdate = prepareHistoryUpdate(state);
-    if (!historyUpdate) return state;
-
-    const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
-
-    // If there is only one chord, deleting it disables the chord track.
-    if (chords.length === 1) {
-      return {
-        ...historyUpdate,
-        arrangement: {
-          ...state.arrangement,
-          chords: [],
-        },
-      };
-    }
-
-    const target = chords[chordIndex];
-    const remaining = chords.filter((_, idx) => idx !== chordIndex);
-
-    if (chordIndex > 0) {
-      // Expand the previous chord.
-      const prevIndex = chordIndex - 1;
-      const prev = remaining[prevIndex];
-      remaining[prevIndex] = { ...prev, duration16: prev.duration16 + target.duration16 };
-    } else {
-      // Expand the new first chord and shift it to start at 0.
-      const first = remaining[0];
-      remaining[0] = { ...first, t16: 0, duration16: first.duration16 + target.duration16 };
-    }
-
-    return {
-      ...historyUpdate,
-      arrangement: {
-        ...state.arrangement,
-        chords: get().normalizeChordTrack(remaining, totalT16),
-      },
-    };
-  }),
-
-  // -- Voice Controls --
-  setVoiceSynthVolume: (voiceId, volume) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, synthVolume: Math.max(0, Math.min(1, volume)) } : v
-    ),
-  })),
-
-  setVoiceSynthMuted: (voiceId, muted) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, synthMuted: muted } : v
-    ),
-  })),
-
-  setVoiceSynthSolo: (voiceId, solo) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, synthSolo: solo } : v
-    ),
-  })),
-
-  setVoiceSynthPan: (voiceId, pan) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, synthPan: Math.max(-1, Math.min(1, pan)) } : v
-    ),
-  })),
-
-  setVoiceVocalVolume: (voiceId, volume) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, vocalVolume: Math.max(0, Math.min(1, volume)) } : v
-    ),
-  })),
-
-  setVoiceVocalMuted: (voiceId, muted) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, vocalMuted: muted } : v
-    ),
-  })),
-
-  setVoiceVocalSolo: (voiceId, solo) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, vocalSolo: solo } : v
-    ),
-  })),
-
-  setVoiceVocalPan: (voiceId, pan) => set((state) => ({
-    voiceStates: state.voiceStates.map((v) =>
-      v.voiceId === voiceId ? { ...v, vocalPan: Math.max(-1, Math.min(1, pan)) } : v
-    ),
-  })),
-
-  setVoiceVocalReverb: (voiceId, reverb) => set((state) => ({
-    voiceStates: state.voiceStates.map(vs =>
-      vs.voiceId === voiceId ? { ...vs, vocalReverb: reverb } : vs
-    )
-  })),
-
-  // -- Focus (combined synth+vocal solo toggle) --
-  // Clicking a contour line toggles "focus" for that voice.
-  // Focus means both synthSolo AND vocalSolo are set to true.
-  // If already focused, clicking again removes the focus.
-  toggleFocus: (voiceId) => set((state) => {
-    const vs = state.voiceStates.find(v => v.voiceId === voiceId);
-    if (!vs) return state;
-
-    // If this voice is already focused (both solos on), turn it off.
-    const isFocused = vs.synthSolo && vs.vocalSolo;
-    const newSolo = !isFocused;
-
-    return {
-      voiceStates: state.voiceStates.map(v =>
-        v.voiceId === voiceId
-          ? { ...v, synthSolo: newSolo, vocalSolo: newSolo }
-          : v
-      ),
-    };
-  }),
-
-  // Clear all focus: remove all solo states from every voice.
-  // Triggered by clicking empty grid space or pressing Escape.
-  clearAllFocus: () => set((state) => ({
-    voiceStates: state.voiceStates.map(v => ({
-      ...v,
-      synthSolo: false,
-      vocalSolo: false,
-    })),
-  })),
-
-  // Global Mix
-  setGlobalVolume: (volume) => set({ globalVolume: volume }),
-  setGlobalReverb: (reverb) => set({ globalReverb: reverb }),
-
-  // Recording
-  armVoice: (voiceId) => set({ armedVoiceId: voiceId }),
-
-  addRecording: (voiceId, recording) => set((state) => {
-    const newRecordings = new Map(state.recordings);
-    newRecordings.set(voiceId, recording);
-    return {
-      recordings: newRecordings,
-      voiceStates: state.voiceStates.map((v) =>
-        v.voiceId === voiceId ? { ...v, hasRecording: true } : v
-      ),
-    };
-  }),
-
-  clearRecording: (voiceId) => set((state) => {
-    const newRecordings = new Map(state.recordings);
-    newRecordings.delete(voiceId);
-    return {
-      recordings: newRecordings,
-      voiceStates: state.voiceStates.map((v) =>
-        v.voiceId === voiceId ? { ...v, hasRecording: false } : v
-      ),
-    };
-  }),
-
-  clearAllRecordings: () => set((state) => ({
-    recordings: new Map(),
-    voiceStates: state.voiceStates.map((v) => ({ ...v, hasRecording: false })),
-    livePitchTrace: [],
-    livePitchTraceVoiceId: null,
-  })),
-
-  setLivePitchTrace: (trace, voiceId) => set((state) => ({
-    livePitchTrace: trace,
-    // If voiceId is explicitly provided, always use it (even if trace is empty —
-    // this is how startRecording "tags" the trace before data arrives).
-    // If voiceId is NOT provided: keep the existing value when trace has data,
-    // clear it when trace is emptied (recording finished).
-    livePitchTraceVoiceId: voiceId !== undefined
-      ? voiceId
-      : (trace.length === 0 ? null : state.livePitchTraceVoiceId),
-  })),
-
-  addPitchPoint: (point) => set((state) => ({
-    livePitchTrace: [...state.livePitchTrace, point],
-  })),
-
-  // -- Playback --
-  setPlaying: (playing) => set((state) => ({
-    playback: { ...state.playback, isPlaying: playing },
-  })),
-
-  setMetronomeEnabled: (enabled: boolean) => set((state) => ({
-    playback: { ...state.playback, metronomeEnabled: enabled },
-  })),
-
-  setRecording: (recording) => set((state) => ({
-    playback: { ...state.playback, isRecording: recording },
-  })),
-
-  setPosition: (t16) => set((state) => ({
-    playback: { ...state.playback, position: t16 },
-  })),
-
-  setPositionMs: (ms) => set((state) => ({
-    playback: { ...state.playback, positionMs: ms },
-  })),
-
-  setLoopEnabled: (enabled) => set((state) => ({
-    playback: { ...state.playback, loopEnabled: enabled },
-  })),
-
-  setLoopPoints: (start, end) => set((state) => ({
-    playback: { ...state.playback, loopStart: start, loopEnd: end },
-  })),
-
-  setTempoMultiplier: (multiplier) => set((state) => ({
-    playback: { ...state.playback, tempoMultiplier: multiplier },
-  })),
-
-  // -- Microphone --
-  setMicrophoneState: (newState) => set((state) => ({
-    microphoneState: { ...state.microphoneState, ...newState },
-  })),
-
-  // -- Count-in --
-  setCountIn: (settings) => set((state) => ({
-    countIn: { ...state.countIn, ...settings },
-  })),
-
-  // -- Vocal Range --
-  setVocalRange: (range) => set((state) => {
-    const nextRange: VocalRange = { ...state.vocalRange, ...range };
-
-    // Keep note-name and frequency fields in sync.
-    // This ensures transposition suggestions work even when you set notes via the mic modal.
-    if (range.lowNote) {
-      nextRange.lowFrequency = noteNameToFrequency(range.lowNote) ?? nextRange.lowFrequency;
-    }
-    if (range.highNote) {
-      nextRange.highFrequency = noteNameToFrequency(range.highNote) ?? nextRange.highFrequency;
-    }
-
-    return {
-      vocalRange: nextRange,
-    };
-  }),
-
-  // -- Display --
-  setDisplaySettings: (settings) => set((state) => ({
-    display: { ...state.display, ...settings },
-  })),
-
-  setZoomLevel: (zoom) => set((state) => ({
-    display: { ...state.display, zoomLevel: zoom },
-  })),
-
-  // -- Follow-mode timeline --
-
-  /**
-   * Set the exact horizontal zoom value (pixels per 16th note).
-   */
-  setPxPerT: (pxPerT) => set((state) => ({
-    followMode: { ...state.followMode, pxPerT: Math.max(0.5, Math.min(60, pxPerT)) },
-  })),
-
-  /**
-   * Update the minimum pxPerT floor (set by the Grid on resize).
-   * Also clamp current pxPerT upward if it's below the new floor.
-   */
-  setMinPxPerT: (minPxPerT) => set((state) => {
-    const clamped = Math.max(minPxPerT, state.followMode.pxPerT);
-    return { followMode: { ...state.followMode, minPxPerT, pxPerT: clamped } };
-  }),
-
-  /**
-   * Store the actual drawable width of the main grid.
-   *
-   * We keep this in the store so other components (like the minimap) can
-   * compute the camera viewport correctly without guessing based on zoom floors.
-   */
-  setFollowViewportWidthPx: (viewportWidthPx) => set((state) => ({
-    followMode: {
-      ...state.followMode,
-      viewportWidthPx: Math.max(0, viewportWidthPx),
-    },
-  })),
-
-  setHorizontalZoom: (direction) => set((state) => {
-    const factor = direction === 'in' ? 1.15 : 1 / 1.15;
-    const floor = state.followMode.minPxPerT;
-    const next = Math.max(floor, Math.min(60, state.followMode.pxPerT * factor));
-    return { followMode: { ...state.followMode, pxPerT: next } };
-  }),
-
-  /**
-   * Set the user-selected camera mode (smart / follow / static).
-   */
-  setCameraMode: (mode) => set((state) => ({
-    followMode: { ...state.followMode, cameraMode: mode },
-  })),
-
-  /**
-   * Increment the camera follow reset counter.
-   * The restart button calls this so Grid.tsx can watch the counter
-   * and reset the camera to follow mode.
-   */
-  triggerCameraFollowReset: () => set((state) => ({
-    followMode: {
-      ...state.followMode,
-      cameraFollowResetCount: state.followMode.cameraFollowResetCount + 1,
-    },
-  })),
-
-  /**
-   * Begin a scrub/drag gesture on the main timeline.
-   */
-  startTimelineDrag: () => set((state) => ({
-    followMode: { ...state.followMode, isDraggingTimeline: true },
-  })),
-
-  /**
-   * Update the pending seek position while dragging.
-   * The grid renders using this value instead of the transport worldT.
-   */
-  updatePendingWorldT: (worldT) => set((state) => ({
-    followMode: { ...state.followMode, pendingWorldT: Math.max(0, worldT) },
-  })),
-
-  /**
-   * Commit the drag: seek the transport to the pending position, then clear drag state.
-   */
-  commitTimelineDrag: () => set((state) => {
-    // The actual seek is handled by the component that calls this
-    // (it reads pendingWorldT and calls playbackEngine.seekWorld).
-    return {
-      followMode: {
-        ...state.followMode,
-        isDraggingTimeline: false,
-        pendingWorldT: null,
-      },
-    };
-  }),
-
-  /**
-   * Cancel the drag without seeking.
-   */
-  cancelTimelineDrag: () => set((state) => ({
-    followMode: {
-      ...state.followMode,
-      isDraggingTimeline: false,
-      pendingWorldT: null,
-    },
-  })),
-
-  /**
-   * Begin a drag gesture on the minimap.
-   */
-  startMinimapDrag: () => set((state) => ({
-    followMode: { ...state.followMode, isDraggingMinimap: true },
-  })),
-
-  /**
-   * Commit the minimap drag: seek the transport to the pending position.
-   */
-  commitMinimapDrag: () => set((state) => ({
-    followMode: {
-      ...state.followMode,
-      isDraggingMinimap: false,
-      pendingWorldT: null,
-    },
-  })),
-
-  /**
-   * Cancel the minimap drag without seeking.
-   */
-  cancelMinimapDrag: () => set((state) => ({
-    followMode: {
-      ...state.followMode,
-      isDraggingMinimap: false,
-      pendingWorldT: null,
-    },
-  })),
-
-  // -- Play-mode vertical pan (separate from Create) --
-
-  setPlayPitchPanSemitones: (semitones) => set((state) => {
-    const clamped = Math.max(-72, Math.min(72, semitones));
-    return { followMode: { ...state.followMode, pitchPanSemitones: clamped } };
-  }),
-
-  adjustPlayPitchPanSemitones: (deltaSemitones) => set((state) => {
-    const next = state.followMode.pitchPanSemitones + deltaSemitones;
-    const clamped = Math.max(-72, Math.min(72, next));
-    return { followMode: { ...state.followMode, pitchPanSemitones: clamped } };
-  }),
-
-  // -- Create-mode navigation --
-
-  setCreateCameraWorldT: (worldT) => set((state) => {
-    const clampedMin = 0;
-
-    // In one-shot mode we clamp to the end of the arrangement so you can't pan forever.
-    const totalT16 = state.arrangement
-      ? state.arrangement.bars * state.arrangement.timeSig.numerator * 4
-      : 0;
-    const clampedMax = state.playback.loopEnabled ? Number.POSITIVE_INFINITY : totalT16;
-
-    const next = Math.max(clampedMin, Math.min(clampedMax, worldT));
-    return { createView: { ...state.createView, cameraWorldT: next } };
-  }),
-
-  adjustCreateCameraWorldT: (deltaWorldT) => set((state) => {
-    const current = state.createView.cameraWorldT;
-    const next = current + deltaWorldT;
-
-    const clampedMin = 0;
-    const totalT16 = state.arrangement
-      ? state.arrangement.bars * state.arrangement.timeSig.numerator * 4
-      : 0;
-    const clampedMax = state.playback.loopEnabled ? Number.POSITIVE_INFINITY : totalT16;
-
-    const clamped = Math.max(clampedMin, Math.min(clampedMax, next));
-    return { createView: { ...state.createView, cameraWorldT: clamped } };
-  }),
-
-  setCreatePitchPanSemitones: (semitones) => set((state) => {
-    const clamped = Math.max(-72, Math.min(72, semitones));
-    return { createView: { ...state.createView, pitchPanSemitones: clamped } };
-  }),
-
-  adjustCreatePitchPanSemitones: (deltaSemitones) => set((state) => {
-    const next = state.createView.pitchPanSemitones + deltaSemitones;
-    const clamped = Math.max(-72, Math.min(72, next));
-    return { createView: { ...state.createView, pitchPanSemitones: clamped } };
-  }),
-
-  resetCreateView: () => set({ createView: initialCreateViewState }),
-
-  // -- Theme --
-  setTheme: (theme) => set({ theme }),
-
-  // -- Mode --
-  setMode: (mode) => set((state) => {
-    if (mode === 'create') {
-      return {
-        mode,
-
-        // Create mode defaults:
-        // - One-shot (no looping)
-        // - Slightly higher grid opacity for composition
-        playback: {
-          ...state.playback,
-          loopEnabled: false,
-        },
-        display: {
-          ...state.display,
-          gridOpacity: 0.75,
-        },
-
-        // Reset the vertical pan so the pitch view starts centered.
-        createView: {
-          ...state.createView,
-          pitchPanSemitones: 0,
-        },
-      };
-    }
-
-    // Switching to Play mode should feel like starting fresh:
-    // - playhead back to the beginning
-    // - zoom back to a sensible "fit" baseline
-    // - clear any in-progress scrubs
-    return {
-      mode,
-
-      playback: {
-        ...state.playback,
-        isPlaying: false,
-        isRecording: false,
-        position: 0,
-        positionMs: 0,
-        loopEnabled: true,
+      })),
+
+      // -- Play-mode vertical pan (separate from Create) --
+
+      setPlayPitchPanSemitones: (semitones) => set((state) => {
+        const clamped = Math.max(-72, Math.min(72, semitones));
+        return { followMode: { ...state.followMode, pitchPanSemitones: clamped } };
+      }),
+
+      adjustPlayPitchPanSemitones: (deltaSemitones) => set((state) => {
+        const next = state.followMode.pitchPanSemitones + deltaSemitones;
+        const clamped = Math.max(-72, Math.min(72, next));
+        return { followMode: { ...state.followMode, pitchPanSemitones: clamped } };
+      }),
+
+      // -- Create-mode navigation --
+
+      setCreateCameraWorldT: (worldT) => set((state) => {
+        const clampedMin = 0;
+
+        // In one-shot mode we clamp to the end of the arrangement so you can't pan forever.
+        const totalT16 = state.arrangement
+          ? state.arrangement.bars * state.arrangement.timeSig.numerator * 4
+          : 0;
+        const clampedMax = state.playback.loopEnabled ? Number.POSITIVE_INFINITY : totalT16;
+
+        const next = Math.max(clampedMin, Math.min(clampedMax, worldT));
+        return { createView: { ...state.createView, cameraWorldT: next } };
+      }),
+
+      adjustCreateCameraWorldT: (deltaWorldT) => set((state) => {
+        const current = state.createView.cameraWorldT;
+        const next = current + deltaWorldT;
+
+        const clampedMin = 0;
+        const totalT16 = state.arrangement
+          ? state.arrangement.bars * state.arrangement.timeSig.numerator * 4
+          : 0;
+        const clampedMax = state.playback.loopEnabled ? Number.POSITIVE_INFINITY : totalT16;
+
+        const clamped = Math.max(clampedMin, Math.min(clampedMax, next));
+        return { createView: { ...state.createView, cameraWorldT: clamped } };
+      }),
+
+      setCreatePitchPanSemitones: (semitones) => set((state) => {
+        const clamped = Math.max(-72, Math.min(72, semitones));
+        return { createView: { ...state.createView, pitchPanSemitones: clamped } };
+      }),
+
+      adjustCreatePitchPanSemitones: (deltaSemitones) => set((state) => {
+        const next = state.createView.pitchPanSemitones + deltaSemitones;
+        const clamped = Math.max(-72, Math.min(72, next));
+        return { createView: { ...state.createView, pitchPanSemitones: clamped } };
+      }),
+
+      resetCreateView: () => set({ createView: initialCreateViewState }),
+
+      // -- Theme --
+      setTheme: (theme) => set({ theme }),
+
+      // -- Mode --
+      setMode: (mode) => set((state) => {
+        if (mode === 'create') {
+          return {
+            mode,
+
+            // Create mode defaults:
+            // - One-shot (no looping)
+            // - Slightly higher grid opacity for composition
+            playback: {
+              ...state.playback,
+              loopEnabled: false,
+            },
+            display: {
+              ...state.display,
+              gridOpacity: 0.75,
+            },
+
+            // Reset the vertical pan so the pitch view starts centered.
+            createView: {
+              ...state.createView,
+              pitchPanSemitones: 0,
+            },
+          };
+        }
+
+        // Switching to Play mode should feel like starting fresh:
+        // - playhead back to the beginning
+        // - zoom back to a sensible "fit" baseline
+        // - clear any in-progress scrubs
+        return {
+          mode,
+
+          playback: {
+            ...state.playback,
+            isPlaying: false,
+            isRecording: false,
+            position: 0,
+            positionMs: 0,
+            loopEnabled: true,
+          },
+
+          // Reset follow-mode drag state and snap horizontal zoom back to the fit floor.
+          // (The Grid keeps minPxPerT up to date based on viewport width + arrangement length.)
+          followMode: {
+            ...state.followMode,
+            pendingWorldT: null,
+            isDraggingTimeline: false,
+            isDraggingMinimap: false,
+            pxPerT: state.followMode.minPxPerT,
+          },
+
+          // Reset vertical zoom to default.
+          display: {
+            ...state.display,
+            gridOpacity: 0.6,
+            zoomLevel: 1,
+          },
+        };
+      }),
+
+      // -- UI Modals --
+      setLibraryOpen: (open) => set({ isLibraryOpen: open }),
+      setMixerOpen: (open) => set({ isMixerOpen: open }),
+      setMicSetupOpen: (open) => set({ isMicSetupOpen: open }),
+      setDisplaySettingsOpen: (open) => set({ isDisplaySettingsOpen: open }),
+      setSaveLoadOpen: (open) => set({ isSaveLoadOpen: open }),
+      setCreateModalOpen: (open) => set({ isCreateModalOpen: open }),
+      setCreateModalMode: (mode) => set({ createModalMode: mode }),
+
+      // -- Utility --
+      initializeVoiceStates: (voices) => {
+        const voiceStates: VoiceState[] = voices.map((voice, index) =>
+          createVoiceState(voice.id, index)
+        );
+        set({ voiceStates, recordings: new Map(), livePitchTrace: [], livePitchTraceVoiceId: null });
       },
 
-      // Reset follow-mode drag state and snap horizontal zoom back to the fit floor.
-      // (The Grid keeps minPxPerT up to date based on viewport width + arrangement length.)
-      followMode: {
-        ...state.followMode,
-        pendingWorldT: null,
-        isDraggingTimeline: false,
-        isDraggingMinimap: false,
-        pxPerT: state.followMode.minPxPerT,
-      },
-
-      // Reset vertical zoom to default.
-      display: {
-        ...state.display,
-        gridOpacity: 0.6,
-        zoomLevel: 1,
-      },
-    };
-  }),
-
-  // -- UI Modals --
-  setLibraryOpen: (open) => set({ isLibraryOpen: open }),
-  setMixerOpen: (open) => set({ isMixerOpen: open }),
-  setMicSetupOpen: (open) => set({ isMicSetupOpen: open }),
-  setDisplaySettingsOpen: (open) => set({ isDisplaySettingsOpen: open }),
-  setSaveLoadOpen: (open) => set({ isSaveLoadOpen: open }),
-  setCreateModalOpen: (open) => set({ isCreateModalOpen: open }),
-  setCreateModalMode: (mode) => set({ createModalMode: mode }),
-
-  // -- Utility --
-  initializeVoiceStates: (voices) => {
-    const voiceStates: VoiceState[] = voices.map((voice, index) =>
-      createVoiceState(voice.id, index)
-    );
-    set({ voiceStates, recordings: new Map(), livePitchTrace: [], livePitchTraceVoiceId: null });
-  },
-
-  reset: () => set(initialState),
+      reset: () => set(initialState),
     }),
     {
       name: STORAGE_KEY,

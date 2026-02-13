@@ -2,10 +2,14 @@
    DISPLAY SETTINGS MODAL
    
    Modal for configuring visual display options:
-   - Show/hide chord track
-   - Show/hide scale degrees
+   - Show/hide minimap
+   - Show/hide chord labels
+   - Show/hide note labels (with label style selector)
+   - Note size scaling
+   - Line thickness scaling
    - Glow intensity
-   - Label format
+   - Grid opacity
+   - Background / environment settings
    ============================================================ */
 
 import { X, Settings, ChevronDown } from 'lucide-react';
@@ -144,52 +148,90 @@ export function DisplaySettingsModal() {
             </button>
           </div>
 
-          {/* Show scale degrees */}
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-[var(--text-primary)]">
-              Show Scale Degrees on Nodes
-            </span>
-            <button
-              onClick={() => handleToggle('showScaleDegrees', !display.showScaleDegrees)}
-              className={`
-                w-12 h-6 rounded-full transition-colors
-                ${display.showScaleDegrees
-                  ? 'bg-[var(--accent-primary)]'
-                  : 'bg-[var(--button-bg)]'
-                }
-              `}
-            >
-              <div
+          {/* Show note labels */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[var(--text-primary)]">
+                Show Note Labels
+              </span>
+              <button
+                onClick={() => handleToggle('showNoteLabels', !display.showNoteLabels)}
                 className={`
-                  w-5 h-5 rounded-full bg-white shadow transition-transform
-                  ${display.showScaleDegrees ? 'translate-x-6' : 'translate-x-0.5'}
+                  w-12 h-6 rounded-full transition-colors
+                  ${display.showNoteLabels
+                    ? 'bg-[var(--accent-primary)]'
+                    : 'bg-[var(--button-bg)]'
+                  }
                 `}
-              />
-            </button>
+              >
+                <div
+                  className={`
+                    w-5 h-5 rounded-full bg-white shadow transition-transform
+                    ${display.showNoteLabels ? 'translate-x-6' : 'translate-x-0.5'}
+                  `}
+                />
+              </button>
+            </div>
+
+            {/* Label Style — nested under Show Note Labels, only interactive when labels are ON */}
+            <div className={`space-y-2 transition-opacity ${display.showNoteLabels ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+              <span className="text-xs text-[var(--text-muted)]">
+                Label Style
+              </span>
+              <div className="flex gap-2">
+                {(['degree', 'solfege', 'noteName'] as const).map((format) => (
+                  <button
+                    key={format}
+                    onClick={() => setDisplaySettings({ labelFormat: format })}
+                    className={`
+                      flex-1 px-3 py-2 rounded-lg text-sm transition-colors
+                      ${display.labelFormat === format
+                        ? 'bg-[var(--accent-primary)] text-white'
+                        : 'bg-[var(--button-bg)] text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
+                      }
+                    `}
+                  >
+                    {format === 'degree' ? '1, 2, 3' : format === 'solfege' ? 'Do Re Mi' : 'C D E'}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
-          {/* Show pitch labels */}
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-[var(--text-primary)]">
-              Show Pitch Labels
-            </span>
-            <button
-              onClick={() => handleToggle('showPitchLabels', !display.showPitchLabels)}
-              className={`
-                w-12 h-6 rounded-full transition-colors
-                ${display.showPitchLabels
-                  ? 'bg-[var(--accent-primary)]'
-                  : 'bg-[var(--button-bg)]'
-                }
-              `}
-            >
-              <div
-                className={`
-                  w-5 h-5 rounded-full bg-white shadow transition-transform
-                  ${display.showPitchLabels ? 'translate-x-6' : 'translate-x-0.5'}
-                `}
-              />
-            </button>
+          {/* Note Size */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[var(--text-primary)]">
+                Note Size
+              </span>
+              <span className="text-xs text-[var(--text-muted)]">
+                {Math.round(display.noteSize * 100)}%
+              </span>
+            </div>
+            <Slider
+              value={(display.noteSize - 0.5) / 1.5 * 100}
+              min={0}
+              max={100}
+              onChange={(e) => handleSliderChange('noteSize', 0.5 + Number(e.target.value) / 100 * 1.5)}
+            />
+          </div>
+
+          {/* Line Thickness */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[var(--text-primary)]">
+                Line Thickness
+              </span>
+              <span className="text-xs text-[var(--text-muted)]">
+                {Math.round(display.lineThickness * 100)}%
+              </span>
+            </div>
+            <Slider
+              value={(display.lineThickness - 0.5) / 1.5 * 100}
+              min={0}
+              max={100}
+              onChange={(e) => handleSliderChange('lineThickness', 0.5 + Number(e.target.value) / 100 * 1.5)}
+            />
           </div>
 
           {/* Glow intensity */}
@@ -226,30 +268,6 @@ export function DisplaySettingsModal() {
               max={100}
               onChange={(e) => handleSliderChange('gridOpacity', Number(e.target.value) / 100)}
             />
-          </div>
-
-          {/* Label format */}
-          <div className="space-y-2">
-            <span className="text-sm text-[var(--text-primary)]">
-              Label Format
-            </span>
-            <div className="flex gap-2">
-              {(['degree', 'solfege', 'noteName'] as const).map((format) => (
-                <button
-                  key={format}
-                  onClick={() => setDisplaySettings({ labelFormat: format })}
-                  className={`
-                    flex-1 px-3 py-2 rounded-lg text-sm transition-colors
-                    ${display.labelFormat === format
-                      ? 'bg-[var(--accent-primary)] text-white'
-                      : 'bg-[var(--button-bg)] text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
-                    }
-                  `}
-                >
-                  {format === 'degree' ? '1, 2, 3' : format === 'solfege' ? 'Do Re Mi' : 'C D E'}
-                </button>
-              ))}
-            </div>
           </div>
 
           <div className="w-full h-px bg-[var(--border-color)]" />
