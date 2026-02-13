@@ -3587,7 +3587,7 @@ return;
                            bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
                            shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
                 style={{
-                  bottom: 12,
+                  bottom: 20,
                   left: 'calc(50% + 15px)',
                   transform: 'translateX(-50%)',
                 }}
@@ -3609,7 +3609,7 @@ return;
                            bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
                            shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
                 style={{
-                  bottom: 12,
+                  bottom: 20,
                   left: 'calc(50% + 15px)',
                   transform: 'translateX(-50%)',
                 }}
