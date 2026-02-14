@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Arrangement, Voice, PitchPoint, Chord } from '../../types';
-import { useAppStore } from '../../stores/appStore';
+import { useAppStore, makeNodeKey, type NodeKey } from '../../stores/appStore';
 import { degreeToSemitoneOffset, semitoneToLabel, semitoneToSolfege, semitoneToLetterName, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
 import { darkenColor } from '../../utils/colors';
@@ -501,13 +501,44 @@ export function Grid({
   const startTimelineDrag = useAppStore((state) => state.startTimelineDrag);
   const updatePendingWorldT = useAppStore((state) => state.updatePendingWorldT);
   const commitTimelineDrag = useAppStore((state) => state.commitTimelineDrag);
-  // Create-mode view state and actions
-  const createView = useAppStore((state) => state.createView);
-  const setCreateCameraWorldT = useAppStore((state) => state.setCreateCameraWorldT);
-  const adjustCreatePitchPanSemitones = useAppStore((state) => state.adjustCreatePitchPanSemitones);
+  // Create-mode actions
   const adjustPlayPitchPanSemitones = useAppStore((state) => state.adjustPlayPitchPanSemitones);
   const setCameraMode = useAppStore((state) => state.setCameraMode);
   const resetCreateView = useAppStore((state) => state.resetCreateView);
+
+  // ── Node selection actions (Create mode) ──
+  const selectedNodeKeys = useAppStore((state) => state.createView.selectedNodeKeys);
+  const selectNode = useAppStore((state) => state.selectNode);
+  const addNodeToSelection = useAppStore((state) => state.addNodeToSelection);
+  const toggleNodeInSelection = useAppStore((state) => state.toggleNodeInSelection);
+  const clearNodeSelection = useAppStore((state) => state.clearNodeSelection);
+  const setNodeSelection = useAppStore((state) => state.setNodeSelection);
+  const addNodesToSelection = useAppStore((state) => state.addNodesToSelection);
+  const deleteSelectedNodes = useAppStore((state) => state.deleteSelectedNodes);
+  const copySelectedNodes = useAppStore((state) => state.copySelectedNodes);
+  const cutSelectedNodes = useAppStore((state) => state.cutSelectedNodes);
+  const pasteNodes = useAppStore((state) => state.pasteNodes);
+  const duplicateSelectedNodes = useAppStore((state) => state.duplicateSelectedNodes);
+  const moveSelectedNodes = useAppStore((state) => state.moveSelectedNodes);
+
+  // ── Marquee selection state (Create mode, Ctrl+left-drag on empty space) ──
+  // Stored in refs so the RAF draw loop can render the rect without re-renders.
+  const marqueeRef = useRef<{
+    startX: number;       // CSS px relative to container
+    startY: number;
+    currentX: number;
+    currentY: number;
+    additive: boolean;    // true = Ctrl+Shift (union), false = Ctrl (replace)
+  } | null>(null);
+
+  // ── Group drag state (Create mode, drag selected node) ──
+  // Tracks the cumulative time+pitch delta applied during a group drag.
+  const groupDragRef = useRef<{
+    startMouseX: number;    // Initial mouse clientX
+    startMouseY: number;    // Initial mouse clientY
+    lastDeltaT16: number;   // Accumulated time delta applied so far
+    lastDeltaSemi: number;  // Accumulated pitch delta applied so far
+  } | null>(null);
 
   // ── Smart Cam state ──
   // The smart-cam state ref is updated every animation frame.
@@ -545,25 +576,27 @@ export function Grid({
   const loopHandleDragRef = useRef<'start' | 'end' | null>(null);
 
   /**
-   * Set the Create-mode camera, and (when paused) also scrub the playback engine
-   * so playback starts from what you are looking at.
+   * Set the SHARED camera center for both Play and Create modes.
+   *
+   * We intentionally keep one camera state so camera changes affect the app
+   * universally (no dual camera systems to keep in sync).
    */
-  const setCreateCameraAndMaybeSeek = useCallback((nextWorldT: number) => {
-    setCreateCameraWorldT(nextWorldT);
+  const setSharedCameraAndMaybeSeek = useCallback((nextWorldT: number) => {
+    setCameraCenterWorldT(nextWorldT);
 
-    // If we are not actively playing, keep engine position aligned with the camera.
+    // While paused, keep transport aligned with what the user is looking at.
     if (!isPlaying) {
       playbackEngine.seekWorld(nextWorldT);
     }
-  }, [setCreateCameraWorldT, isPlaying]);
+  }, [isPlaying]);
 
-  // When you stop playback in Create mode, snap the camera to the current engine position
-  // so you can immediately edit what you just heard.
+  // When you stop playback in Create mode, snap the SHARED camera to the
+  // current engine position so editing starts exactly where playback ended.
   useEffect(() => {
     if (mode !== 'create') return;
     if (isPlaying) return;
-    setCreateCameraWorldT(playbackEngine.getWorldPositionT16());
-  }, [mode, isPlaying, setCreateCameraWorldT]);
+    setCameraCenterWorldT(playbackEngine.getWorldPositionT16());
+  }, [mode, isPlaying]);
 
   // If the mouse is released outside the canvas, stop any active pan drag.
   // Without this, the grid can get "stuck" in panning mode.
@@ -851,9 +884,9 @@ export function Grid({
     // - When playing we must use the engine's *world* time (monotonic) so the chord lane
     //   stays aligned across loops.
     // - playback.position is loop-relative and would visually "jump".
-    const worldT = isPlaying
-      ? playbackEngine.getWorldPositionT16()
-      : createView.cameraWorldT;
+    const worldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : getCameraCenterWorldT();
     const camLeft = cameraLeftWorldT(worldT, rect.width, pxPerTVal);
 
     const screenX = clientX - rect.left;
@@ -861,7 +894,7 @@ export function Grid({
     const { tLocal } = resolveToCanonical(clickWorldT, totalT16);
 
     return Math.max(0, Math.min(totalT16, Math.round(tLocal)));
-  }, [arrangement, followMode.pxPerT, isPlaying, createView.cameraWorldT]);
+  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Install global mouse listeners while dragging a chord boundary.
@@ -926,11 +959,9 @@ export function Grid({
 
     // ── Compute camera to position nodes on screen ──
     const pxPerTVal = followMode.pxPerT;
-    const currentWorldT = mode === 'create'
-      ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
-      : (followMode.pendingWorldT !== null
-        ? followMode.pendingWorldT
-        : playbackEngine.getWorldPositionT16());
+    const currentWorldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : getCameraCenterWorldT();
     const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
 
     // Check tile 0 only (no tiling)
@@ -955,7 +986,58 @@ export function Grid({
     }
 
     return null;
-  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, isPlaying]);
+  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT]);
+
+  /**
+   * Find the closest existing node across ALL voices under the mouse cursor.
+   * Returns { voiceId, node } or null.  Used by the selection system so that
+   * clicking any node (not just the selected voice) works for multi-select.
+   */
+  const getAnyNodeHitAtMouseEvent = useCallback((
+    e: React.MouseEvent<HTMLCanvasElement>,
+    gridLeft: number,
+    gridTop: number,
+    gridWidth: number,
+    gridHeight: number,
+    minSemitone: number,
+    maxSemitone: number
+  ): { voiceId: string; node: import('../../types').Node } | null => {
+    if (!arrangement) return null;
+    const container = containerRef.current;
+    if (!container) return null;
+
+    const rect = container.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const hitRadius = 14 * display.noteSize;
+    const pxPerTVal = followMode.pxPerT;
+    const currentWorldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : getCameraCenterWorldT();
+    const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
+
+    // Check every voice, return the first hit found.
+    for (const voice of arrangement.voices) {
+      for (const node of voice.nodes) {
+        const r = node.term ? 9 * display.noteSize : hitRadius;
+        const nodeWorldT = node.t16;
+        const x = gridLeft + worldTToScreenX(nodeWorldT, camLeft, pxPerTVal);
+        if (x < gridLeft - r || x > gridLeft + gridWidth + r) continue;
+
+        const y = node.semi !== undefined
+          ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+          : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+        const dx = mouseX - x;
+        const dy = mouseY - y;
+        if (dx * dx + dy * dy <= r * r) {
+          return { voiceId: voice.id, node };
+        }
+      }
+    }
+    return null;
+  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT, display.noteSize]);
 
   /**
    * Check if the mouse is near any voice's contour line (for hover/click-to-focus).
@@ -980,14 +1062,11 @@ export function Grid({
     // How close the mouse must be to the contour line (in CSS pixels).
     // The visual line radius is (1.5 * display.lineThickness).
     // We add a fixed 6px padding to make it easy to hit.
-    const hitThreshold = 1.5 * display.lineThickness + 3;
-
+    const hitThreshold = 14 * display.noteSize;
     const pxPerTVal = followMode.pxPerT;
-    const currentWorldT = mode === 'create'
-      ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
-      : (followMode.pendingWorldT !== null
-        ? followMode.pendingWorldT
-        : playbackEngine.getWorldPositionT16());
+    const currentWorldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : getCameraCenterWorldT();
     const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
 
     // Helper: convert local t16 to screen X (no tiling — tile 0 only)
@@ -1075,7 +1154,7 @@ export function Grid({
     }
 
     return bestVoiceId;
-  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, isPlaying]);
+  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Convert a snapped semitone into (deg, octaveOffset) for storage in the arrangement.
@@ -1157,10 +1236,9 @@ export function Grid({
     const zoomedRange = anchor.paddedRangeSemitones / zoomFactor;
 
     // Calculate final min/max centered on the arrangement anchor.
-    // Pitch panning applies in BOTH modes but reads from separate stores.
-    const pitchPan = mode === 'create'
-      ? createView.pitchPanSemitones
-      : followMode.pitchPanSemitones;
+    // Use the shared follow-mode pitch pan in BOTH modes so middle-mouse and
+    // keyboard vertical pans behave consistently everywhere.
+    const pitchPan = followMode.pitchPanSemitones;
     const finalMin = Math.floor(anchor.centerSemitone - zoomedRange / 2 + pitchPan);
     const finalMax = Math.ceil(anchor.centerSemitone + zoomedRange / 2 + pitchPan);
 
@@ -1176,7 +1254,7 @@ export function Grid({
     const maxFreq = midiToFrequency(effectiveTonicMidi + finalMax);
 
     return { minSemitone: finalMin, maxSemitone: finalMax, minFreq, maxFreq, effectiveTonicMidi };
-  }, [arrangement, display.zoomLevel, pitchRangeAnchor, computePitchRangeAnchor, transposition, mode, createView.pitchPanSemitones, followMode.pitchPanSemitones]);
+  }, [arrangement, display.zoomLevel, pitchRangeAnchor, computePitchRangeAnchor, transposition, followMode.pitchPanSemitones]);
 
   /**
    * Given a mouse event, compute the nearest legal grid point for Create mode.
@@ -1208,11 +1286,9 @@ export function Grid({
 
     // ── Convert screen X → world time → canonical local t16 ──
     const pxPerTVal = followMode.pxPerT;
-    const currentWorldT = mode === 'create'
-      ? createView.cameraWorldT
-      : (followMode.pendingWorldT !== null
-        ? followMode.pendingWorldT
-        : playbackEngine.getWorldPositionT16());
+    const currentWorldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : getCameraCenterWorldT();
     const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
 
     // Screen X (relative to grid left) → world time
@@ -1234,7 +1310,7 @@ export function Grid({
     const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
 
     return { t16, deg, octave };
-  }, [arrangement, getPitchRange, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT, mode, createView.cameraWorldT, isPlaying]);
+  }, [arrangement, getPitchRange, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Main drawing function.
@@ -1330,21 +1406,17 @@ export function Grid({
     const visualWorldT = visualWorldTRef.current ?? engineWorldT;
 
     // Playhead position (always the transport position, used for the playhead line)
-    const playheadWorldT = mode === 'create'
-      ? (isPlaying ? visualWorldT : createView.cameraWorldT)
-      : (followMode.pendingWorldT !== null
-        ? followMode.pendingWorldT
-        : visualWorldT);
+    const playheadWorldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : visualWorldT;
 
     // Camera center — single source of truth from cameraState module.
     // In Play mode, both the main grid AND the chord overlay read from
     // getCameraCenterWorldT(), so they are always perfectly synchronized.
     // During a pending seek drag, override with the drag position.
-    const worldT = mode === 'create'
-      ? (isPlaying ? visualWorldT : createView.cameraWorldT)
-      : (followMode.pendingWorldT !== null
-        ? followMode.pendingWorldT
-        : getCameraCenterWorldT());
+    const worldT = followMode.pendingWorldT !== null
+      ? followMode.pendingWorldT
+      : getCameraCenterWorldT();
 
     // Camera left edge in world time (may be negative near the start).
     const camLeft = cameraLeftWorldT(worldT, gridWidth, pxPerT);
@@ -1923,6 +1995,24 @@ export function Grid({
 
               ctx.fillText(labelText, x, y + 0.5);
             }
+
+            // ── Selection highlight: draw a bright ring around selected nodes ──
+            if (mode === 'create' && k === kStart) {
+              const selKeys = useAppStore.getState().createView.selectedNodeKeys;
+              const nk = `${voice.id}:${node.t16}`;
+              if (selKeys.has(nk)) {
+                ctx.save();
+                ctx.strokeStyle = '#00ffff';   // Cyan selection ring
+                ctx.lineWidth = 2.5;
+                ctx.shadowColor = '#00ffff';
+                ctx.shadowBlur = 8;
+                const selRadius = node.term ? anchorRadius + 4 : nodeRadius + 4;
+                ctx.beginPath();
+                ctx.arc(x, y, selRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+              }
+            }
           }
 
           // Create mode hover preview ("phantom" node) — only draw once (not per tile)
@@ -2034,9 +2124,31 @@ export function Grid({
         ctx.restore();
       }
 
+      // ── Marquee selection rectangle (Create mode only) ──
+      // Drawn on top of everything so it's always visible.
+      if (mode === 'create' && marqueeRef.current) {
+        const mq = marqueeRef.current;
+        const mqLeftPx = Math.min(mq.startX, mq.currentX) * dpr;
+        const mqTopPx = Math.min(mq.startY, mq.currentY) * dpr;
+        const mqW = Math.abs(mq.currentX - mq.startX) * dpr;
+        const mqH = Math.abs(mq.currentY - mq.startY) * dpr;
+
+        ctx.save();
+        // Semi-transparent blue fill
+        ctx.fillStyle = 'rgba(0, 180, 255, 0.12)';
+        ctx.fillRect(mqLeftPx, mqTopPx, mqW, mqH);
+        // Dashed cyan border
+        ctx.strokeStyle = 'rgba(0, 200, 255, 0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(mqLeftPx, mqTopPx, mqW, mqH);
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, createView.cameraWorldT, isPlaying, loopEnabled, loopStart, loopEnd]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -2490,7 +2602,7 @@ export function Grid({
       const curArr = curState.arrangement;
       const curFm = curState.followMode;
 
-      if (curMode === 'play' && curPb.isPlaying && curArr && !playbackEngine.getIsCountingIn() && !onlyChords) {
+      if ((curMode === 'play' || curMode === 'create') && curPb.isPlaying && curArr && !playbackEngine.getIsCountingIn() && !onlyChords) {
         const playheadWorldT = visualWorldTRef.current ?? playbackEngine.getWorldPositionT16();
         const rect = containerRef.current?.getBoundingClientRect();
         const gridW = rect
@@ -2535,14 +2647,14 @@ export function Grid({
           setFreeLook(false);
           setFreeLookReact(false);
         }
-      } else if (curMode === 'play' && curPb.isPlaying && playbackEngine.getIsCountingIn() && !onlyChords) {
+      } else if ((curMode === 'play' || curMode === 'create') && curPb.isPlaying && playbackEngine.getIsCountingIn() && !onlyChords) {
         // During count-in we don't run the smart cam step, but we also don't
         // want the "Jump to Playhead" pill to linger from a previous static state.
         if (smartCamIsStaticRef.current) {
           smartCamIsStaticRef.current = false;
           setSmartCamIsStatic(false);
         }
-      } else if (curMode === 'play' && !curPb.isPlaying && curArr && !onlyChords) {
+      } else if ((curMode === 'play' || curMode === 'create') && !curPb.isPlaying && curArr && !onlyChords) {
         // Paused in Play mode: keep the camera wherever it currently is.
         // We still evaluate the smart cam state so the Jump-to-Playhead pill
         // appears/disappears correctly.
@@ -2603,51 +2715,22 @@ export function Grid({
   }, [updateCanvasMetrics]);
 
   /**
-   * Handle canvas click for placing/removing nodes in create mode.
+   * Handle canvas click.
+   * In Create mode, placement is handled via mousedown/mouseup, so this is mostly a skip.
+   * Shift+click delete has been REMOVED — use Delete/Backspace key instead.
    */
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    // In Create mode, we now commit placement on mouse-up (not on click),
+    // In Create mode, we commit placement on mouse-up (not on click),
     // so we skip the click handler to avoid double-adding nodes.
     if (skipNextClickRef.current) {
       skipNextClickRef.current = false;
       return;
     }
 
-    // Only handle clicks in create mode
-    if (mode !== 'create' || !arrangement) return;
-
-    // Legacy behavior: allow Shift+Click removal.
-    // (Placement is handled via mouse down/move/up so you can audition first.)
-    if (!e.shiftKey) return;
-
-    const snapped = getSnappedPointFromMouseEvent(e);
-    if (!snapped) return;
-
-    const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
-    if (!voiceId) return;
-
-    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-    const startT16 = 0;
-    const endT16 = totalT16;
-
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const width = rect.width;
-    const height = rect.height;
-
-    const gridLeft = GRID_MARGIN.left;
-    const gridTop = GRID_MARGIN.top;
-    const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
-    const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
-
-    const { minSemitone, maxSemitone } = getPitchRange();
-
-    const hit = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
-    if (!hit) return;
-
-    removeNode(voiceId, hit.t16);
-  }, [mode, arrangement, selectedVoiceId, removeNode, getSnappedPointFromMouseEvent, getPitchRange, getNodeHitAtMouseEvent]);
+    // No click-based actions needed in Create or Play mode.
+    // (Selection and placement are handled via mousedown/move/up.)
+    void e;
+  }, []);
 
   /**
    * Handle double-click to toggle termination status of a node.
@@ -2804,11 +2887,9 @@ export function Grid({
         // In Play mode, use the smart-cam camera center (not the playhead)
         // so hit-testing is correct when the camera is in a static state.
         const pxPerTVal = followMode.pxPerT;
-        const currentWorldT = mode === 'create'
-          ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
-          : (followMode.pendingWorldT !== null
-            ? followMode.pendingWorldT
-            : getCameraCenterWorldT());
+        const currentWorldT = followMode.pendingWorldT !== null
+          ? followMode.pendingWorldT
+          : getCameraCenterWorldT();
         const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
         const loopStartX = gridLeftPx + worldTToScreenX(loopStartNow, camLeft, pxPerTVal);
         const loopEndX = gridLeftPx + worldTToScreenX(loopEndNow, camLeft, pxPerTVal);
@@ -2835,9 +2916,7 @@ export function Grid({
     // Vertical pitch panning is done via scroll wheel.
     if (e.button === 2) {
       e.preventDefault();
-      const camWorldT = mode === 'create'
-        ? createView.cameraWorldT
-        : getCameraCenterWorldT();
+      const camWorldT = getCameraCenterWorldT();
 
       panDragRef.current = {
         startX: e.clientX,
@@ -2847,14 +2926,12 @@ export function Grid({
       // In Play mode, panning makes the camera static.
       // - Follow mode: permanently switch to Static (user must manually switch back).
       // - Smart mode: enter FREE_LOOK (recoverable on play restart).
-      if (mode === 'play') {
-        const curCameraMode = useAppStore.getState().followMode.cameraMode;
-        if (curCameraMode === 'follow') {
-          setCameraMode('static');
-        } else {
-          setFreeLook(true);
-          setFreeLookReact(true);
-        }
+      const curCameraMode = useAppStore.getState().followMode.cameraMode;
+      if (curCameraMode === 'follow') {
+        setCameraMode('static');
+      } else {
+        setFreeLook(true);
+        setFreeLookReact(true);
       }
       return;
     }
@@ -2908,102 +2985,164 @@ export function Grid({
     // Prevent the older `onClick` handler from also firing.
     skipNextClickRef.current = true;
 
-    const snapped = getSnappedPointFromMouseEvent(e);
-    if (!snapped) return;
-
-    // Determine voice to edit - use selected voice or first voice.
-    const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
-    if (!voiceId) return;
-
-    // Auto-select voice if none selected.
-    if (!selectedVoiceId) {
-      setSelectedVoiceId(voiceId);
-    }
-
-    // Update hover preview immediately (so the phantom node appears on press).
-    hoverPreviewRef.current = { voiceId, point: snapped };
-
-    const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-    const startT16 = 0;
-    const endT16 = totalT16;
-
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    const width = rect.width;
-    const height = rect.height;
-
     const gridLeft = GRID_MARGIN.left;
-    const gridTop = GRID_MARGIN.top;
-    const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
-    const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
-
+    const gridTopVal = GRID_MARGIN.top;
+    const gridWidth = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+    const gridHeight = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
     const { minSemitone, maxSemitone } = getPitchRange();
 
-    // Check if clicking on an existing node (pixel-distance hit test).
-    const existingNode = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
-
-    // Shift+press removes a node immediately.
-    if (existingNode && e.shiftKey) {
-      removeNode(voiceId, existingNode.t16);
-      placingNewNodeRef.current = null;
-
-      // If a right-click pan was in progress, cancel it.
-      panDragRef.current = null;
-      auditionRef.current = null;
-      playbackEngine.previewSynthRelease(voiceId);
-      return;
+    // ── Precedence 3: Ctrl/Cmd + Left on empty → marquee selection ──
+    if (e.button === 0 && (e.ctrlKey || e.metaKey) && !e.altKey) {
+      // Check if there's a node under the mouse — if yes, fall through to node selection below.
+      const hitAny = getAnyNodeHitAtMouseEvent(e, gridLeft, gridTopVal, gridWidth, gridHeight, minSemitone, maxSemitone);
+      if (!hitAny) {
+        // Start marquee selection.
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        marqueeRef.current = {
+          startX: mx,
+          startY: my,
+          currentX: mx,
+          currentY: my,
+          additive: e.shiftKey,  // Ctrl+Shift = additive marquee
+        };
+        e.preventDefault();
+        return;
+      }
     }
 
-    // Start the synth preview note (rings while the mouse is held down).
-    auditionRef.current = { voiceId };
+    // ── Precedence 4: Left on node → selection + audition + potential drag ──
+    // Check ALL voices for a node hit (not just the selected voice).
+    const hitResult = getAnyNodeHitAtMouseEvent(e, gridLeft, gridTopVal, gridWidth, gridHeight, minSemitone, maxSemitone);
 
-    const attack = (deg: number, octave: number, semi?: number) => {
-      playbackEngine.previewSynthAttack(voiceId, deg, octave, semi);
-    };
+    if (hitResult && e.button === 0) {
+      const { voiceId: hitVoiceId, node: hitNode } = hitResult;
+      const hitKey = makeNodeKey(hitVoiceId, hitNode.t16);
+      const currentSelection = useAppStore.getState().createView.selectedNodeKeys;
+      const isAlreadySelected = currentSelection.has(hitKey);
 
-    const attackDeg = existingNode?.term ? (existingNode.deg ?? 0) : snapped.deg;
-    const attackOct = existingNode?.term ? (existingNode.octave || 0) : snapped.octave;
-    const attackSemi = existingNode?.term ? existingNode.semi : snapped.semi;
+      // Handle selection modifiers:
+      if (e.shiftKey) {
+        // Shift+click now toggles selection membership (add/remove).
+        toggleNodeInSelection(hitKey);
+      } else if (!isAlreadySelected) {
+        // Plain click on unselected node: select only this one.
+        selectNode(hitKey);
+      }
+      // If plain click on already-selected node: keep selection (for group drag).
 
-    if (AudioService.isReady()) {
-      attack(attackDeg, attackOct, attackSemi);
-    } else {
-      // Queue the attack until audio is ready, but only if the user is still holding the mouse.
-      pendingAuditionAttackRef.current = { voiceId, deg: attackDeg ?? 0, octave: attackOct, semi: attackSemi };
-      void ensureAudioAndEngineReadyForPreview().then(() => {
-        const pending = pendingAuditionAttackRef.current;
-        if (!pending) return;
-        if (auditionRef.current?.voiceId !== pending.voiceId) return;
-        attack(pending.deg, pending.octave, pending.semi);
-      });
-    }
+      // Auto-select voice track for editing.
+      if (selectedVoiceId !== hitVoiceId) {
+        setSelectedVoiceId(hitVoiceId);
+      }
 
-    if (existingNode) {
-      // Start dragging this existing node.
-      if (existingNode.term) {
-        const voice = arrangement.voices.find((v) => v.id === voiceId);
+      // Start audition for the clicked node.
+      auditionRef.current = { voiceId: hitVoiceId };
+      const attackDeg = hitNode.deg ?? 0;
+      const attackOct = hitNode.octave ?? 0;
+      const attackSemi = hitNode.semi;
+
+      const attack = (deg: number, octave: number, semi?: number) => {
+        playbackEngine.previewSynthAttack(hitVoiceId, deg, octave, semi);
+      };
+
+      if (AudioService.isReady()) {
+        attack(attackDeg, attackOct, attackSemi);
+      } else {
+        pendingAuditionAttackRef.current = { voiceId: hitVoiceId, deg: attackDeg, octave: attackOct, semi: attackSemi };
+        void ensureAudioAndEngineReadyForPreview().then(() => {
+          const pending = pendingAuditionAttackRef.current;
+          if (!pending) return;
+          if (auditionRef.current?.voiceId !== pending.voiceId) return;
+          attack(pending.deg, pending.octave, pending.semi);
+        });
+      }
+
+      // Determine if this starts a single-node drag or group drag.
+      // Re-read selection after modifier logic above.
+      const updatedSelection = useAppStore.getState().createView.selectedNodeKeys;
+
+      if (updatedSelection.size > 1 && updatedSelection.has(hitKey)) {
+        // Multiple nodes selected and we clicked on one of them → group drag.
+        groupDragRef.current = {
+          startMouseX: e.clientX,
+          startMouseY: e.clientY,
+          lastDeltaT16: 0,
+          lastDeltaSemi: 0,
+        };
+        placingNewNodeRef.current = null;
+        return;
+      }
+
+      // Single-node drag (existing behavior for anchors and regular nodes).
+      if (hitNode.term) {
+        const voice = arrangement.voices.find((v) => v.id === hitVoiceId);
         const parent = voice?.nodes
-          .filter((n) => !n.term && n.t16 < existingNode.t16)
+          .filter((n) => !n.term && n.t16 < hitNode.t16)
           .sort((a, b) => a.t16 - b.t16)
           .pop();
-
-        // If there is no previous note, this anchor is invalid; don't allow dragging it.
-        if (!parent) {
-          return;
-        }
-
-        setDragState({ voiceId, originalT16: existingNode.t16, isDragging: true, anchorParentT16: parent.t16 });
+        if (!parent) return;
+        setDragState({ voiceId: hitVoiceId, originalT16: hitNode.t16, isDragging: true, anchorParentT16: parent.t16 });
       } else {
-        setDragState({ voiceId, originalT16: existingNode.t16, isDragging: true });
+        setDragState({ voiceId: hitVoiceId, originalT16: hitNode.t16, isDragging: true });
       }
       placingNewNodeRef.current = null;
       return;
     }
 
-    // Otherwise, we're placing a new node (commit happens on mouse-up).
-    placingNewNodeRef.current = { voiceId, point: snapped };
-  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, removeNode, setSelectedVoiceId, getPitchRange, getNodeHitAtMouseEvent]);
+    // ── Precedence 5: Left on empty (no modifiers) ──
+    if (e.button === 0) {
+      const currentSelection = useAppStore.getState().createView.selectedNodeKeys;
+
+      if (currentSelection.size > 1) {
+        // Multi-selection exists → clear only (first click cancels group selection).
+        clearNodeSelection();
+        return;
+      }
+
+      // If only one node was selected, clear and allow immediate placement
+      // on this same click (no extra deselect click required).
+      if (currentSelection.size === 1) {
+        clearNodeSelection();
+      }
+
+      // No selection exists → place node (existing behavior).
+      const snapped = getSnappedPointFromMouseEvent(e);
+      if (!snapped) return;
+
+      const voiceId = selectedVoiceId || arrangement.voices[0]?.id;
+      if (!voiceId) return;
+
+      if (!selectedVoiceId) {
+        setSelectedVoiceId(voiceId);
+      }
+
+      hoverPreviewRef.current = { voiceId, point: snapped };
+
+      // Start audition for the new note.
+      auditionRef.current = { voiceId };
+      const attack = (deg: number, octave: number, semi?: number) => {
+        playbackEngine.previewSynthAttack(voiceId, deg, octave, semi);
+      };
+
+      if (AudioService.isReady()) {
+        attack(snapped.deg, snapped.octave, snapped.semi);
+      } else {
+        pendingAuditionAttackRef.current = { voiceId, deg: snapped.deg, octave: snapped.octave, semi: snapped.semi };
+        void ensureAudioAndEngineReadyForPreview().then(() => {
+          const pending = pendingAuditionAttackRef.current;
+          if (!pending) return;
+          if (auditionRef.current?.voiceId !== pending.voiceId) return;
+          attack(pending.deg, pending.octave, pending.semi);
+        });
+      }
+
+      placingNewNodeRef.current = { voiceId, point: snapped };
+    }
+  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, setSelectedVoiceId, getPitchRange, getNodeHitAtMouseEvent, getAnyNodeHitAtMouseEvent, selectNode, addNodeToSelection, toggleNodeInSelection, clearNodeSelection]);
 
   /**
    * Handle mouse move for dragging nodes (Create mode)
@@ -3031,11 +3170,9 @@ export function Grid({
 
         // In Play mode, the camera center may differ from the playhead
         // (smart-cam static states), so read from the ref.
-        const currentWorldT = mode === 'create'
-          ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
-          : (followMode.pendingWorldT !== null
-            ? followMode.pendingWorldT
-            : getCameraCenterWorldT());
+        const currentWorldT = followMode.pendingWorldT !== null
+          ? followMode.pendingWorldT
+          : getCameraCenterWorldT();
 
         const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
         const loopStartX = gridLeftPx + worldTToScreenX(loopStartNow, camLeft, pxPerTVal);
@@ -3067,11 +3204,9 @@ export function Grid({
         const pxPerTVal = followMode.pxPerT;
         // Use the smart-cam camera center in Play mode so the drag
         // maps to the correct world time even in static camera states.
-        const currentWorldT = mode === 'create'
-          ? (isPlaying ? playbackEngine.getWorldPositionT16() : createView.cameraWorldT)
-          : (followMode.pendingWorldT !== null
-            ? followMode.pendingWorldT
-            : getCameraCenterWorldT());
+        const currentWorldT = followMode.pendingWorldT !== null
+          ? followMode.pendingWorldT
+          : getCameraCenterWorldT();
         const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
 
         // Convert mouse X to time, then snap to nearest 16th note
@@ -3100,12 +3235,8 @@ export function Grid({
       const dT = dragPixelsToTimeDelta(dx, followMode.pxPerT);
       const newCameraWorldT = Math.max(0, panDragRef.current.startCameraWorldT + dT);
 
-      if (mode === 'create') {
-        setCreateCameraAndMaybeSeek(newCameraWorldT);
-      } else {
-        // Play mode: write directly to the single source of truth
-        setCameraCenterWorldT(newCameraWorldT);
-      }
+      // Shared camera in both modes
+      setCameraCenterWorldT(newCameraWorldT);
       return;
     }
 
@@ -3140,6 +3271,45 @@ export function Grid({
 
     if (mode !== 'create') return;
 
+    // ── Marquee drag update ──
+    if (marqueeRef.current) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        marqueeRef.current.currentX = e.clientX - rect.left;
+        marqueeRef.current.currentY = e.clientY - rect.top;
+      }
+      return; // Don't process other Create mode interactions during marquee.
+    }
+
+    // ── Group drag update ──
+    if (groupDragRef.current) {
+      const gd = groupDragRef.current;
+      const dxPx = e.clientX - gd.startMouseX;
+      const dyPx = e.clientY - gd.startMouseY;
+
+      // Convert pixel deltas to time (t16) and pitch (semitones).
+      const pxPerTVal = followMode.pxPerT;
+      const newDeltaT16 = Math.round(dxPx / pxPerTVal);
+
+      // For vertical: compute semitones per pixel from the current pitch range.
+      const { minSemitone, maxSemitone } = getPitchRange();
+      const gridHeightPx = (containerRef.current?.getBoundingClientRect()?.height ?? 600) - GRID_MARGIN.top - GRID_MARGIN.bottom;
+      const semitonesPerPx = (maxSemitone - minSemitone) / gridHeightPx;
+      // Negative dyPx = mouse moved up = higher pitch = positive semitone delta.
+      const newDeltaSemi = Math.round(-dyPx * semitonesPerPx);
+
+      // Only apply incremental delta if it changed.
+      const incrT16 = newDeltaT16 - gd.lastDeltaT16;
+      const incrSemi = newDeltaSemi - gd.lastDeltaSemi;
+
+      if (incrT16 !== 0 || incrSemi !== 0) {
+        moveSelectedNodes(incrT16, incrSemi);
+        gd.lastDeltaT16 = newDeltaT16;
+        gd.lastDeltaSemi = newDeltaSemi;
+      }
+      return; // Don't process other Create mode interactions during group drag.
+    }
+
     const snapped = getSnappedPointFromMouseEvent(e);
     if (!snapped) {
       hoverPreviewRef.current = null;
@@ -3161,10 +3331,6 @@ export function Grid({
     }
 
     if (!dragState?.isDragging) {
-      const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
-      const startT16 = 0;
-      const endT16 = totalT16;
-
       const rect = containerRef.current?.getBoundingClientRect();
       if (rect) {
         const width = rect.width;
@@ -3176,9 +3342,16 @@ export function Grid({
         const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
 
         const { minSemitone, maxSemitone } = getPitchRange();
-        const hit = getNodeHitAtMouseEvent(e, voiceId, startT16, endT16, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
+        const hit = getAnyNodeHitAtMouseEvent(e, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
         setIsHoveringNode(!!hit);
       }
+    }
+
+    // While a group selection is active, hide placement ghost until the group
+    // is explicitly cleared by a click on empty space.
+    if (selectedNodeKeys.size > 1 && !dragState?.isDragging && !placingNewNodeRef.current) {
+      hoverPreviewRef.current = null;
+      return;
     }
 
     // Update hover preview (phantom node) only when not dragging an anchor.
@@ -3228,8 +3401,29 @@ export function Grid({
         return;
       }
 
-      updateNode(dragState.voiceId, dragState.originalT16, snapped.t16, snapped.deg, snapped.octave, originalNode?.term, snapped.semi);
-      setDragState({ ...dragState, originalT16: snapped.t16 });
+      // Prevent node-overwrite on drag: keep at least one 16th-note gap from
+      // the IMMEDIATE neighboring nodes around the dragged node's current time.
+      //
+      // Important: bounds must be based on the current node position
+      // (dragState.originalT16), not the mouse-snapped target, otherwise fast
+      // drags can jump across a neighbor and overwrite it.
+      const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+      const otherTimes = (voice?.nodes ?? [])
+        .filter((n) => n.t16 !== dragState.originalT16)
+        .map((n) => n.t16)
+        .sort((a, b) => a - b);
+
+      const prev = [...otherTimes].reverse().find((t) => t < dragState.originalT16);
+      const next = otherTimes.find((t) => t > dragState.originalT16);
+
+      const minT16 = prev !== undefined ? prev + 1 : 0;
+      const maxT16 = next !== undefined ? next - 1 : totalT16;
+      const clampedT16 = minT16 <= maxT16
+        ? Math.max(minT16, Math.min(maxT16, snapped.t16))
+        : dragState.originalT16;
+
+      updateNode(dragState.voiceId, dragState.originalT16, clampedT16, snapped.deg, snapped.octave, originalNode?.term, snapped.semi);
+      setDragState({ ...dragState, originalT16: clampedT16 });
       return;
     }
 
@@ -3238,12 +3432,13 @@ export function Grid({
     if (!dragState?.isDragging && placingNewNodeRef.current?.voiceId === voiceId) {
       placingNewNodeRef.current = { voiceId, point: snapped };
     }
-  }, [dragState, mode, arrangement, getSnappedPointFromMouseEvent, updateNode, selectedVoiceId, getPitchRange, getNodeHitAtMouseEvent]);
+  }, [dragState, mode, arrangement, getSnappedPointFromMouseEvent, updateNode, selectedVoiceId, getPitchRange, getAnyNodeHitAtMouseEvent, moveSelectedNodes, followMode.pxPerT, selectedNodeKeys]);
 
   /**
    * Handle mouse up to end drag.
    * In Play mode this commits the scrub (seek-on-release).
-   * In Create mode this commits a new node placement or ends a node drag.
+   * In Create mode this commits a new node placement, ends a node drag,
+   * commits marquee selection, or ends a group drag.
    */
   const handleMouseUp = useCallback(() => {
     // ── Loop handle drag: release the boundary handle ──
@@ -3261,15 +3456,10 @@ export function Grid({
     }
 
     // ── Play mode: commit the timeline scrub (seek-on-release) ──
-    // After seeking, snap the camera to the new position and force
-    // FOLLOW_CENTER so there is no catchup animation — the playhead
-    // is immediately locked to camera center.
     if (followMode.isDraggingTimeline) {
       const pending = followMode.pendingWorldT;
       if (pending !== null) {
         playbackEngine.seekWorld(pending);
-        // Snap camera to the seeked position so FOLLOW_CENTER takes
-        // over cleanly with no drift or lerp.
         setCameraCenterWorldT(pending);
         smartCamStateRef.current = 'FOLLOW_CENTER';
         smartCamIsStaticRef.current = false;
@@ -3277,6 +3467,73 @@ export function Grid({
       }
       commitTimelineDrag();
       seekDragRef.current = null;
+      return;
+    }
+
+    // ── Marquee selection commit ──
+    if (marqueeRef.current && arrangement) {
+      const mq = marqueeRef.current;
+      marqueeRef.current = null;
+
+      // Convert the marquee rectangle (CSS px) into world time + pitch bounds.
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const gridLeftPx = GRID_MARGIN.left;
+        const gridTopPx = GRID_MARGIN.top;
+        const gridWidthPx = rect.width - GRID_MARGIN.left - GRID_MARGIN.right;
+        const gridHeightPx = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
+
+        const pxPerTVal = followMode.pxPerT;
+        const currentWorldT = followMode.pendingWorldT !== null
+          ? followMode.pendingWorldT
+          : getCameraCenterWorldT();
+        const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
+
+        // Marquee bounds in CSS px (relative to container).
+        const mqLeft = Math.min(mq.startX, mq.currentX);
+        const mqRight = Math.max(mq.startX, mq.currentX);
+        const mqTop = Math.min(mq.startY, mq.currentY);
+        const mqBottom = Math.max(mq.startY, mq.currentY);
+
+        const { minSemitone, maxSemitone } = getPitchRange();
+
+        // Find all nodes whose screen position falls inside the marquee rect.
+        const hitKeys = new Set<NodeKey>();
+        for (const voice of arrangement.voices) {
+          for (const node of voice.nodes) {
+            const nodeWorldT = node.t16;
+            const x = gridLeftPx + worldTToScreenX(nodeWorldT, camLeft, pxPerTVal);
+            const y = node.semi !== undefined
+              ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTopPx, gridHeightPx)
+              : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTopPx, gridHeightPx, arrangement.scale);
+
+            if (x >= mqLeft && x <= mqRight && y >= mqTop && y <= mqBottom) {
+              hitKeys.add(makeNodeKey(voice.id, node.t16));
+            }
+          }
+        }
+
+        if (mq.additive) {
+          // Ctrl+Shift+drag: union with existing selection.
+          addNodesToSelection(hitKeys);
+        } else {
+          // Ctrl+drag: replace selection with marquee result.
+          setNodeSelection(hitKeys);
+        }
+      }
+      return;
+    }
+
+    // ── Group drag end ──
+    if (groupDragRef.current) {
+      groupDragRef.current = null;
+      // Stop any audition note.
+      const audition = auditionRef.current;
+      if (audition) {
+        playbackEngine.previewSynthRelease(audition.voiceId);
+        auditionRef.current = null;
+      }
+      pendingAuditionAttackRef.current = null;
       return;
     }
 
@@ -3306,7 +3563,7 @@ export function Grid({
     }
 
     pendingAuditionAttackRef.current = null;
-  }, [dragState, mode, addNode, arrangement, followMode.isDraggingTimeline, followMode.pendingWorldT, commitTimelineDrag]);
+  }, [dragState, mode, addNode, arrangement, followMode.isDraggingTimeline, followMode.pendingWorldT, commitTimelineDrag, followMode.pxPerT, getPitchRange, setNodeSelection, addNodesToSelection]);
 
   // Follow-mode horizontal zoom action from the store
   const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
@@ -3471,15 +3728,15 @@ export function Grid({
     if (wantsHorizontalPan) {
       e.preventDefault();
       const dT = dragPixelsToTimeDelta(e.deltaX, followMode.pxPerT);
-      setCreateCameraAndMaybeSeek(createView.cameraWorldT + dT);
+      setSharedCameraAndMaybeSeek(getCameraCenterWorldT() + dT);
       return;
     }
 
     // Default: vertical pan in semitone space.
     e.preventDefault();
     const semitonesPerWheel = 0.03;
-    adjustCreatePitchPanSemitones(e.deltaY * semitonesPerWheel);
-  }, [arrangement, mode, setHorizontalZoom, followMode.pxPerT, setCreateCameraAndMaybeSeek, createView.cameraWorldT, adjustCreatePitchPanSemitones, adjustPlayPitchPanSemitones, display.zoomLevel, setZoomLevel]);
+    adjustPlayPitchPanSemitones(e.deltaY * semitonesPerWheel);
+  }, [arrangement, mode, setHorizontalZoom, followMode.pxPerT, setSharedCameraAndMaybeSeek, adjustPlayPitchPanSemitones, display.zoomLevel, setZoomLevel]);
 
   // Keyboard navigation + hotkeys
   useEffect(() => {
@@ -3520,15 +3777,69 @@ export function Grid({
         }
       }
 
-      // Escape: clear all focus states (works in both Play and Create modes)
+      // Escape: clear all focus states + clear node selection (works in both Play and Create modes)
       if (e.key === 'Escape') {
         e.preventDefault();
         clearAllFocus();
+        // In Create mode, also clear node selection.
+        if (mode === 'create') clearNodeSelection();
         return;
       }
 
       // The rest of the navigation hotkeys are Create-mode only.
       if (mode !== 'create') return;
+
+      // ── Delete / Backspace: delete all selected nodes ──
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        deleteSelectedNodes();
+        return;
+      }
+
+      // ── Ctrl/Cmd + C: copy selected nodes ──
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        e.preventDefault();
+        copySelectedNodes();
+        return;
+      }
+
+      // ── Ctrl/Cmd + X: cut selected nodes ──
+      if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
+        e.preventDefault();
+        cutSelectedNodes();
+        return;
+      }
+
+      // ── Ctrl/Cmd + V: paste clipboard at playhead ──
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        e.preventDefault();
+        const playheadT16 = playbackEngine.getWorldPositionT16();
+        pasteNodes(Math.round(playheadT16));
+        return;
+      }
+
+      // ── Ctrl/Cmd + D: duplicate selected nodes ──
+      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+        e.preventDefault();
+        duplicateSelectedNodes();
+        return;
+      }
+
+      // ── Ctrl/Cmd + A: select all nodes in the selected voice ──
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        if (arrangement) {
+          const vid = selectedVoiceId || arrangement.voices[0]?.id;
+          if (vid) {
+            const voice = arrangement.voices.find(v => v.id === vid);
+            if (voice) {
+              const allKeys = new Set<NodeKey>(voice.nodes.map(n => makeNodeKey(vid, n.t16)));
+              setNodeSelection(allKeys);
+            }
+          }
+        }
+        return;
+      }
 
       // Horizontal pan with arrow keys (hold Shift for bigger steps)
       const bigStep = 16;
@@ -3537,13 +3848,13 @@ export function Grid({
 
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        setCreateCameraAndMaybeSeek(createView.cameraWorldT - step);
+        setSharedCameraAndMaybeSeek(getCameraCenterWorldT() - step);
         return;
       }
 
       if (e.key === 'ArrowRight') {
         e.preventDefault();
-        setCreateCameraAndMaybeSeek(createView.cameraWorldT + step);
+        setSharedCameraAndMaybeSeek(getCameraCenterWorldT() + step);
         return;
       }
 
@@ -3552,16 +3863,14 @@ export function Grid({
       if (e.key.toLowerCase() === 'w') {
         e.preventDefault();
         const delta = 1 * (e.shiftKey ? 4 : 1);
-        if (mode === 'create') adjustCreatePitchPanSemitones(delta);
-        else adjustPlayPitchPanSemitones(delta);
+        adjustPlayPitchPanSemitones(delta);
         return;
       }
 
       if (e.key.toLowerCase() === 's') {
         e.preventDefault();
         const delta = -1 * (e.shiftKey ? 4 : 1);
-        if (mode === 'create') adjustCreatePitchPanSemitones(delta);
-        else adjustPlayPitchPanSemitones(delta);
+        adjustPlayPitchPanSemitones(delta);
         return;
       }
 
@@ -3588,7 +3897,7 @@ export function Grid({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, arrangement, createView.cameraWorldT, setCreateCameraAndMaybeSeek, adjustCreatePitchPanSemitones, adjustPlayPitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId, clearAllFocus]);
+  }, [mode, arrangement, setSharedCameraAndMaybeSeek, adjustPlayPitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId, clearAllFocus, clearNodeSelection, deleteSelectedNodes, copySelectedNodes, cutSelectedNodes, pasteNodes, duplicateSelectedNodes, setNodeSelection, selectedVoiceId]);
 
   // Prevent the browser context menu when right-clicking the grid.
   // (Right-click is used for panning in Create mode.)
@@ -3633,8 +3942,8 @@ export function Grid({
       data-grid-container
       className={`relative w-full h-full ${className}`}
     >
-      {/* ── Recenter button (Play mode, static cam states or user-panned) ── */}
-      {mode === 'play' && !onlyChords && (smartCamIsStatic || freeLookReact) && (
+      {/* ── Recenter button (Play/Create mode, static cam states or user-panned) ── */}
+      {(mode === 'play' || mode === 'create') && !onlyChords && (smartCamIsStatic || freeLookReact) && (
         gridOverlayRoot
           ? createPortal(
             <button
@@ -3818,9 +4127,9 @@ export function Grid({
                       return containerRect.width - GRID_MARGIN.left - GRID_MARGIN.right;
                     })();
 
-                    const worldT = isPlaying
-                      ? playbackEngine.getWorldPositionT16()
-                      : createView.cameraWorldT;
+                    const worldT = followMode.pendingWorldT !== null
+                      ? followMode.pendingWorldT
+                      : getCameraCenterWorldT();
 
                     const camLeft = cameraLeftWorldT(worldT, laneWidth, pxPerTVal);
 
@@ -3934,7 +4243,11 @@ export function Grid({
           ? (
             loopEnabled && (loopHandleDragRef.current || isHoveringLoopHandle)
               ? 'cursor-ew-resize'
-              : (dragState?.isDragging ? 'cursor-grabbing' : (isHoveringNode ? 'cursor-grab' : 'cursor-crosshair'))
+              : (dragState?.isDragging
+                ? 'cursor-grabbing'
+                : (isHoveringNode
+                  ? 'cursor-grab'
+                  : (selectedNodeKeys.size > 1 ? 'cursor-default' : 'cursor-crosshair')))
           )
           : (
             followMode.isDraggingTimeline
@@ -3959,6 +4272,9 @@ export function Grid({
           hoveredContourVoiceIdRef.current = null;
           isHoveringLoopHandleRef.current = false;
           setIsHoveringLoopHandle(false);
+          // Cancel any in-progress marquee or group drag on mouse leave.
+          marqueeRef.current = null;
+          groupDragRef.current = null;
           handleMouseUp();
         }}
       />

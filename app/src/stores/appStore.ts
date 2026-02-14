@@ -21,7 +21,7 @@ import type {
   VocalRange,
 } from '../types';
 import type { ThemeName } from '../utils/colors';
-import { getArrangementFrequencyRange, noteNameToFrequency, suggestTranspositionToFitRange } from '../utils/music';
+import { getArrangementFrequencyRange, noteNameToFrequency, suggestTranspositionToFitRange, degreeToSemitoneOffset } from '../utils/music';
 import { DEFAULT_VOICE_COLORS } from '../utils/colors';
 import type { CameraMode } from '../utils/smartCam';
 
@@ -87,6 +87,33 @@ interface FollowModeState {
 }
 
 /**
+ * A unique identifier for a node within a voice.
+ * Format: "voiceId:t16" — used for selection and clipboard.
+ */
+export type NodeKey = string;
+
+/** Helper to create a NodeKey from voiceId + t16. */
+export const makeNodeKey = (voiceId: string, t16: number): NodeKey => `${voiceId}:${t16}`;
+
+/** Helper to parse a NodeKey back into { voiceId, t16 }. */
+export const parseNodeKey = (key: NodeKey): { voiceId: string; t16: number } => {
+  const idx = key.lastIndexOf(':');
+  return { voiceId: key.slice(0, idx), t16: Number(key.slice(idx + 1)) };
+};
+
+/**
+ * A copied node for the clipboard (stores enough info to paste).
+ */
+interface ClipboardNode {
+  voiceId: string;  // Original voice
+  t16: number;      // Original time
+  deg: number;
+  octave: number;
+  semi?: number;
+  term?: boolean;
+}
+
+/**
  * Create-mode view state.
  *
  * Create mode needs independent navigation (pan/scroll + zoom) that does NOT
@@ -95,6 +122,10 @@ interface FollowModeState {
 interface CreateViewState {
   cameraWorldT: number;          // Camera center position in world-time (16th notes, monotonic)
   pitchPanSemitones: number;     // Vertical pan offset (semitones relative to the arrangement anchor)
+
+  // ── Selection state ──
+  selectedNodeKeys: Set<NodeKey>;   // Currently selected node keys ("voiceId:t16")
+  clipboard: ClipboardNode[];       // Nodes copied via Ctrl+C / Ctrl+X
 }
 
 /**
@@ -314,6 +345,24 @@ interface AppActions {
   updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number, term?: boolean, semi?: number) => void;
   setSelectedVoiceId: (voiceId: string | null) => void;
 
+  // Create mode - node selection
+  selectNode: (key: NodeKey) => void;                     // Click: select one (clears others)
+  addNodeToSelection: (key: NodeKey) => void;             // Shift+click: add one to selection
+  toggleNodeInSelection: (key: NodeKey) => void;          // Ctrl+click: toggle one in selection
+  clearNodeSelection: () => void;                          // Clear all selected nodes
+  setNodeSelection: (keys: Set<NodeKey>) => void;         // Replace selection with a new set
+  addNodesToSelection: (keys: Set<NodeKey>) => void;      // Union new keys into selection
+
+  // Create mode - clipboard
+  copySelectedNodes: () => void;                           // Ctrl+C
+  cutSelectedNodes: () => void;                            // Ctrl+X
+  pasteNodes: (playheadT16: number) => void;               // Ctrl+V — paste at playhead
+  duplicateSelectedNodes: () => void;                      // Ctrl+D
+
+  // Create mode - bulk operations
+  deleteSelectedNodes: () => void;                         // Delete/Backspace
+  moveSelectedNodes: (deltaT16: number, deltaSemitones: number) => void;  // Group drag
+
   // Create mode - voice management
   renameVoice: (voiceId: string, newName: string) => void;
   clearVoiceNodes: (voiceId: string) => void;
@@ -506,6 +555,8 @@ const initialFollowModeState: FollowModeState = {
 const initialCreateViewState: CreateViewState = {
   cameraWorldT: 0,
   pitchPanSemitones: 0,
+  selectedNodeKeys: new Set(),
+  clipboard: [],
 };
 
 
@@ -1025,6 +1076,265 @@ export const useAppStore = create<AppState & AppActions>()(
       }),
 
       setSelectedVoiceId: (voiceId) => set({ selectedVoiceId: voiceId }),
+
+      // -- Create Mode - Node Selection --
+
+      /** Click a node: select only that node (clears previous selection). */
+      selectNode: (key) => set((state) => ({
+        createView: {
+          ...state.createView,
+          selectedNodeKeys: new Set([key]),
+        },
+      })),
+
+      /** Shift+click a node: add it to the current selection. */
+      addNodeToSelection: (key) => set((state) => {
+        const next = new Set(state.createView.selectedNodeKeys);
+        next.add(key);
+        return { createView: { ...state.createView, selectedNodeKeys: next } };
+      }),
+
+      /** Ctrl/Cmd+click a node: toggle it in/out of selection. */
+      toggleNodeInSelection: (key) => set((state) => {
+        const next = new Set(state.createView.selectedNodeKeys);
+        if (next.has(key)) {
+          next.delete(key);
+        } else {
+          next.add(key);
+        }
+        return { createView: { ...state.createView, selectedNodeKeys: next } };
+      }),
+
+      /** Clear all selected nodes. */
+      clearNodeSelection: () => set((state) => ({
+        createView: {
+          ...state.createView,
+          selectedNodeKeys: new Set(),
+        },
+      })),
+
+      /** Replace selection with an entirely new set of keys. */
+      setNodeSelection: (keys) => set((state) => ({
+        createView: {
+          ...state.createView,
+          selectedNodeKeys: new Set(keys),
+        },
+      })),
+
+      /** Union new keys into the existing selection (for additive marquee). */
+      addNodesToSelection: (keys) => set((state) => {
+        const next = new Set(state.createView.selectedNodeKeys);
+        for (const k of keys) next.add(k);
+        return { createView: { ...state.createView, selectedNodeKeys: next } };
+      }),
+
+      // -- Create Mode - Clipboard --
+
+      /** Copy selected nodes to clipboard. */
+      copySelectedNodes: () => set((state) => {
+        if (!state.arrangement) return state;
+        const selected = state.createView.selectedNodeKeys;
+        if (selected.size === 0) return state;
+
+        const clipboardNodes: ClipboardNode[] = [];
+        for (const key of selected) {
+          const { voiceId, t16 } = parseNodeKey(key);
+          const voice = state.arrangement.voices.find(v => v.id === voiceId);
+          if (!voice) continue;
+          const node = voice.nodes.find(n => n.t16 === t16);
+          if (!node) continue;
+          clipboardNodes.push({
+            voiceId,
+            t16: node.t16,
+            deg: node.deg ?? 0,
+            octave: node.octave ?? 0,
+            ...(node.semi !== undefined ? { semi: node.semi } : {}),
+            ...(node.term ? { term: true } : {}),
+          });
+        }
+
+        return {
+          createView: { ...state.createView, clipboard: clipboardNodes },
+        };
+      }),
+
+      /** Cut selected nodes: copy to clipboard then delete. */
+      cutSelectedNodes: () => {
+        // First copy, then delete.
+        get().copySelectedNodes();
+        get().deleteSelectedNodes();
+      },
+
+      /** Paste clipboard nodes at the given playhead position. */
+      pasteNodes: (playheadT16) => set((state) => {
+        if (!state.arrangement) return state;
+        const cb = state.createView.clipboard;
+        if (cb.length === 0) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        // Find the earliest time in the clipboard to use as offset anchor.
+        const minT16 = Math.min(...cb.map(n => n.t16));
+        const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+
+        // Build a map of voiceId -> nodes to add.
+        const additions = new Map<string, typeof cb>();
+        for (const cn of cb) {
+          const newT16 = cn.t16 - minT16 + playheadT16;
+          // Clamp to arrangement bounds.
+          if (newT16 < 0 || newT16 > totalT16) continue;
+          if (!additions.has(cn.voiceId)) additions.set(cn.voiceId, []);
+          additions.get(cn.voiceId)!.push({ ...cn, t16: newT16 });
+        }
+
+        // Apply additions to voices.
+        const updatedVoices = state.arrangement.voices.map(voice => {
+          const toAdd = additions.get(voice.id);
+          if (!toAdd || toAdd.length === 0) return voice;
+
+          let newNodes = [...voice.nodes];
+          for (const cn of toAdd) {
+            // Remove any existing node at this t16 first.
+            newNodes = newNodes.filter(n => n.t16 !== cn.t16);
+            newNodes.push({
+              t16: cn.t16,
+              deg: cn.deg,
+              octave: cn.octave,
+              ...(cn.semi !== undefined ? { semi: cn.semi } : {}),
+              ...(cn.term ? { term: true } : {}),
+            });
+          }
+          newNodes.sort((a, b) => a.t16 - b.t16);
+          return { ...voice, nodes: newNodes };
+        });
+
+        // Select the newly pasted nodes.
+        const newSelection = new Set<NodeKey>();
+        for (const cn of cb) {
+          const newT16 = cn.t16 - minT16 + playheadT16;
+          if (newT16 >= 0 && newT16 <= totalT16) {
+            newSelection.add(makeNodeKey(cn.voiceId, newT16));
+          }
+        }
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+          createView: { ...state.createView, selectedNodeKeys: newSelection },
+        };
+      }),
+
+      /** Duplicate selected nodes (paste a copy offset by +4 sixteenths). */
+      duplicateSelectedNodes: () => {
+        // Copy first, then paste with a small time offset.
+        get().copySelectedNodes();
+        const cb = get().createView.clipboard;
+        if (cb.length === 0) return;
+        const minT16 = Math.min(...cb.map(n => n.t16));
+        // Paste 4 sixteenths after the earliest copied node.
+        get().pasteNodes(minT16 + 4);
+      },
+
+      // -- Create Mode - Bulk Operations --
+
+      /** Delete all selected nodes (Delete/Backspace key). */
+      deleteSelectedNodes: () => set((state) => {
+        if (!state.arrangement) return state;
+        const selected = state.createView.selectedNodeKeys;
+        if (selected.size === 0) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        // Build a set of (voiceId, t16) pairs to remove.
+        const toRemove = new Map<string, Set<number>>();
+        for (const key of selected) {
+          const { voiceId, t16 } = parseNodeKey(key);
+          if (!toRemove.has(voiceId)) toRemove.set(voiceId, new Set());
+          toRemove.get(voiceId)!.add(t16);
+        }
+
+        const updatedVoices = state.arrangement.voices.map(voice => {
+          const times = toRemove.get(voice.id);
+          if (!times || times.size === 0) return voice;
+          return {
+            ...voice,
+            nodes: voice.nodes.filter(n => !times.has(n.t16)),
+          };
+        });
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+          createView: { ...state.createView, selectedNodeKeys: new Set() },
+        };
+      }),
+
+      /**
+       * Move all selected nodes by a delta in time and pitch (semitones).
+       * Used for group dragging.
+       */
+      moveSelectedNodes: (deltaT16, deltaSemitones) => set((state) => {
+        if (!state.arrangement) return state;
+        const selected = state.createView.selectedNodeKeys;
+        if (selected.size === 0) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+
+        // Parse selected keys into a lookup.
+        const selectedLookup = new Map<string, Set<number>>();
+        for (const key of selected) {
+          const { voiceId, t16 } = parseNodeKey(key);
+          if (!selectedLookup.has(voiceId)) selectedLookup.set(voiceId, new Set());
+          selectedLookup.get(voiceId)!.add(t16);
+        }
+
+        // Track new keys for the moved nodes.
+        const newSelection = new Set<NodeKey>();
+
+        const updatedVoices = state.arrangement.voices.map(voice => {
+          const selectedTimes = selectedLookup.get(voice.id);
+          if (!selectedTimes || selectedTimes.size === 0) return voice;
+
+          const movedNodes: typeof voice.nodes = [];
+          const stationaryNodes: typeof voice.nodes = [];
+
+          for (const node of voice.nodes) {
+            if (selectedTimes.has(node.t16)) {
+              const newT16 = Math.max(0, Math.min(totalT16, node.t16 + deltaT16));
+              // For pitch: shift the semitone value if present, otherwise shift deg/octave.
+              let newNode;
+              if (node.semi !== undefined) {
+                newNode = { ...node, t16: newT16, semi: node.semi + deltaSemitones };
+              } else {
+                // Convert deg/octave to semitone, shift, store as semi after a group move.
+                const currentSemi = degreeToSemitoneOffset(node.deg ?? 0, node.octave ?? 0, state.arrangement!.scale);
+                newNode = { ...node, t16: newT16, semi: currentSemi + deltaSemitones, deg: undefined, octave: undefined };
+              }
+              movedNodes.push(newNode);
+              newSelection.add(makeNodeKey(voice.id, newT16));
+            } else {
+              stationaryNodes.push(node);
+            }
+          }
+
+          // Remove stationary nodes at collision positions, then merge.
+          const movedTimes = new Set(movedNodes.map(n => n.t16));
+          const filtered = stationaryNodes.filter(n => !movedTimes.has(n.t16));
+          const merged = [...filtered, ...movedNodes].sort((a, b) => a.t16 - b.t16);
+          return { ...voice, nodes: merged };
+        });
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+          createView: { ...state.createView, selectedNodeKeys: newSelection },
+        };
+      }),
 
       // -- Create Mode - Voice Management --
 

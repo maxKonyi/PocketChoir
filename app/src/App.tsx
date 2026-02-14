@@ -465,8 +465,6 @@ function App() {
   // directions simultaneously. In Play mode this enters FREE_LOOK (camera
   // pans freely, playhead is unaffected). Vertical pitch pan is gated by
   // mode so Play-mode panning doesn't corrupt Create-mode state.
-  const setCreateCameraWorldT = useAppStore((state) => state.setCreateCameraWorldT);
-  const adjustCreatePitchPanSemitones = useAppStore((state) => state.adjustCreatePitchPanSemitones);
   const adjustPlayPitchPanSemitones = useAppStore((state) => state.adjustPlayPitchPanSemitones);
 
   useEffect(() => {
@@ -485,10 +483,8 @@ function App() {
       e.preventDefault();
       const modeAtStart = useAppStore.getState().mode;
 
-      // Read current camera center for the active mode
-      const startCameraWorldT = modeAtStart === 'create'
-        ? useAppStore.getState().createView.cameraWorldT
-        : getCameraCenterWorldT();
+      // Read the shared camera center for both modes.
+      const startCameraWorldT = getCameraCenterWorldT();
 
       middleDrag = {
         startX: e.clientX,
@@ -520,27 +516,17 @@ function App() {
         const pxPerT = useAppStore.getState().followMode.pxPerT;
         const dT = dragPixelsToTimeDelta(dx, pxPerT);
 
-        if (middleDrag.modeAtStart === 'create') {
-          // Dragging right moves camera left (earlier in time).
-          const currentCam = useAppStore.getState().createView.cameraWorldT;
-          setCreateCameraWorldT(currentCam + dT);
-        } else {
-          // Play mode: pan the camera (not seek the playhead).
-          const currentCam = getCameraCenterWorldT();
-          setCameraCenterWorldT(Math.max(0, currentCam + dT));
-        }
+        // Shared camera in both modes: pan the camera (not seek the playhead).
+        const currentCam = getCameraCenterWorldT();
+        setCameraCenterWorldT(Math.max(0, currentCam + dT));
       }
 
       // Vertical delta → pitch pan, gated by mode
       const dy = e.clientY - middleDrag.lastY;
       if (dy !== 0) {
         const semitonesPerPixel = 0.05;
-        if (middleDrag.modeAtStart === 'create') {
-          adjustCreatePitchPanSemitones(dy * semitonesPerPixel);
-        } else {
-          // Play mode: use the separate play-mode pitch pan
-          adjustPlayPitchPanSemitones(dy * semitonesPerPixel);
-        }
+        // Shared pitch-pan behavior in both modes.
+        adjustPlayPitchPanSemitones(dy * semitonesPerPixel);
       }
 
       middleDrag.lastX = e.clientX;
@@ -569,7 +555,7 @@ function App() {
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('auxclick', onAuxClick);
     };
-  }, [setCreateCameraWorldT, adjustCreatePitchPanSemitones, adjustPlayPitchPanSemitones]);
+  }, [adjustPlayPitchPanSemitones]);
 
   useEffect(() => {
     const handleUndoRedo = (e: KeyboardEvent) => {
