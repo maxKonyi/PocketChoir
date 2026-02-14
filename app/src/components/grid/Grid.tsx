@@ -977,8 +977,10 @@ export function Grid({
   ): string | null => {
     if (!arrangement) return null;
 
-    // How close the mouse must be to the contour line (in CSS pixels)
-    const hitThreshold = 12 * display.lineThickness;
+    // How close the mouse must be to the contour line (in CSS pixels).
+    // The visual line radius is (1.5 * display.lineThickness).
+    // We add a fixed 6px padding to make it easy to hit.
+    const hitThreshold = 1.5 * display.lineThickness + 3;
 
     const pxPerTVal = followMode.pxPerT;
     const currentWorldT = mode === 'create'

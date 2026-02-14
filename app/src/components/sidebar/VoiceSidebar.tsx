@@ -39,14 +39,13 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
   const voiceState = useAppStore((state) =>
     state.voiceStates.find((v) => v.voiceId === voiceId)
   );
-  // Subscribe to ONLY the playback field this component uses.
-  // Do NOT subscribe to the entire playback object — setPosition() fires ~30fps
-  // and would cause 6 VoiceSidebar instances to re-render every frame.
+
   const pbIsRecording = useAppStore((state) => state.playback.isRecording);
   const armedVoiceId = useAppStore((state) => state.armedVoiceId);
   const hasRecording = useAppStore((state) => state.recordings.has(voiceId));
   const mode = useAppStore((state) => state.mode);
   const selectedVoiceId = useAppStore((state) => state.selectedVoiceId);
+
   // In Create mode, we use node data to decide whether a track has content.
   const voiceNodeCount = useAppStore((state) => (
     state.arrangement?.voices.find((v) => v.id === voiceId)?.nodes.length ?? 0
@@ -110,14 +109,6 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
           title={mode === 'create' ? 'Select for editing' : voiceName}
           aria-label={`${voiceName} - ${mode === 'create' ? 'Select for editing' : 'Track'}`}
         >
-          {/* In Create mode show the pencil icon */}
-          {mode === 'create' && (
-            <Edit3
-              size={11}
-              className={`shrink-0 ${isSelectedForEdit ? 'text-green-300 drop-shadow-[0_0_6px_rgba(34,197,94,0.8)]' : 'text-[var(--text-muted)]'}`}
-            />
-          )}
-
           {/* Track name: double-click in Create mode to rename. */}
           {mode === 'create' && isRenaming ? (
             <input
@@ -171,7 +162,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
 
         {/* ROW 2: Rec button + Trash button */}
         <div className="relative flex items-center gap-1 pr-8">
-          {/* Rec button — subtle red colouring, starts recording in Play mode */}
+          {/* Edit/Rec button */}
           <button
             onClick={async () => {
               if (mode === 'create') {
@@ -189,16 +180,24 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
               flex-1 flex items-center justify-center gap-1 px-1 py-0.5
               rounded-full text-[10px] font-bold uppercase tracking-wider
               transition-all duration-200 cursor-pointer
-              ${isRecording
-                ? 'bg-red-500 text-white animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.5)]'
-                : 'bg-red-500/10 text-white/90 border border-red-500/50 hover:bg-red-500/20 hover:text-red-200'
+              ${mode === 'create'
+                ? (isSelectedForEdit
+                  ? 'bg-blue-500 text-white shadow-[0_0_12px_rgba(59,130,246,0.4)]'
+                  : 'bg-blue-500/10 text-white/80 border border-blue-500/40 hover:bg-blue-500/20 hover:text-white')
+                : (isRecording
+                  ? 'bg-red-500 text-white animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.5)]'
+                  : 'bg-red-500/10 text-white/90 border border-red-500/50 hover:bg-red-500/20 hover:text-red-200')
               }
             `}
-            title={mode === 'create' ? 'Select track' : (isRecording ? 'Stop recording' : 'Record')}
-            aria-label={`${isRecording ? 'Stop recording' : 'Record'} ${voiceName}`}
+            title={mode === 'create' ? 'Select track for editing' : (isRecording ? 'Stop recording' : 'Record')}
+            aria-label={`${mode === 'create' ? 'Edit' : (isRecording ? 'Stop recording' : 'Record')} ${voiceName}`}
           >
-            <Mic size={10} className="shrink-0" />
-            <span>{isRecording ? 'Stop' : 'Rec'}</span>
+            {mode === 'create' ? (
+              <Edit3 size={10} className="shrink-0" />
+            ) : (
+              <Mic size={10} className="shrink-0" />
+            )}
+            <span>{mode === 'create' ? 'Edit' : (isRecording ? 'Stop' : 'Rec')}</span>
           </button>
 
           {/* Trash button — shows confirmation dialog before deleting */}
