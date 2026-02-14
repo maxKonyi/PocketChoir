@@ -390,6 +390,14 @@ export function Grid({
   // Used to switch the cursor from crosshair to grab.
   const [isHoveringNode, setIsHoveringNode] = useState(false);
 
+  // True when the mouse is over a node that is already selected.
+  // In Shift mode we only show the grab hint for selected nodes.
+  const [isHoveringSelectedNode, setIsHoveringSelectedNode] = useState(false);
+
+  // Tracks whether Shift is currently held so cursor styling can respond even
+  // before the next mousemove event.
+  const [isShiftHeld, setIsShiftHeld] = useState(false);
+
   // True when the mouse is near a loop boundary handle (start/end) while loop is enabled.
   // Used to switch the cursor to a resize/grab style only when it makes sense.
   const [isHoveringLoopHandle, setIsHoveringLoopHandle] = useState(false);
@@ -489,7 +497,10 @@ export function Grid({
 
   // Focus actions — triggered by clicking contour lines or pressing Escape
   const toggleFocus = useAppStore((state) => state.toggleFocus);
+  const focusOnlyVoice = useAppStore((state) => state.focusOnlyVoice);
   const clearAllFocus = useAppStore((state) => state.clearAllFocus);
+  const cleanupFocusForExistingContours = useAppStore((state) => state.cleanupFocusForExistingContours);
+  const pushHistoryCheckpoint = useAppStore((state) => state.pushHistoryCheckpoint);
 
   // Which voice's contour line the mouse is currently hovering over (null = none).
   // Stored in a ref because it updates on every mouse move and the draw loop reads it
@@ -558,6 +569,10 @@ export function Grid({
     startCameraWorldT: number;
   } | null>(null);
 
+  // True once we have pushed a single pre-drag history checkpoint for the
+  // current drag gesture. This prevents undo spam from per-frame drag updates.
+  const hasPushedDragHistoryRef = useRef(false);
+
   // React state mirror for freeLook so the Jump-to-Playhead button re-renders.
   // The authoritative value is in cameraState module (isFreeLook()), but React
   // needs a state variable to know when to show/hide the button.
@@ -616,6 +631,31 @@ export function Grid({
     };
   }, []);
 
+  // Keep an explicit Shift-key state for cursor styling in Create mode.
+  useEffect(() => {
+    const handleKeyDown = (evt: KeyboardEvent) => {
+      if (evt.key === 'Shift') setIsShiftHeld(true);
+    };
+
+    const handleKeyUp = (evt: KeyboardEvent) => {
+      if (evt.key === 'Shift') setIsShiftHeld(false);
+    };
+
+    const handleBlur = () => {
+      setIsShiftHeld(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
+
   // When playback STARTS in Play or Create mode, decide camera behavior based on
   // the camera mode:
   //
@@ -664,12 +704,10 @@ export function Grid({
     setSmartCamIsStatic(false);
   }, [mode, isPlaying]);
 
-  // When the loop is toggled ON in Smart mode, auto-zoom the viewport to
-  // fit the entire loop with padding, and center the camera on the loop.
+  // When the loop is toggled ON in Smart mode, auto-zoom the
+  // viewport to fit the entire loop with padding, and center the camera on it.
   //
-  // IMPORTANT:
-  // This effect intentionally runs in BOTH Play and Create modes so loop
-  // camera behavior stays perfectly in sync across modes.
+  // This keeps loop framing behavior consistent between Play and Create modes.
   //
   // When toggled OFF, clear free-look and snap back to follow behaviour.
   useEffect(() => {
@@ -1222,10 +1260,18 @@ export function Grid({
     setPitchRangeAnchor(computePitchRangeAnchor(arrangement));
   }, [arrangement?.id, computePitchRangeAnchor]);
 
+  // Keep focus state valid whenever the contour set changes.
+  // If a previously focused voice is deleted, or all its nodes are deleted,
+  // this automatically clears that stale focus entry.
+  useEffect(() => {
+    cleanupFocusForExistingContours();
+  }, [arrangement, cleanupFocusForExistingContours]);
+
   /**
    * Calculate the pitch range for the arrangement in semitones.
    * Returns min/max semitones relative to the tonic, plus frequency range.
    * Uses zoomLevel to adjust the visible range (higher zoom = fewer semitones visible).
+   * ...
    */
   const getPitchRange = useCallback(() => {
     if (!arrangement) return { minSemitone: -5, maxSemitone: 19, minFreq: 130, maxFreq: 520, effectiveTonicMidi: 60 };
@@ -2951,7 +2997,7 @@ export function Grid({
       return;
     }
 
-    // ── Play mode: left-click on contour = focus toggle, else nothing ──
+    // ── Play mode: deterministic click hit-testing (node first, contour second) ──
     if (mode === 'play') {
       if (e.button === 0) {
         const rect = containerRef.current?.getBoundingClientRect();
@@ -2964,16 +3010,64 @@ export function Grid({
           const gridHeightVal = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
           const { minSemitone, maxSemitone } = getPitchRange();
 
+          // 1) Node hit has priority over contour hit.
+          // Clicking a node should audition only (no focus changes).
+          const hitNode = getAnyNodeHitAtMouseEvent(
+            e,
+            gridLeftVal,
+            gridTopVal,
+            gridWidthVal,
+            gridHeightVal,
+            minSemitone,
+            maxSemitone,
+          );
+
+          if (hitNode) {
+            const { voiceId: hitVoiceId, node: hitNodeData } = hitNode;
+
+            // Start audition for the clicked node.
+            auditionRef.current = { voiceId: hitVoiceId };
+            playbackEngine.previewSynthAttack(
+              hitVoiceId,
+              hitNodeData.deg ?? 0,
+              hitNodeData.octave ?? 0,
+              hitNodeData.semi,
+            );
+            return;
+          }
+
+          // 2) No node hit: test contour stroke and apply focus behavior.
           const hitVoiceId = getContourHitAtMouse(
             mouseX, mouseY, gridLeftVal, gridTopVal, gridWidthVal, gridHeightVal, minSemitone, maxSemitone
           );
 
           if (hitVoiceId) {
-            toggleFocus(hitVoiceId);
+            // Shift+click = toggle membership (multi-focus)
+            // Plain click = replace set with one focused voice
+            if (e.shiftKey) {
+              toggleFocus(hitVoiceId);
+            } else {
+              // Plain click in Play mode should also behave like a toggle when
+              // this contour is already the ONLY focused voice.
+              const focusedVoiceIds = useAppStore
+                .getState()
+                .voiceStates
+                .filter((vs) => vs.synthSolo || vs.vocalSolo)
+                .map((vs) => vs.voiceId);
+
+              const isOnlyFocusedVoice =
+                focusedVoiceIds.length === 1 && focusedVoiceIds[0] === hitVoiceId;
+
+              if (isOnlyFocusedVoice) {
+                clearAllFocus();
+              } else {
+                focusOnlyVoice(hitVoiceId);
+              }
+            }
             return;
-          } else {
-            clearAllFocus();
           }
+
+          // 3) Empty click: do nothing for focus state.
         }
       }
       return;
@@ -2998,11 +3092,40 @@ export function Grid({
     const gridHeight = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
     const { minSemitone, maxSemitone } = getPitchRange();
 
+    // Shared deterministic hit-test for Create mode interactions:
+    // 1) node first
+    // 2) contour second
+    const hitResult = e.button === 0
+      ? getAnyNodeHitAtMouseEvent(e, gridLeft, gridTopVal, gridWidth, gridHeight, minSemitone, maxSemitone)
+      : null;
+
+    // In Create mode, contour focus is Shift+click only.
+    // This avoids conflicts with left-click node placement on/near existing lines.
+    if (e.button === 0 && e.shiftKey && !e.altKey && !hitResult) {
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const hitContourVoiceId = getContourHitAtMouse(
+        mouseX,
+        mouseY,
+        gridLeft,
+        gridTopVal,
+        gridWidth,
+        gridHeight,
+        minSemitone,
+        maxSemitone,
+      );
+
+      if (hitContourVoiceId) {
+        // Shift+click in Create mode always toggles membership in the focus set.
+        toggleFocus(hitContourVoiceId);
+        return;
+      }
+    }
+
     // ── Precedence 3: Ctrl/Cmd + Left on empty → marquee selection ──
     if (e.button === 0 && (e.ctrlKey || e.metaKey) && !e.altKey) {
       // Check if there's a node under the mouse — if yes, fall through to node selection below.
-      const hitAny = getAnyNodeHitAtMouseEvent(e, gridLeft, gridTopVal, gridWidth, gridHeight, minSemitone, maxSemitone);
-      if (!hitAny) {
+      if (!hitResult) {
         // Start marquee selection.
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
@@ -3020,8 +3143,6 @@ export function Grid({
 
     // ── Precedence 4: Left on node → selection + audition + potential drag ──
     // Check ALL voices for a node hit (not just the selected voice).
-    const hitResult = getAnyNodeHitAtMouseEvent(e, gridLeft, gridTopVal, gridWidth, gridHeight, minSemitone, maxSemitone);
-
     if (hitResult && e.button === 0) {
       const { voiceId: hitVoiceId, node: hitNode } = hitResult;
       const hitKey = makeNodeKey(hitVoiceId, hitNode.t16);
@@ -3146,7 +3267,7 @@ export function Grid({
 
       placingNewNodeRef.current = { voiceId, point: snapped };
     }
-  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, setSelectedVoiceId, getPitchRange, getNodeHitAtMouseEvent, getAnyNodeHitAtMouseEvent, selectNode, addNodeToSelection, toggleNodeInSelection, clearNodeSelection]);
+  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, setSelectedVoiceId, getPitchRange, getNodeHitAtMouseEvent, getAnyNodeHitAtMouseEvent, selectNode, addNodeToSelection, toggleNodeInSelection, clearNodeSelection, toggleFocus, focusOnlyVoice, getContourHitAtMouse]);
 
   /**
    * Handle mouse move for dragging nodes (Create mode)
@@ -3154,6 +3275,10 @@ export function Grid({
    */
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!arrangement) return;
+
+    // Keep Shift state in sync with the live pointer event.
+    // This gives immediate cursor updates while moving the mouse.
+    setIsShiftHeld(e.shiftKey);
 
     const pb = useAppStore.getState().playback;
     const loopEnabledNow = pb.loopEnabled;
@@ -3254,8 +3379,8 @@ export function Grid({
       return;
     }
 
-    // ── Play mode: detect contour line hover for interactive focus ──
-    if (mode === 'play' && !followMode.isDraggingTimeline) {
+    // ── Play/Create modes: detect contour hover for interactive contour emphasis ──
+    if ((mode === 'play' || mode === 'create') && !followMode.isDraggingTimeline) {
       const rect = containerRef.current?.getBoundingClientRect();
       if (rect) {
         const mouseX = e.clientX - rect.left;
@@ -3266,10 +3391,30 @@ export function Grid({
         const gridHeight = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
         const { minSemitone, maxSemitone } = getPitchRange();
 
-        // Update the hovered contour ref — the draw loop reads this every frame
-        hoveredContourVoiceIdRef.current = getContourHitAtMouse(
-          mouseX, mouseY, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone
+        // In Create mode, contour hover hint should only appear while Shift is held.
+        // (Shift is the contour-focus modifier in Create mode.)
+        const allowContourHover = mode !== 'create' || e.shiftKey;
+
+        // Node hit has priority over contour hover in BOTH modes.
+        // If the pointer is inside a node hit-radius, suppress contour hover hint.
+        const hitNode = getAnyNodeHitAtMouseEvent(
+          e,
+          gridLeft,
+          gridTop,
+          gridWidth,
+          gridHeight,
+          minSemitone,
+          maxSemitone,
         );
+
+        if (!allowContourHover || hitNode) {
+          hoveredContourVoiceIdRef.current = null;
+        } else {
+          // Update the hovered contour ref — the draw loop reads this every frame
+          hoveredContourVoiceIdRef.current = getContourHitAtMouse(
+            mouseX, mouseY, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone
+          );
+        }
       }
     }
 
@@ -3307,7 +3452,11 @@ export function Grid({
       const incrSemi = newDeltaSemi - gd.lastDeltaSemi;
 
       if (incrT16 !== 0 || incrSemi !== 0) {
-        moveSelectedNodes(incrT16, incrSemi);
+        if (!hasPushedDragHistoryRef.current) {
+          pushHistoryCheckpoint();
+          hasPushedDragHistoryRef.current = true;
+        }
+        moveSelectedNodes(incrT16, incrSemi, { recordHistory: false });
         gd.lastDeltaT16 = newDeltaT16;
         gd.lastDeltaSemi = newDeltaSemi;
       }
@@ -3318,6 +3467,7 @@ export function Grid({
     if (!snapped) {
       hoverPreviewRef.current = null;
       setIsHoveringNode(false);
+      setIsHoveringSelectedNode(false);
       return;
     }
 
@@ -3348,7 +3498,20 @@ export function Grid({
         const { minSemitone, maxSemitone } = getPitchRange();
         const hit = getAnyNodeHitAtMouseEvent(e, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
         setIsHoveringNode(!!hit);
+
+        if (hit) {
+          const hitKey = makeNodeKey(hit.voiceId, hit.node.t16);
+          setIsHoveringSelectedNode(selectedNodeKeys.has(hitKey));
+        } else {
+          setIsHoveringSelectedNode(false);
+        }
       }
+    }
+
+    // While Shift is held in Create mode, disable ghost placement previews.
+    if (e.shiftKey && !dragState?.isDragging) {
+      hoverPreviewRef.current = null;
+      return;
     }
 
     // While a group selection is active, hide placement ghost until the group
@@ -3400,7 +3563,25 @@ export function Grid({
 
         const clampedT16 = Math.min(Math.max(snapped.t16, minT16), maxT16);
 
-        updateNode(dragState.voiceId, dragState.originalT16, clampedT16, originalNode.deg ?? 0, originalNode.octave || 0, true, originalNode.semi);
+        if (clampedT16 === dragState.originalT16) {
+          return;
+        }
+
+        if (!hasPushedDragHistoryRef.current) {
+          pushHistoryCheckpoint();
+          hasPushedDragHistoryRef.current = true;
+        }
+
+        updateNode(
+          dragState.voiceId,
+          dragState.originalT16,
+          clampedT16,
+          originalNode.deg ?? 0,
+          originalNode.octave || 0,
+          true,
+          originalNode.semi,
+          { recordHistory: false },
+        );
         setDragState({ ...dragState, originalT16: clampedT16 });
         return;
       }
@@ -3426,7 +3607,33 @@ export function Grid({
         ? Math.max(minT16, Math.min(maxT16, snapped.t16))
         : dragState.originalT16;
 
-      updateNode(dragState.voiceId, dragState.originalT16, clampedT16, snapped.deg, snapped.octave, originalNode?.term, snapped.semi);
+      const pitchUnchanged =
+        (originalNode?.semi !== undefined && originalNode.semi === snapped.semi)
+        || (
+          originalNode?.semi === undefined
+          && originalNode?.deg === snapped.deg
+          && (originalNode?.octave || 0) === snapped.octave
+        );
+
+      if (clampedT16 === dragState.originalT16 && pitchUnchanged) {
+        return;
+      }
+
+      if (!hasPushedDragHistoryRef.current) {
+        pushHistoryCheckpoint();
+        hasPushedDragHistoryRef.current = true;
+      }
+
+      updateNode(
+        dragState.voiceId,
+        dragState.originalT16,
+        clampedT16,
+        snapped.deg,
+        snapped.octave,
+        originalNode?.term,
+        snapped.semi,
+        { recordHistory: false },
+      );
       setDragState({ ...dragState, originalT16: clampedT16 });
       return;
     }
@@ -3436,7 +3643,7 @@ export function Grid({
     if (!dragState?.isDragging && placingNewNodeRef.current?.voiceId === voiceId) {
       placingNewNodeRef.current = { voiceId, point: snapped };
     }
-  }, [dragState, mode, arrangement, getSnappedPointFromMouseEvent, updateNode, selectedVoiceId, getPitchRange, getAnyNodeHitAtMouseEvent, moveSelectedNodes, followMode.pxPerT, selectedNodeKeys]);
+  }, [dragState, mode, arrangement, getSnappedPointFromMouseEvent, updateNode, selectedVoiceId, getPitchRange, getAnyNodeHitAtMouseEvent, moveSelectedNodes, followMode.pxPerT, selectedNodeKeys, pushHistoryCheckpoint]);
 
   /**
    * Handle mouse up to end drag.
@@ -3538,6 +3745,7 @@ export function Grid({
         auditionRef.current = null;
       }
       pendingAuditionAttackRef.current = null;
+      hasPushedDragHistoryRef.current = false;
       return;
     }
 
@@ -3558,6 +3766,8 @@ export function Grid({
     if (dragState?.isDragging) {
       setDragState(null);
     }
+
+    hasPushedDragHistoryRef.current = false;
 
     // Stop any audition note.
     const audition = auditionRef.current;
@@ -3601,6 +3811,9 @@ export function Grid({
   }, [arrangement, setMinPxPerT, setFollowViewportWidthPx]);
 
   useEffect(() => {
+    // Auto-fit on arrangement load in both Play and Create modes.
+    // (Continuous "zoom while editing" behavior is handled elsewhere.)
+    if (mode !== 'play' && mode !== 'create') return;
     if (!arrangement) return;
     const container = containerRef.current;
     if (!container) return;
@@ -3608,7 +3821,7 @@ export function Grid({
     const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
     if (gridW <= 0 || loopLenT <= 0) return;
     setPxPerT(gridW / loopLenT);
-  }, [arrangement?.id, setPxPerT]);
+  }, [mode, arrangement?.id, setPxPerT]);
 
   useEffect(() => {
     if (mode !== 'play') return;
@@ -4281,9 +4494,11 @@ export function Grid({
               ? 'cursor-ew-resize'
               : (dragState?.isDragging
                 ? 'cursor-grabbing'
-                : (isHoveringNode
-                  ? 'cursor-grab'
-                  : (selectedNodeKeys.size > 1 ? 'cursor-default' : 'cursor-crosshair')))
+                : (isShiftHeld
+                  ? (isHoveringSelectedNode ? 'cursor-grab' : 'cursor-default')
+                  : (isHoveringNode
+                    ? 'cursor-grab'
+                    : (selectedNodeKeys.size > 1 ? 'cursor-default' : 'cursor-crosshair'))))
           )
           : (
             followMode.isDraggingTimeline
@@ -4306,11 +4521,15 @@ export function Grid({
         onMouseLeave={() => {
           hoverPreviewRef.current = null;
           hoveredContourVoiceIdRef.current = null;
+          setIsHoveringNode(false);
+          setIsHoveringSelectedNode(false);
+          setIsShiftHeld(false);
           isHoveringLoopHandleRef.current = false;
           setIsHoveringLoopHandle(false);
           // Cancel any in-progress marquee or group drag on mouse leave.
           marqueeRef.current = null;
           groupDragRef.current = null;
+          hasPushedDragHistoryRef.current = false;
           handleMouseUp();
         }}
       />

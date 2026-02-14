@@ -328,6 +328,10 @@ interface AppActions {
   // History controls
   undo: () => void;
   redo: () => void;
+  // Push a single undo checkpoint without changing arrangement data.
+  // Grid drag handlers use this once at drag-start so all intermediate drag
+  // frames can be history-suppressed and undo still returns to pre-drag state.
+  pushHistoryCheckpoint: () => void;
 
   // Helpers (Chord Track)
   getTotalT16: (arrangement: Arrangement) => number;
@@ -342,7 +346,16 @@ interface AppActions {
   // Create mode - node editing
   addNode: (voiceId: string, t16: number, deg: number, octave?: number, semi?: number) => void;
   removeNode: (voiceId: string, t16: number) => void;
-  updateNode: (voiceId: string, oldT16: number, newT16: number, deg: number, octave?: number, term?: boolean, semi?: number) => void;
+  updateNode: (
+    voiceId: string,
+    oldT16: number,
+    newT16: number,
+    deg: number,
+    octave?: number,
+    term?: boolean,
+    semi?: number,
+    options?: { recordHistory?: boolean }
+  ) => void;
   setSelectedVoiceId: (voiceId: string | null) => void;
 
   // Create mode - node selection
@@ -361,7 +374,11 @@ interface AppActions {
 
   // Create mode - bulk operations
   deleteSelectedNodes: () => void;                         // Delete/Backspace
-  moveSelectedNodes: (deltaT16: number, deltaSemitones: number) => void;  // Group drag
+  moveSelectedNodes: (
+    deltaT16: number,
+    deltaSemitones: number,
+    options?: { recordHistory?: boolean }
+  ) => void;  // Group drag
 
   // Create mode - voice management
   renameVoice: (voiceId: string, newName: string) => void;
@@ -392,9 +409,12 @@ interface AppActions {
 
   // Focus (replaces per-track solo buttons)
   // "Focus" solos BOTH synth and vocal for a voice simultaneously.
-  // Clicking a contour line toggles focus; clicking empty space or Esc clears all.
+  // Clicking a contour line can either replace focus (single-focus) or toggle
+  // membership (multi-focus via Shift+click).
   toggleFocus: (voiceId: string) => void;
+  focusOnlyVoice: (voiceId: string) => void;
   clearAllFocus: () => void;
+  cleanupFocusForExistingContours: () => void;
 
   // Global Mix
   setGlobalVolume: (volume: number) => void;
@@ -812,6 +832,22 @@ export const useAppStore = create<AppState & AppActions>()(
         };
       }),
 
+      // Replace the current focus set with one voice.
+      // This is the plain-click contour behavior (single-focus).
+      focusOnlyVoice: (voiceId) => set((state) => {
+        // Ignore unknown voice IDs (e.g., stale events).
+        const hasVoice = state.voiceStates.some(v => v.voiceId === voiceId);
+        if (!hasVoice) return state;
+
+        return {
+          voiceStates: state.voiceStates.map(v => ({
+            ...v,
+            synthSolo: v.voiceId === voiceId,
+            vocalSolo: v.voiceId === voiceId,
+          })),
+        };
+      }),
+
       undo: () => set((state) => {
         if (!state.canUndo || state.history.length === 0) return state;
         const snapshot = state.history[state.history.length - 1];
@@ -848,6 +884,19 @@ export const useAppStore = create<AppState & AppActions>()(
           future: remainingFuture,
           canUndo: nextHistory.length > 0,
           canRedo: remainingFuture.length > 0,
+        };
+      }),
+
+      // Push one undo checkpoint without mutating arrangement data.
+      // This is used by drag interactions to store the "before drag" state once.
+      pushHistoryCheckpoint: () => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        return {
+          ...historyUpdate,
         };
       }),
 
@@ -982,11 +1031,12 @@ export const useAppStore = create<AppState & AppActions>()(
         };
       }),
 
-      updateNode: (voiceId, oldT16, newT16, deg, octave = 0, term = false, semi) => set((state) => {
+      updateNode: (voiceId, oldT16, newT16, deg, octave = 0, term = false, semi, options) => set((state) => {
         if (!state.arrangement) return state;
 
-        const historyUpdate = prepareHistoryUpdate(state);
-        if (!historyUpdate) return state;
+        const shouldRecordHistory = options?.recordHistory ?? true;
+        const historyUpdate = shouldRecordHistory ? prepareHistoryUpdate(state) : null;
+        if (shouldRecordHistory && !historyUpdate) return state;
 
         const updatedVoices = state.arrangement.voices.map((voice) => {
           if (voice.id !== voiceId) return voice;
@@ -1085,6 +1135,7 @@ export const useAppStore = create<AppState & AppActions>()(
         });
 
         return {
+          ...(historyUpdate ?? {}),
           arrangement: { ...state.arrangement, voices: updatedVoices },
         };
       }),
@@ -1233,7 +1284,7 @@ export const useAppStore = create<AppState & AppActions>()(
         }
 
         return {
-          ...historyUpdate,
+          ...(historyUpdate ?? {}),
           arrangement: { ...state.arrangement, voices: updatedVoices },
           createView: { ...state.createView, selectedNodeKeys: newSelection },
         };
@@ -1289,13 +1340,14 @@ export const useAppStore = create<AppState & AppActions>()(
        * Move all selected nodes by a delta in time and pitch (semitones).
        * Used for group dragging.
        */
-      moveSelectedNodes: (deltaT16, deltaSemitones) => set((state) => {
+      moveSelectedNodes: (deltaT16, deltaSemitones, options) => set((state) => {
         if (!state.arrangement) return state;
         const selected = state.createView.selectedNodeKeys;
         if (selected.size === 0) return state;
 
-        const historyUpdate = prepareHistoryUpdate(state);
-        if (!historyUpdate) return state;
+        const shouldRecordHistory = options?.recordHistory ?? true;
+        const historyUpdate = shouldRecordHistory ? prepareHistoryUpdate(state) : null;
+        if (shouldRecordHistory && !historyUpdate) return state;
 
         const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
 
@@ -1815,7 +1867,7 @@ export const useAppStore = create<AppState & AppActions>()(
       }),
 
       // Clear all focus: remove all solo states from every voice.
-      // Triggered by clicking empty grid space or pressing Escape.
+      // Triggered by Escape or explicit clear actions.
       clearAllFocus: () => set((state) => ({
         voiceStates: state.voiceStates.map(v => ({
           ...v,
@@ -1823,6 +1875,37 @@ export const useAppStore = create<AppState & AppActions>()(
           vocalSolo: false,
         })),
       })),
+
+      // Keep focus/solo state valid after arrangement mutations.
+      // If a focused voice is deleted or has no nodes (no contour), clear its focus.
+      // This prevents "stuck muted" states where solo is active but nothing is focusable.
+      cleanupFocusForExistingContours: () => set((state) => {
+        const arrangement = state.arrangement;
+        if (!arrangement) return state;
+
+        const focusableVoiceIds = new Set(
+          arrangement.voices
+            .filter((voice) => voice.nodes.length > 0)
+            .map((voice) => voice.id)
+        );
+
+        let didChange = false;
+        const nextVoiceStates = state.voiceStates.map((vs) => {
+          if (focusableVoiceIds.has(vs.voiceId)) return vs;
+
+          if (!vs.synthSolo && !vs.vocalSolo) return vs;
+
+          didChange = true;
+          return {
+            ...vs,
+            synthSolo: false,
+            vocalSolo: false,
+          };
+        });
+
+        if (!didChange) return state;
+        return { voiceStates: nextVoiceStates };
+      }),
 
       // Global Mix
       setGlobalVolume: (volume) => set({ globalVolume: volume }),
