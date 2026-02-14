@@ -1067,7 +1067,10 @@ export const useAppStore = create<AppState & AppActions>()(
           // If there's already an anchor between the previous note and this time,
           // this note is the FIRST note of a phrase and must NOT become an anchor.
           if (term && anchorParent) {
-            const hasPhraseBreak = voice.nodes.some(
+            // IMPORTANT: ignore the anchor currently being moved (oldT16),
+            // otherwise dragging an anchor forward always looks like there's
+            // an existing phrase-break anchor in the path.
+            const hasPhraseBreak = nodesWithoutTarget.some(
               (n) => n.term && n.t16 > anchorParent.t16 && n.t16 < newT16,
             );
             if (hasPhraseBreak) {
@@ -1140,7 +1143,15 @@ export const useAppStore = create<AppState & AppActions>()(
         };
       }),
 
-      setSelectedVoiceId: (voiceId) => set({ selectedVoiceId: voiceId }),
+      // Editing voice changes should reset node selection so selection never
+      // spans an old voice after switching edit target.
+      setSelectedVoiceId: (voiceId) => set((state) => ({
+        selectedVoiceId: voiceId,
+        createView: {
+          ...state.createView,
+          selectedNodeKeys: new Set(),
+        },
+      })),
 
       // -- Create Mode - Node Selection --
 
@@ -1236,6 +1247,9 @@ export const useAppStore = create<AppState & AppActions>()(
         const cb = state.createView.clipboard;
         if (cb.length === 0) return state;
 
+        const targetVoiceId = state.selectedVoiceId ?? state.arrangement.voices[0]?.id;
+        if (!targetVoiceId) return state;
+
         const historyUpdate = prepareHistoryUpdate(state);
         if (!historyUpdate) return state;
 
@@ -1243,23 +1257,23 @@ export const useAppStore = create<AppState & AppActions>()(
         const minT16 = Math.min(...cb.map(n => n.t16));
         const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
 
-        // Build a map of voiceId -> nodes to add.
-        const additions = new Map<string, typeof cb>();
+        // Build one list of nodes to add to the CURRENT editable voice.
+        // This lets users copy from one voice, switch Edit to another voice,
+        // and paste there.
+        const additions: typeof cb = [];
         for (const cn of cb) {
           const newT16 = cn.t16 - minT16 + playheadT16;
           // Clamp to arrangement bounds.
           if (newT16 < 0 || newT16 > totalT16) continue;
-          if (!additions.has(cn.voiceId)) additions.set(cn.voiceId, []);
-          additions.get(cn.voiceId)!.push({ ...cn, t16: newT16 });
+          additions.push({ ...cn, voiceId: targetVoiceId, t16: newT16 });
         }
 
         // Apply additions to voices.
         const updatedVoices = state.arrangement.voices.map(voice => {
-          const toAdd = additions.get(voice.id);
-          if (!toAdd || toAdd.length === 0) return voice;
+          if (voice.id !== targetVoiceId || additions.length === 0) return voice;
 
           let newNodes = [...voice.nodes];
-          for (const cn of toAdd) {
+          for (const cn of additions) {
             // Remove any existing node at this t16 first.
             newNodes = newNodes.filter(n => n.t16 !== cn.t16);
             newNodes.push({
@@ -1276,10 +1290,9 @@ export const useAppStore = create<AppState & AppActions>()(
 
         // Select the newly pasted nodes.
         const newSelection = new Set<NodeKey>();
-        for (const cn of cb) {
-          const newT16 = cn.t16 - minT16 + playheadT16;
-          if (newT16 >= 0 && newT16 <= totalT16) {
-            newSelection.add(makeNodeKey(cn.voiceId, newT16));
+        for (const cn of additions) {
+          if (cn.t16 >= 0 && cn.t16 <= totalT16) {
+            newSelection.add(makeNodeKey(targetVoiceId, cn.t16));
           }
         }
 
@@ -1366,11 +1379,33 @@ export const useAppStore = create<AppState & AppActions>()(
           const selectedTimes = selectedLookup.get(voice.id);
           if (!selectedTimes || selectedTimes.size === 0) return voice;
 
+          // Expand movement set so each selected REAL note drags its attached
+          // anchor with it (first term node before the next real note).
+          // This prevents anchors from being left behind during group drags.
+          const timesToMove = new Set(selectedTimes);
+          for (const t16 of selectedTimes) {
+            const selectedNode = voice.nodes.find((n) => n.t16 === t16);
+            if (!selectedNode || selectedNode.term) continue;
+
+            const nextNonTerm = voice.nodes
+              .filter((n) => !n.term && n.t16 > t16)
+              .sort((a, b) => a.t16 - b.t16)[0];
+
+            const attachedAnchor = voice.nodes
+              .filter((n) => n.term && n.t16 > t16 && (!nextNonTerm || n.t16 < nextNonTerm.t16))
+              .sort((a, b) => a.t16 - b.t16)[0];
+
+            if (attachedAnchor) {
+              timesToMove.add(attachedAnchor.t16);
+            }
+          }
+
           const movedNodes: typeof voice.nodes = [];
+          const movedNodeMeta: Array<{ fromT16: number; toT16: number; isAutoMovedAnchor: boolean; isAnchor: boolean }> = [];
           const stationaryNodes: typeof voice.nodes = [];
 
           for (const node of voice.nodes) {
-            if (selectedTimes.has(node.t16)) {
+            if (timesToMove.has(node.t16)) {
               const newT16 = Math.max(0, Math.min(totalT16, node.t16 + deltaT16));
               // For pitch: shift the semitone value if present, otherwise shift deg/octave.
               let newNode;
@@ -1382,16 +1417,47 @@ export const useAppStore = create<AppState & AppActions>()(
                 newNode = { ...node, t16: newT16, semi: currentSemi + deltaSemitones, deg: undefined, octave: undefined };
               }
               movedNodes.push(newNode);
-              newSelection.add(makeNodeKey(voice.id, newT16));
+              movedNodeMeta.push({
+                fromT16: node.t16,
+                toT16: newT16,
+                isAutoMovedAnchor: !!node.term && !selectedTimes.has(node.t16),
+                isAnchor: !!node.term,
+              });
+              // Preserve selection membership only for nodes that were actually
+              // selected by the user; auto-moved attached anchors should move
+              // visually but should not become selected automatically.
+              if (selectedTimes.has(node.t16)) {
+                newSelection.add(makeNodeKey(voice.id, newT16));
+              }
             } else {
               stationaryNodes.push(node);
             }
           }
 
           // Remove stationary nodes at collision positions, then merge.
+          // Exception: if the collision is caused by an AUTO-moved anchor,
+          // keep the stationary node and drop only that anchor movement.
+          // This avoids deleting real notes when their attached anchors hit
+          // boundaries during group drags.
           const movedTimes = new Set(movedNodes.map(n => n.t16));
-          const filtered = stationaryNodes.filter(n => !movedTimes.has(n.t16));
-          const merged = [...filtered, ...movedNodes].sort((a, b) => a.t16 - b.t16);
+          const filtered = stationaryNodes.filter((n) => {
+            if (!movedTimes.has(n.t16)) return true;
+            const hasAutoMovedAnchorCollision = movedNodeMeta.some(
+              (m) => m.toT16 === n.t16 && m.isAutoMovedAnchor,
+            );
+            if (hasAutoMovedAnchorCollision) return true;
+            return false;
+          });
+
+          const filteredMovedNodes = movedNodes.filter((n) => {
+            if (!n.term) return true;
+            const movedMeta = movedNodeMeta.find((m) => m.toT16 === n.t16 && m.isAnchor);
+            if (!movedMeta || !movedMeta.isAutoMovedAnchor) return true;
+            const collidesWithStationary = stationaryNodes.some((s) => s.t16 === n.t16 && s.t16 !== movedMeta.fromT16);
+            return !collidesWithStationary;
+          });
+
+          const merged = [...filtered, ...filteredMovedNodes].sort((a, b) => a.t16 - b.t16);
           return { ...voice, nodes: merged };
         });
 

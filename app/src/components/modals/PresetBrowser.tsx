@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   X, Search, FolderPlus, Trash2, ChevronRight,
-  Music, Play, Heart, Save, Upload,
+  Music, Play, Heart, Save, Upload, Pencil,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Panel } from '../ui/Panel';
@@ -69,12 +69,13 @@ interface ArrangementRowProps {
   accentColor?: string;
   onFavorite?: () => void;
   onDelete?: () => void;
+  onEdit?: () => void;
   isFavorite?: boolean;
 }
 
 function ArrangementRow({
   arrangement, isSelected, onSelect, accentColor,
-  onFavorite, onDelete, isFavorite,
+  onFavorite, onDelete, onEdit, isFavorite,
 }: ArrangementRowProps) {
   return (
     <div
@@ -128,8 +129,17 @@ function ArrangementRow({
       </div>
 
       {/* Action buttons (My Library items only) — show on hover */}
-      {(onFavorite || onDelete) && (
+      {(onFavorite || onDelete || onEdit) && (
         <div className="hidden group-hover:flex items-center gap-1 flex-shrink-0">
+          {onEdit && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              className="p-1 rounded-full hover:bg-[var(--button-bg-hover)] transition-colors"
+              title="Edit in Create mode"
+            >
+              <Pencil size={13} className="text-[var(--text-disabled)] hover:text-[var(--text-primary)]" />
+            </button>
+          )}
           {onFavorite && (
             <button
               onClick={(e) => { e.stopPropagation(); onFavorite(); }}
@@ -287,10 +297,11 @@ function GuidedPathTab({ currentArrangementId, onSelect }: GuidedPathTabProps) {
 interface MyLibraryTabProps {
   currentArrangementId: string | undefined;
   onSelect: (arrangement: Arrangement) => void;
+  onEdit: (arrangement: Arrangement) => void;
   currentArrangement: Arrangement | null;
 }
 
-function MyLibraryTab({ currentArrangementId, onSelect, currentArrangement }: MyLibraryTabProps) {
+function MyLibraryTab({ currentArrangementId, onSelect, onEdit, currentArrangement }: MyLibraryTabProps) {
   /* ---- State ---- */
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [folders, setFolders] = useState<LibraryFolder[]>([]);
@@ -572,6 +583,7 @@ function MyLibraryTab({ currentArrangementId, onSelect, currentArrangement }: My
                   arrangement={item.arrangement}
                   isSelected={currentArrangementId === item.arrangement.id}
                   onSelect={() => onSelect(item.arrangement)}
+                  onEdit={() => onEdit(item.arrangement)}
                   isFavorite={item.isFavorite}
                   onFavorite={() => handleToggleFavorite(item.id)}
                   onDelete={() => handleDelete(item.id)}
@@ -595,6 +607,8 @@ export function LibraryModal() {
   const currentArrangement = useAppStore((s) => s.arrangement);
   const setLibraryOpen = useAppStore((s) => s.setLibraryOpen);
   const setArrangement = useAppStore((s) => s.setArrangement);
+  const setMode = useAppStore((s) => s.setMode);
+  const setCreateModalMode = useAppStore((s) => s.setCreateModalMode);
 
   /* ---- Local state ---- */
   const [activeTab, setActiveTab] = useState<LibraryTab>('guided');
@@ -608,6 +622,13 @@ export function LibraryModal() {
   };
 
   const handleClose = () => setLibraryOpen(false);
+
+  const handleEdit = (arrangement: Arrangement) => {
+    setArrangement(arrangement);
+    setMode('create');
+    setCreateModalMode('edit');
+    setLibraryOpen(false);
+  };
 
   /* ---- Tab definitions ---- */
   const tabs: { id: LibraryTab; label: string; icon: React.ReactNode }[] = [
@@ -672,6 +693,7 @@ export function LibraryModal() {
             <MyLibraryTab
               currentArrangementId={currentArrangement?.id}
               onSelect={handleSelect}
+              onEdit={handleEdit}
               currentArrangement={currentArrangement}
             />
           )}

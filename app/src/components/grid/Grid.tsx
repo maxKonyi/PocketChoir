@@ -195,33 +195,6 @@ function degreeToY(
 }
 
 
-/**
- * Find the closest in-scale ("legal") semitone to a raw semitone.
- * The semitone values here are relative to the arrangement tonic (0 = tonic).
- */
-function snapSemitoneToScale(scaleType: string, rawSemitone: number): number {
-  const pattern = SCALE_PATTERNS[scaleType] || SCALE_PATTERNS['major'];
-
-  // We search a small octave window around the raw semitone.
-  // This is enough to find the nearest scale tone without heavy computation.
-  const baseOctave = Math.floor(rawSemitone / 12);
-  let best = 0;
-  let bestDiff = Infinity;
-
-  for (let octave = baseOctave - 1; octave <= baseOctave + 1; octave++) {
-    for (const semiInOctave of pattern) {
-      const candidate = octave * 12 + semiInOctave;
-      const diff = Math.abs(candidate - rawSemitone);
-      if (diff < bestDiff) {
-        best = candidate;
-        bestDiff = diff;
-      }
-    }
-  }
-
-  return best;
-}
-
 /* ------------------------------------------------------------
    Grid Component
    ------------------------------------------------------------ */
@@ -1199,23 +1172,6 @@ export function Grid({
   }, [arrangement, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
-   * Convert a snapped semitone into (deg, octaveOffset) for storage in the arrangement.
-   */
-  const semitoneToDegreeAndOctave = useCallback((semitone: number, scaleType: string): { deg: number; octave: number } => {
-    const pattern = SCALE_PATTERNS[scaleType] || SCALE_PATTERNS['major'];
-
-    const octave = Math.floor(semitone / 12);
-    const semitoneInOctave = ((semitone % 12) + 12) % 12;
-    const index = pattern.indexOf(semitoneInOctave);
-
-    // If something went wrong (shouldn't happen because we snapped using the same pattern),
-    // fall back to degree 1.
-    const deg = index >= 0 ? index + 1 : 1;
-
-    return { deg, octave };
-  }, []);
-
-  /**
    * Compute a stable pitch-range anchor from the arrangement content.
    *
    * NOTE: We intentionally do NOT recompute this on every node edit.
@@ -1329,12 +1285,17 @@ export function Grid({
     const gridWidth = width - GRID_MARGIN.left - GRID_MARGIN.right;
     const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
 
-    if (x < gridLeft || x > gridLeft + gridWidth || y < gridTop || y > gridTop + gridHeight) return null;
+    // Horizontal bounds are strict (outside means no valid time placement).
+    // Vertical bounds are clamped so drag interactions remain stable even if
+    // the pointer drifts slightly above/below the grid while dragging.
+    if (x < gridLeft || x > gridLeft + gridWidth) return null;
+
+    const clampedY = Math.max(gridTop, Math.min(gridTop + gridHeight, y));
 
     const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
     const { minSemitone, maxSemitone } = getPitchRange();
 
-    // ── Convert screen X → world time → canonical local t16 ──
+    // ── Convert screen X → world time → local t16 (clamped, no wrap) ──
     const pxPerTVal = followMode.pxPerT;
     const currentWorldT = followMode.pendingWorldT !== null
       ? followMode.pendingWorldT
@@ -1343,24 +1304,18 @@ export function Grid({
 
     // Screen X (relative to grid left) → world time
     const clickWorldT = screenXToWorldT(x - gridLeft, camLeft, pxPerTVal);
-    // Resolve world time → canonical local t16 within [0, loopLengthT)
-    const { tLocal } = resolveToCanonical(clickWorldT, totalT16);
-    const t16 = Math.max(0, Math.min(totalT16, Math.round(tLocal)));
+    // In Create interactions we do NOT wrap time around the loop length.
+    // Wrapping causes drags near the right side to jump backward instead of
+    // continuing forward. Clamp keeps dragging direction intuitive.
+    const t16 = Math.max(0, Math.min(totalT16, Math.round(clickWorldT)));
 
-    const relativeY = (y - gridTop) / gridHeight;
+    const relativeY = (clampedY - gridTop) / gridHeight;
     const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
 
-    // Ctrl = allow chromatic (non-diatonic) notes.
-    if (e.ctrlKey) {
-      const chromaticSemitone = Math.round(rawSemitone);
-      return { t16, deg: 1, octave: 0, semi: chromaticSemitone };
-    }
-
-    const snappedSemitone = snapSemitoneToScale(arrangement.scale, rawSemitone);
-    const { deg, octave } = semitoneToDegreeAndOctave(snappedSemitone, arrangement.scale);
-
-    return { t16, deg, octave };
-  }, [arrangement, getPitchRange, semitoneToDegreeAndOctave, followMode.pxPerT, followMode.pendingWorldT]);
+    // Always allow chromatic placement (no modifier required).
+    const chromaticSemitone = Math.round(rawSemitone);
+    return { t16, deg: 1, octave: 0, semi: chromaticSemitone };
+  }, [arrangement, getPitchRange, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Main drawing function.
@@ -3095,8 +3050,20 @@ export function Grid({
     // Shared deterministic hit-test for Create mode interactions:
     // 1) node first
     // 2) contour second
-    const hitResult = e.button === 0
-      ? getAnyNodeHitAtMouseEvent(e, gridLeft, gridTopVal, gridWidth, gridHeight, minSemitone, maxSemitone)
+    const editableVoiceId = selectedVoiceId || arrangement.voices[0]?.id;
+    const hitResult = e.button === 0 && editableVoiceId
+      ? getNodeHitAtMouseEvent(
+        e,
+        editableVoiceId,
+        0,
+        0,
+        gridLeft,
+        gridTopVal,
+        gridWidth,
+        gridHeight,
+        minSemitone,
+        maxSemitone,
+      )
       : null;
 
     // In Create mode, contour focus is Shift+click only.
@@ -3143,9 +3110,8 @@ export function Grid({
 
     // ── Precedence 4: Left on node → selection + audition + potential drag ──
     // Check ALL voices for a node hit (not just the selected voice).
-    if (hitResult && e.button === 0) {
-      const { voiceId: hitVoiceId, node: hitNode } = hitResult;
-      const hitKey = makeNodeKey(hitVoiceId, hitNode.t16);
+    if (hitResult && editableVoiceId && e.button === 0) {
+      const hitKey = makeNodeKey(editableVoiceId, hitResult.t16);
       const currentSelection = useAppStore.getState().createView.selectedNodeKeys;
       const isAlreadySelected = currentSelection.has(hitKey);
 
@@ -3159,31 +3125,36 @@ export function Grid({
       }
       // If plain click on already-selected node: keep selection (for group drag).
 
-      // Auto-select voice track for editing.
-      if (selectedVoiceId !== hitVoiceId) {
-        setSelectedVoiceId(hitVoiceId);
-      }
+      // Start audition for clicked regular notes only.
+      // Anchors are purely timing controls and should not audition.
+      if (!hitResult.term) {
+        auditionRef.current = { voiceId: editableVoiceId };
+        const attackDeg = hitResult.deg ?? 0;
+        const attackOct = hitResult.octave ?? 0;
+        const attackSemi = hitResult.semi;
 
-      // Start audition for the clicked node.
-      auditionRef.current = { voiceId: hitVoiceId };
-      const attackDeg = hitNode.deg ?? 0;
-      const attackOct = hitNode.octave ?? 0;
-      const attackSemi = hitNode.semi;
+        const attack = (deg: number, octave: number, semi?: number) => {
+          playbackEngine.previewSynthAttack(editableVoiceId, deg, octave, semi);
+        };
 
-      const attack = (deg: number, octave: number, semi?: number) => {
-        playbackEngine.previewSynthAttack(hitVoiceId, deg, octave, semi);
-      };
-
-      if (AudioService.isReady()) {
-        attack(attackDeg, attackOct, attackSemi);
+        if (AudioService.isReady()) {
+          attack(attackDeg, attackOct, attackSemi);
+        } else {
+          pendingAuditionAttackRef.current = { voiceId: editableVoiceId, deg: attackDeg, octave: attackOct, semi: attackSemi };
+          void ensureAudioAndEngineReadyForPreview().then(() => {
+            const pending = pendingAuditionAttackRef.current;
+            if (!pending) return;
+            if (auditionRef.current?.voiceId !== pending.voiceId) return;
+            attack(pending.deg, pending.octave, pending.semi);
+          });
+        }
       } else {
-        pendingAuditionAttackRef.current = { voiceId: hitVoiceId, deg: attackDeg, octave: attackOct, semi: attackSemi };
-        void ensureAudioAndEngineReadyForPreview().then(() => {
-          const pending = pendingAuditionAttackRef.current;
-          if (!pending) return;
-          if (auditionRef.current?.voiceId !== pending.voiceId) return;
-          attack(pending.deg, pending.octave, pending.semi);
-        });
+        const existingAudition = auditionRef.current;
+        if (existingAudition) {
+          playbackEngine.previewSynthRelease(existingAudition.voiceId);
+          auditionRef.current = null;
+        }
+        pendingAuditionAttackRef.current = null;
       }
 
       // Determine if this starts a single-node drag or group drag.
@@ -3203,16 +3174,16 @@ export function Grid({
       }
 
       // Single-node drag (existing behavior for anchors and regular nodes).
-      if (hitNode.term) {
-        const voice = arrangement.voices.find((v) => v.id === hitVoiceId);
+      if (hitResult.term) {
+        const voice = arrangement.voices.find((v) => v.id === editableVoiceId);
         const parent = voice?.nodes
-          .filter((n) => !n.term && n.t16 < hitNode.t16)
+          .filter((n) => !n.term && n.t16 < hitResult.t16)
           .sort((a, b) => a.t16 - b.t16)
           .pop();
         if (!parent) return;
-        setDragState({ voiceId: hitVoiceId, originalT16: hitNode.t16, isDragging: true, anchorParentT16: parent.t16 });
+        setDragState({ voiceId: editableVoiceId, originalT16: hitResult.t16, isDragging: true, anchorParentT16: parent.t16 });
       } else {
-        setDragState({ voiceId: hitVoiceId, originalT16: hitNode.t16, isDragging: true });
+        setDragState({ voiceId: editableVoiceId, originalT16: hitResult.t16, isDragging: true });
       }
       placingNewNodeRef.current = null;
       return;
@@ -3496,11 +3467,25 @@ export function Grid({
         const gridHeight = height - GRID_MARGIN.top - GRID_MARGIN.bottom;
 
         const { minSemitone, maxSemitone } = getPitchRange();
-        const hit = getAnyNodeHitAtMouseEvent(e, gridLeft, gridTop, gridWidth, gridHeight, minSemitone, maxSemitone);
+        const editableVoiceId = selectedVoiceId || arrangement.voices[0]?.id;
+        const hit = editableVoiceId
+          ? getNodeHitAtMouseEvent(
+            e,
+            editableVoiceId,
+            0,
+            0,
+            gridLeft,
+            gridTop,
+            gridWidth,
+            gridHeight,
+            minSemitone,
+            maxSemitone,
+          )
+          : null;
         setIsHoveringNode(!!hit);
 
         if (hit) {
-          const hitKey = makeNodeKey(hit.voiceId, hit.node.t16);
+          const hitKey = makeNodeKey(editableVoiceId, hit.t16);
           setIsHoveringSelectedNode(selectedNodeKeys.has(hitKey));
         } else {
           setIsHoveringSelectedNode(false);
@@ -3527,7 +3512,16 @@ export function Grid({
     }
 
     // If the mouse is held down, glide the preview synth pitch.
-    if (auditionRef.current?.voiceId === voiceId) {
+    // Anchors should not audition during drag.
+    const draggedVoice = dragState?.isDragging
+      ? arrangement.voices.find((v) => v.id === dragState.voiceId)
+      : null;
+    const draggedNode = dragState?.isDragging
+      ? draggedVoice?.nodes.find((n) => n.t16 === dragState.originalT16)
+      : null;
+    const isDraggingAnchor = !!dragState?.isDragging && !!draggedNode?.term;
+
+    if (!isDraggingAnchor && auditionRef.current?.voiceId === voiceId) {
       // If we are dragging an anchor, preview pitch should not change vertically.
       if (dragState?.isDragging) {
         const voice = arrangement.voices.find((v) => v.id === dragState.voiceId);
@@ -3710,8 +3704,13 @@ export function Grid({
 
         // Find all nodes whose screen position falls inside the marquee rect.
         const hitKeys = new Set<NodeKey>();
-        for (const voice of arrangement.voices) {
-          for (const node of voice.nodes) {
+        const editableVoiceId = selectedVoiceId || arrangement.voices[0]?.id;
+        const editableVoice = editableVoiceId
+          ? arrangement.voices.find((v) => v.id === editableVoiceId)
+          : null;
+
+        if (editableVoice) {
+          for (const node of editableVoice.nodes) {
             const nodeWorldT = node.t16;
             const x = gridLeftPx + worldTToScreenX(nodeWorldT, camLeft, pxPerTVal);
             const y = node.semi !== undefined
@@ -3719,7 +3718,7 @@ export function Grid({
               : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTopPx, gridHeightPx, arrangement.scale);
 
             if (x >= mqLeft && x <= mqRight && y >= mqTop && y <= mqBottom) {
-              hitKeys.add(makeNodeKey(voice.id, node.t16));
+              hitKeys.add(makeNodeKey(editableVoice.id, node.t16));
             }
           }
         }
@@ -3777,7 +3776,7 @@ export function Grid({
     }
 
     pendingAuditionAttackRef.current = null;
-  }, [dragState, mode, addNode, arrangement, followMode.isDraggingTimeline, followMode.pendingWorldT, commitTimelineDrag, followMode.pxPerT, getPitchRange, setNodeSelection, addNodesToSelection]);
+  }, [dragState, mode, addNode, arrangement, followMode.isDraggingTimeline, followMode.pendingWorldT, commitTimelineDrag, followMode.pxPerT, getPitchRange, selectedVoiceId, setNodeSelection, addNodesToSelection]);
 
   // Follow-mode horizontal zoom action from the store
   const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
@@ -3945,7 +3944,8 @@ export function Grid({
     if (wantsHorizontalPan) {
       e.preventDefault();
       const dT = dragPixelsToTimeDelta(e.deltaX, followMode.pxPerT);
-      setSharedCameraAndMaybeSeek(getCameraCenterWorldT() + dT);
+      const nextCam = Math.max(0, getCameraCenterWorldT() + dT);
+      setCameraCenterWorldT(nextCam);
       return;
     }
 
@@ -3953,7 +3953,7 @@ export function Grid({
     e.preventDefault();
     const semitonesPerWheel = 0.03;
     adjustPlayPitchPanSemitones(e.deltaY * semitonesPerWheel);
-  }, [arrangement, mode, setHorizontalZoom, followMode.pxPerT, setSharedCameraAndMaybeSeek, adjustPlayPitchPanSemitones, display.zoomLevel, setZoomLevel]);
+  }, [arrangement, mode, setHorizontalZoom, followMode.pxPerT, adjustPlayPitchPanSemitones, display.zoomLevel, setZoomLevel]);
 
   // Keyboard navigation + hotkeys
   useEffect(() => {
