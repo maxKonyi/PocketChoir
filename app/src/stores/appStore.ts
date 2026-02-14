@@ -495,6 +495,19 @@ const initialPlaybackState: PlaybackState = {
   metronomeEnabled: false,
 };
 
+/**
+ * Compute the default practice-loop end point for an arrangement.
+ *
+ * Rule requested by product behavior:
+ * - Default loop = first 4 bars
+ * - If arrangement is shorter than 4 bars, loop the whole arrangement
+ */
+function getDefaultLoopEndT16(arrangement: Arrangement): number {
+  const totalSixteenths = arrangement.bars * arrangement.timeSig.numerator * 4;
+  const firstFourBarsSixteenths = 4 * arrangement.timeSig.numerator * 4;
+  return Math.max(0, Math.min(totalSixteenths, firstFourBarsSixteenths));
+}
+
 const initialMicrophoneState: MicrophoneState = {
   available: false,
   devices: [],
@@ -742,14 +755,15 @@ export const useAppStore = create<AppState & AppActions>()(
           set({ selectedVoiceId: firstVoiceId });
 
           get().initializeVoiceStates(arrangement.voices);
-          // Set loop end to arrangement length and reset position
-          const totalSixteenths = arrangement.bars * arrangement.timeSig.numerator * 4;
+          // Reset transport + default loop range for this arrangement.
+          // Default loop is first 4 bars, or the full arrangement if shorter.
+          const defaultLoopEnd = getDefaultLoopEndT16(arrangement);
           set((state) => ({
             playback: {
               ...state.playback,
               loopEnabled: false,       // Every new arrangement starts in one-shot mode
-              loopStart: 0,             // Reset practice loop range to full arrangement
-              loopEnd: totalSixteenths,
+              loopStart: 0,
+              loopEnd: defaultLoopEnd,
               position: 0,
               isPlaying: false,
               isRecording: false,
@@ -1882,9 +1896,30 @@ export const useAppStore = create<AppState & AppActions>()(
         playback: { ...state.playback, positionMs: ms },
       })),
 
-      setLoopEnabled: (enabled) => set((state) => ({
-        playback: { ...state.playback, loopEnabled: enabled },
-      })),
+      setLoopEnabled: (enabled) => set((state) => {
+        // When turning loop ON, ensure the loop range is valid for the current arrangement.
+        // If the range is missing/invalid, seed it with the default (first 4 bars or shorter).
+        if (enabled && state.arrangement) {
+          const totalSixteenths = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+          const defaultLoopEnd = getDefaultLoopEndT16(state.arrangement);
+          const currentStart = state.playback.loopStart;
+          const currentEnd = state.playback.loopEnd;
+          const hasValidRange = currentStart >= 0 && currentEnd > currentStart && currentEnd <= totalSixteenths;
+
+          return {
+            playback: {
+              ...state.playback,
+              loopEnabled: enabled,
+              loopStart: hasValidRange ? currentStart : 0,
+              loopEnd: hasValidRange ? currentEnd : defaultLoopEnd,
+            },
+          };
+        }
+
+        return {
+          playback: { ...state.playback, loopEnabled: enabled },
+        };
+      }),
 
       setLoopPoints: (start, end) => set((state) => ({
         playback: { ...state.playback, loopStart: start, loopEnd: end },

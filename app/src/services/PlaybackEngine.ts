@@ -102,6 +102,14 @@ export class PlaybackEngine {
   // exactly on time, instead of being delayed until the next animation frame.
   private readonly scheduleLookaheadMs: number = 150;
 
+  // Tiny intentional release gap (seconds) used to force audible retriggering
+  // when two adjacent notes in the same voice have the same pitch and no
+  // explicit term/gap node between them.
+  //
+  // USER TWEAK POINT:
+  // Increase for a more obvious re-articulation, decrease for smoother legato.
+  private readonly repeatedNoteRetriggerGapSeconds: number = 0.03;
+
   // For each voice, track which node index we should schedule next.
   private nextNodeIndexToSchedule: Map<string, number> = new Map();
 
@@ -702,6 +710,32 @@ export class PlaybackEngine {
     );
     freq = freq * Math.pow(2, this.transposition / 12);
     return freq;
+  }
+
+  /**
+   * Decide whether two musical nodes should be treated as the same pitch.
+   *
+   * We prefer exact symbolic comparisons first (semi, then degree+octave),
+   * and only fall back to frequency comparison when encodings differ.
+   */
+  private areNodesSamePitch(voice: Voice, a: Node, b: Node): boolean {
+    // Term nodes represent silence and are never a pitched match.
+    if (a.term || b.term) return false;
+
+    // Chromatic notes: compare semitone offsets directly.
+    if (a.semi !== undefined && b.semi !== undefined) {
+      return a.semi === b.semi;
+    }
+
+    // Diatonic notes: compare scale degree + octave.
+    if (a.semi === undefined && b.semi === undefined) {
+      return (a.deg ?? 0) === (b.deg ?? 0) && (a.octave ?? 0) === (b.octave ?? 0);
+    }
+
+    // Mixed encoding fallback: compare final frequencies with a tiny tolerance.
+    const freqA = this.getNodeFrequency(voice, a);
+    const freqB = this.getNodeFrequency(voice, b);
+    return Math.abs(freqA - freqB) < 0.0001;
   }
 
   /**
@@ -1568,14 +1602,37 @@ export class PlaybackEngine {
             }, eventTime);
             isPlaying = true;
           } else {
-            // Already sounding: glide to the new pitch instead of re-attacking.
-            synth.glideTo(freq, 0.05, eventTime);
-            this.scheduleNodeEventCallback({
-              voiceId: voice.id,
-              t16: node.t16,
-              worldT16,
-              type: 'glide',
-            }, eventTime);
+            const prevNode = nextIndex > 0 ? voice.nodes[nextIndex - 1] : null;
+            const shouldRetriggerRepeatedNote =
+              !!prevNode
+              // No explicit gap marker between notes: previous node is pitched.
+              && !prevNode.term
+              // Same pitch as previous node.
+              && this.areNodesSamePitch(voice, prevNode, node);
+
+            if (shouldRetriggerRepeatedNote) {
+              // Force a tiny silence before the repeated note so it is clearly
+              // re-articulated instead of sounding like one long continuous tone.
+              const offTime = Math.max(0, eventTime - this.repeatedNoteRetriggerGapSeconds);
+              synth.noteOff(offTime);
+              synth.noteOn(freq, eventTime);
+
+              this.scheduleNodeEventCallback({
+                voiceId: voice.id,
+                t16: node.t16,
+                worldT16,
+                type: 'attack',
+              }, eventTime);
+            } else {
+              // Already sounding and pitch changed: glide to preserve legato.
+              synth.glideTo(freq, 0.05, eventTime);
+              this.scheduleNodeEventCallback({
+                voiceId: voice.id,
+                t16: node.t16,
+                worldT16,
+                type: 'glide',
+              }, eventTime);
+            }
           }
         }
 

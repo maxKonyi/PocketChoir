@@ -666,9 +666,14 @@ export function Grid({
 
   // When the loop is toggled ON in Smart mode, auto-zoom the viewport to
   // fit the entire loop with padding, and center the camera on the loop.
+  //
+  // IMPORTANT:
+  // This effect intentionally runs in BOTH Play and Create modes so loop
+  // camera behavior stays perfectly in sync across modes.
+  //
   // When toggled OFF, clear free-look and snap back to follow behaviour.
   useEffect(() => {
-    if (mode !== 'play') return;
+    if (mode !== 'play' && mode !== 'create') return;
     const cameraMode = useAppStore.getState().followMode.cameraMode;
 
     if (loopEnabled && cameraMode === 'smart') {
@@ -728,7 +733,7 @@ export function Grid({
   //   Smart  → clear free-look so the evaluator runs a fresh check.
   //   Static → no special action (evaluator returns FREE_LOOK automatically).
   useEffect(() => {
-    if (mode !== 'play') return;
+    if (mode !== 'play' && mode !== 'create') return;
     const cameraMode = followMode.cameraMode;
 
     if (cameraMode === 'follow') {
@@ -1061,7 +1066,7 @@ export function Grid({
     // How close the mouse must be to the contour line (in CSS pixels).
     // The visual line radius is (1.5 * display.lineThickness).
     // We add a fixed 6px padding to make it easy to hit.
-    const hitThreshold = 14 * display.noteSize;
+    const hitThreshold = 8 * display.noteSize;
     const pxPerTVal = followMode.pxPerT;
     const currentWorldT = followMode.pendingWorldT !== null
       ? followMode.pendingWorldT
@@ -3935,6 +3940,14 @@ export function Grid({
     setSmartCamIsStatic(false);
   }, [setCameraMode]);
 
+  // Show recenter only when it is actually needed.
+  // In static smart-cam states (e.g., STATIC_LOOP), being in a static state
+  // alone is not enough — if we're already centered, the pill should hide.
+  const cameraDeltaT = Math.abs(getCameraCenterWorldT() - playbackEngine.getWorldPositionT16());
+  const centerToleranceT = followMode.pxPerT > 0 ? (6 / followMode.pxPerT) : 0.25;
+  const isCenteredOnPlayhead = cameraDeltaT <= centerToleranceT;
+  const shouldShowRecenter = freeLookReact || (smartCamIsStatic && !isCenteredOnPlayhead);
+
   return (
     <div
       ref={containerRef}
@@ -3942,7 +3955,7 @@ export function Grid({
       className={`relative w-full h-full ${className}`}
     >
       {/* ── Recenter button (Play/Create mode, static cam states or user-panned) ── */}
-      {(mode === 'play' || mode === 'create') && !onlyChords && (smartCamIsStatic || freeLookReact) && (
+      {(mode === 'play' || mode === 'create') && !onlyChords && shouldShowRecenter && (
         gridOverlayRoot
           ? createPortal(
             <button
