@@ -590,13 +590,12 @@ export function Grid({
     }
   }, [isPlaying]);
 
-  // When you stop playback in Create mode, snap the SHARED camera to the
-  // current engine position so editing starts exactly where playback ended.
-  useEffect(() => {
-    if (mode !== 'create') return;
-    if (isPlaying) return;
-    setCameraCenterWorldT(playbackEngine.getWorldPositionT16());
-  }, [mode, isPlaying]);
+  // NOTE:
+  // We intentionally do NOT auto-snap camera on pause in either mode.
+  // If the user panned away (FREE_LOOK), pause should preserve that view.
+  // Re-centering back to playhead is handled on explicit actions:
+  // - Play start in smart/follow modes
+  // - Restart action (camera follow reset trigger)
 
   // If the mouse is released outside the canvas, stop any active pan drag.
   // Without this, the grid can get "stuck" in panning mode.
@@ -617,7 +616,7 @@ export function Grid({
     };
   }, []);
 
-  // When playback STARTS in Play mode, decide camera behavior based on
+  // When playback STARTS in Play or Create mode, decide camera behavior based on
   // the camera mode:
   //
   //   Follow mode  → always snap camera to playhead.
@@ -627,7 +626,7 @@ export function Grid({
   //
   // When playback STOPS, keep the camera where it is (don't snap).
   useEffect(() => {
-    if (mode !== 'play') return;
+    if (mode !== 'play' && mode !== 'create') return;
     if (!isPlaying) return; // stop pressed — camera stays put
 
     const cameraMode = useAppStore.getState().followMode.cameraMode;
@@ -754,7 +753,7 @@ export function Grid({
   // The restart button increments cameraFollowResetCount in the store;
   // this effect watches it and snaps the camera to the playhead (now at 0).
   useEffect(() => {
-    if (mode !== 'play') return;
+    if (mode !== 'play' && mode !== 'create') return;
     // Skip the initial mount (count = 0).
     if (followMode.cameraFollowResetCount === 0) return;
 
@@ -4068,8 +4067,32 @@ export function Grid({
                 return;
               }
 
-              setHoverSplitScreenX(e.clientX - rect.left);
-              setHoverSplitT16(chordLaneMouseXToT16(e.clientX));
+              // Snap split preview to the same grid division that splitting uses.
+              // This keeps the ghost marker position visually consistent with the
+              // actual split result on click.
+              const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+              const pxPerTVal = followMode.pxPerT;
+              if (pxPerTVal <= 0 || totalT16 <= 0) {
+                setHoverSplitT16(null);
+                setHoverSplitScreenX(null);
+                return;
+              }
+
+              const currentWorldT = followMode.pendingWorldT !== null
+                ? followMode.pendingWorldT
+                : getCameraCenterWorldT();
+              const camLeft = cameraLeftWorldT(currentWorldT, rect.width, pxPerTVal);
+              const screenX = e.clientX - rect.left;
+              const hoverWorldT = screenXToWorldT(screenX, camLeft, pxPerTVal);
+              const { tLocal, k } = resolveToCanonical(hoverWorldT, totalT16);
+              const snappedT16 = Math.max(0, Math.min(totalT16, Math.round(tLocal)));
+
+              // Keep marker on the same repeated-tile instance the mouse is over.
+              const snappedWorldT = k * totalT16 + snappedT16;
+              const snappedScreenX = worldTToScreenX(snappedWorldT, camLeft, pxPerTVal);
+
+              setHoverSplitT16(snappedT16);
+              setHoverSplitScreenX(snappedScreenX);
             }}
             onClick={(e) => {
               e.stopPropagation();
