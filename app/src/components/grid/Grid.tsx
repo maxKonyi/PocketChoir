@@ -2291,6 +2291,11 @@ export function Grid({
         shadowCtx.rect(gridLeft, gridTop, gridWidth, gridHeight);
         shadowCtx.clip();
 
+        // Multiple voices can share the same rendered node position.
+        // To avoid stacking several identical radial fills on top of each other,
+        // we keep one shadow entry per screen position and draw it once.
+        const shadowByPosition = new Map<string, { x: number; y: number; radius: number }>();
+
         for (let k = kStart; k <= kEnd; k++) {
           const tileOffset = k * loopLengthT;
           for (const voice of arrangement.voices) {
@@ -2305,24 +2310,40 @@ export function Grid({
                 : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
               const nodeShadowRadius = node.term ? anchorRadius * 2.6 : nodeRadius * 2.1;
-              const shadowGradient = shadowCtx.createRadialGradient(
-                x,
-                y,
-                0,
-                x,
-                y,
-                nodeShadowRadius
-              );
-              shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.100)');
-              shadowGradient.addColorStop(0.55, 'rgba(0, 0, 0, 0.60)');
-              shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+              const shadowKey = `${Math.round(x * 10)}:${Math.round(y * 10)}`;
+              const existingShadow = shadowByPosition.get(shadowKey);
 
-              shadowCtx.fillStyle = shadowGradient;
-              shadowCtx.beginPath();
-              shadowCtx.arc(x, y, nodeShadowRadius, 0, Math.PI * 2);
-              shadowCtx.fill();
+              if (!existingShadow) {
+                shadowByPosition.set(shadowKey, { x, y, radius: nodeShadowRadius });
+                continue;
+              }
+
+              // Keep the widest radius so mixed node types at one position still
+              // produce a shadow large enough to cover the visible node marker.
+              if (nodeShadowRadius > existingShadow.radius) {
+                existingShadow.radius = nodeShadowRadius;
+              }
             }
           }
+        }
+
+        for (const { x, y, radius } of shadowByPosition.values()) {
+          const shadowGradient = shadowCtx.createRadialGradient(
+            x,
+            y,
+            0,
+            x,
+            y,
+            radius
+          );
+          shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.100)');
+          shadowGradient.addColorStop(0.55, 'rgba(0, 0, 0, 0.60)');
+          shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+          shadowCtx.fillStyle = shadowGradient;
+          shadowCtx.beginPath();
+          shadowCtx.arc(x, y, radius, 0, Math.PI * 2);
+          shadowCtx.fill();
         }
         shadowCtx.restore();
 
