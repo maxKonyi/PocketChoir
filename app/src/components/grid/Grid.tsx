@@ -225,6 +225,121 @@ interface SnappedGridPoint {
   semi?: number;
 }
 
+// For each contour segment, if multiple voices share exactly the same segment
+// (same start/end time and same start/end pitch), we assign each voice a
+// vertical stack position so all lines remain visible.
+interface ContourSegmentStackInfo {
+  stackIndex: number;
+  stackSize: number;
+}
+
+type ContourStackLookup = Map<string, Map<number, ContourSegmentStackInfo>>;
+
+/**
+ * Convert a contour node to a semitone value (relative to arrangement tonic).
+ */
+function contourNodeToSemitone(
+  node: { semi?: number; deg?: number; octave?: number },
+  scaleType: string
+): number {
+  return node.semi !== undefined
+    ? node.semi
+    : degreeToSemitoneOffset(node.deg ?? 0, node.octave || 0, scaleType);
+}
+
+/**
+ * Build a lookup that tells us which segments should be vertically stacked.
+ *
+ * Key idea:
+ * - We walk every voice and index each drawn segment in the same order used by
+ *   drawVoiceContour().
+ * - We group segments that are geometrically identical.
+ * - For groups with 2+ voices, we assign stack order by sidebar voice order
+ *   (arrangement.voices order).
+ */
+function buildContourSegmentStackLookup(arrangement: Arrangement): ContourStackLookup {
+  const groups = new Map<string, Array<{ voiceId: string; voiceOrder: number; segmentIndex: number }>>();
+
+  const addSegment = (segmentKey: string, voiceId: string, voiceOrder: number, segmentIndex: number) => {
+    const group = groups.get(segmentKey);
+    if (group) {
+      group.push({ voiceId, voiceOrder, segmentIndex });
+      return;
+    }
+    groups.set(segmentKey, [{ voiceId, voiceOrder, segmentIndex }]);
+  };
+
+  for (let voiceOrder = 0; voiceOrder < arrangement.voices.length; voiceOrder++) {
+    const voice = arrangement.voices[voiceOrder];
+    let inPhrase = false;
+    let segmentIndex = 0;
+    let lastNode: (typeof voice.nodes)[number] | null = null;
+    let lastSemitone = 0;
+
+    for (const node of voice.nodes) {
+      if (node.term) {
+        if (inPhrase && lastNode) {
+          const holdKey = `hold|${lastNode.t16}|${node.t16}|${lastSemitone}`;
+          addSegment(holdKey, voice.id, voiceOrder, segmentIndex);
+          segmentIndex += 1;
+          inPhrase = false;
+          lastNode = null;
+        }
+        continue;
+      }
+
+      const nodeSemitone = contourNodeToSemitone(node, arrangement.scale);
+
+      if (!inPhrase) {
+        inPhrase = true;
+        lastNode = node;
+        lastSemitone = nodeSemitone;
+        continue;
+      }
+
+      const contourKey = `seg|${lastNode!.t16}|${node.t16}|${lastSemitone}|${nodeSemitone}`;
+      addSegment(contourKey, voice.id, voiceOrder, segmentIndex);
+      segmentIndex += 1;
+
+      lastNode = node;
+      lastSemitone = nodeSemitone;
+    }
+  }
+
+  const lookup: ContourStackLookup = new Map();
+
+  for (const refs of groups.values()) {
+    // A single voice doesn't need stacking.
+    if (refs.length < 2) continue;
+
+    // Top-to-bottom stack follows sidebar order.
+    refs.sort((a, b) => a.voiceOrder - b.voiceOrder);
+    const stackSize = refs.length;
+
+    for (let stackIndex = 0; stackIndex < refs.length; stackIndex++) {
+      const ref = refs[stackIndex];
+      let perVoice = lookup.get(ref.voiceId);
+      if (!perVoice) {
+        perVoice = new Map<number, ContourSegmentStackInfo>();
+        lookup.set(ref.voiceId, perVoice);
+      }
+      perVoice.set(ref.segmentIndex, { stackIndex, stackSize });
+    }
+  }
+
+  return lookup;
+}
+
+/**
+ * Convert stack slot to vertical pixel offset.
+ *
+ * We space centers by one line width so adjacent lines "butt" exactly with no gap.
+ * Example with 2 lines: offsets are -0.5w and +0.5w.
+ */
+function getContourSegmentStackOffsetY(stackInfo: ContourSegmentStackInfo, lineWidth: number): number {
+  return (stackInfo.stackIndex - (stackInfo.stackSize - 1) / 2) * lineWidth;
+}
+
 // Keep the grid margins consistent between drawing and mouse hit-testing.
 // If these differ, the "ghost" preview and click zones will feel offset.
 const GRID_MARGIN = { top: 40, right: 20, bottom: 40, left: 50 };
@@ -385,6 +500,13 @@ export function Grid({
   // Get arrangement from store to ensure we always have latest (for create mode updates)
   const arrangementFromStore = useAppStore((state) => state.arrangement);
   const arrangement = arrangementFromStore || arrangementProp;
+
+  // Lookup used to vertically stack contour segments that are exactly overlapping.
+  // Recomputed only when arrangement content/order changes.
+  const contourStackLookup = useMemo<ContourStackLookup>(() => {
+    if (!arrangement) return new Map();
+    return buildContourSegmentStackLookup(arrangement);
+  }, [arrangement]);
 
   // Subscribe only to the playback flags this component actually uses.
   // Subscribing to the entire playback object would re-render the Grid on every
@@ -1078,6 +1200,7 @@ export function Grid({
     // The visual line radius is (1.5 * display.lineThickness).
     // We add a fixed 6px padding to make it easy to hit.
     const hitThreshold = 8 * display.noteSize;
+    const baseContourWidth = 3 * display.lineThickness;
     const pxPerTVal = followMode.pxPerT;
     const currentWorldT = followMode.pendingWorldT !== null
       ? followMode.pendingWorldT
@@ -1115,21 +1238,31 @@ export function Grid({
     for (const voice of arrangement.voices) {
       if (voice.nodes.length === 0) continue;
 
+      const voiceStackMap = contourStackLookup.get(voice.id);
+
       let lastX = 0;
       let lastY = 0;
       let inPhrase = false;
+      let segmentIndex = 0;
 
       for (const node of voice.nodes) {
         if (node.term) {
           if (inPhrase) {
+            const stackInfo = voiceStackMap?.get(segmentIndex);
+            const segmentOffsetY = stackInfo
+              ? getContourSegmentStackOffsetY(stackInfo, baseContourWidth)
+              : 0;
+
             // Check horizontal hold segment to termination point
             const termX = toScreenX(node.t16);
-            const d = distToSegmentSq(mouseX, mouseY, lastX, lastY, termX, lastY);
+            const y = lastY + segmentOffsetY;
+            const d = distToSegmentSq(mouseX, mouseY, lastX, y, termX, y);
             if (d < thresholdSq && d < bestDistSq) {
               bestDistSq = d;
               bestVoiceId = voice.id;
             }
             inPhrase = false;
+            segmentIndex += 1;
           }
           continue;
         }
@@ -1144,20 +1277,27 @@ export function Grid({
           continue;
         }
 
+        const stackInfo = voiceStackMap?.get(segmentIndex);
+        const segmentOffsetY = stackInfo
+          ? getContourSegmentStackOffsetY(stackInfo, baseContourWidth)
+          : 0;
+
         // Check horizontal hold from lastX,lastY to the bend start
         // Then the bend itself (approximate as straight line from bend start to x,y)
         const bendWidth = Math.min(40, (x - lastX) * 0.8);
         const bendStartX = x - bendWidth;
+        const lastYOffset = lastY + segmentOffsetY;
+        const yOffset = y + segmentOffsetY;
 
         // Segment 1: horizontal hold (lastX, lastY) → (bendStartX, lastY)
-        const d1 = distToSegmentSq(mouseX, mouseY, lastX, lastY, bendStartX, lastY);
+        const d1 = distToSegmentSq(mouseX, mouseY, lastX, lastYOffset, bendStartX, lastYOffset);
         if (d1 < thresholdSq && d1 < bestDistSq) {
           bestDistSq = d1;
           bestVoiceId = voice.id;
         }
 
         // Segment 2: bend (bendStartX, lastY) → (x, y) — simplified as straight line
-        const d2 = distToSegmentSq(mouseX, mouseY, bendStartX, lastY, x, y);
+        const d2 = distToSegmentSq(mouseX, mouseY, bendStartX, lastYOffset, x, yOffset);
         if (d2 < thresholdSq && d2 < bestDistSq) {
           bestDistSq = d2;
           bestVoiceId = voice.id;
@@ -1165,11 +1305,12 @@ export function Grid({
 
         lastX = x;
         lastY = y;
+        segmentIndex += 1;
       }
     }
 
     return bestVoiceId;
-  }, [arrangement, followMode.pxPerT, followMode.pendingWorldT]);
+  }, [arrangement, contourStackLookup, display.noteSize, display.lineThickness, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
    * Compute a stable pitch-range anchor from the arrangement content.
@@ -1815,6 +1956,7 @@ export function Grid({
           const isHoveredContour = hoveredContourVoiceIdRef.current === voice.id;
           const baseContourWidth = 3 * display.lineThickness;
           const contourLineWidth = isHoveredContour ? baseContourWidth * 1.67 : baseContourWidth;
+          const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 
           // Draw contour with glow effect
           ctx.save();
@@ -1825,14 +1967,14 @@ export function Grid({
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth);
           }
 
           // Main line
           ctx.shadowBlur = 0;
           ctx.strokeStyle = voiceColor;
           ctx.lineWidth = contourLineWidth;
-          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT);
+          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth);
           ctx.restore();
         }
       }
@@ -2153,7 +2295,7 @@ export function Grid({
 
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -2177,7 +2319,9 @@ export function Grid({
     camLeft: number,
     pxPerT: number,
     gridLeftPx: number,
-    loopLen: number
+    loopLen: number,
+    segmentStackMap: Map<number, ContourSegmentStackInfo> | undefined,
+    stackLineWidth: number
   ) {
     if (voice.nodes.length === 0) return;
 
@@ -2185,10 +2329,35 @@ export function Grid({
     const nodeToX = (localT16: number) =>
       gridLeftPx + worldTToScreenX(localT16 + tileOffset, camLeft, pxPerT);
 
-    ctx.beginPath();
     let lastX = 0;
     let lastY = 0;
+    let lastRenderedY = 0;
     let inPhrase = false;
+    let hasActivePath = false;
+    let activeOffsetY = 0;
+    let segmentIndex = 0;
+
+    // Start or switch the active path when a segment's stacking offset changes.
+    const ensurePathStart = (startX: number, startBaseY: number, segmentOffsetY: number): number => {
+      const startY = startBaseY + segmentOffsetY;
+
+      if (!hasActivePath) {
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        hasActivePath = true;
+        activeOffsetY = segmentOffsetY;
+        return startY;
+      }
+
+      if (Math.abs(activeOffsetY - segmentOffsetY) > 0.001) {
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        activeOffsetY = segmentOffsetY;
+      }
+
+      return startY;
+    };
 
     for (let i = 0; i < voice.nodes.length; i++) {
       const node = voice.nodes[i];
@@ -2196,12 +2365,22 @@ export function Grid({
       // Termination node ends the current phrase.
       if (node.term) {
         if (inPhrase) {
+          const stackInfo = segmentStackMap?.get(segmentIndex);
+          const segmentOffsetY = stackInfo
+            ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth)
+            : 0;
+
+          const stackedLastY = ensurePathStart(lastX, lastY, segmentOffsetY);
+
           // Draw a horizontal hold segment to the termination time.
           const termX = nodeToX(node.t16);
-          ctx.lineTo(termX, lastY);
+          ctx.lineTo(termX, stackedLastY);
+          lastRenderedY = stackedLastY;
+
           ctx.stroke();
-          ctx.beginPath();
+          hasActivePath = false;
           inPhrase = false;
+          segmentIndex += 1;
         }
         continue;
       }
@@ -2212,12 +2391,19 @@ export function Grid({
         : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
 
       if (!inPhrase) {
-        ctx.moveTo(x, y);
         inPhrase = true;
         lastX = x;
         lastY = y;
+        lastRenderedY = y;
         continue;
       }
+
+      const stackInfo = segmentStackMap?.get(segmentIndex);
+      const segmentOffsetY = stackInfo
+        ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth)
+        : 0;
+      const stackedLastY = ensurePathStart(lastX, lastY, segmentOffsetY);
+      const stackedY = y + segmentOffsetY;
 
       // Draw curved connection from previous node to this one
       const nodeRadius = 12 * display.noteSize;
@@ -2225,30 +2411,41 @@ export function Grid({
       const bendStartX = x - bendWidth;
 
       // Draw a straight horizontal line to the start of the bend
-      ctx.lineTo(bendStartX, lastY);
+      ctx.lineTo(bendStartX, stackedLastY);
 
-      if (Math.abs(y - lastY) < 1) {
+      if (Math.abs(stackedY - stackedLastY) < 1) {
         // Same pitch, just draw a straight line
-        ctx.lineTo(x, y);
+        ctx.lineTo(x, stackedY);
       } else {
         // Pitch changes: enter from bottom if moving up, top if moving down
-        const isMovingUp = y < lastY;
-        const entryY = isMovingUp ? y + nodeRadius : y - nodeRadius;
+        const isMovingUp = stackedY < stackedLastY;
+        const entryY = isMovingUp ? stackedY + nodeRadius : stackedY - nodeRadius;
 
         const cp1x = bendStartX + bendWidth * 0.5;
-        const cp1y = lastY;
+        const cp1y = stackedLastY;
         const cp2x = x;
-        const cp2y = lastY;
+        const cp2y = stackedLastY;
 
         ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, entryY);
-        ctx.lineTo(x, y);
+        ctx.lineTo(x, stackedY);
       }
 
       lastX = x;
       lastY = y;
+      lastRenderedY = stackedY;
+      segmentIndex += 1;
     }
 
     if (inPhrase) {
+      // Phrase has no drawable segment yet (single node phrase).
+      // Seed a path so stroke/dash behavior remains identical to old behavior.
+      if (!hasActivePath) {
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        hasActivePath = true;
+        lastRenderedY = lastY;
+      }
+
       // If playback is running and there is no terminating anchor,
       // show a dashed line indicating the note holds to the end of the loop.
       if (playbackEngine.getIsPlaying()) {
@@ -2264,9 +2461,9 @@ export function Grid({
         // Now draw ONLY the final "hold" extension as a separate dashed segment.
         ctx.save();
         ctx.beginPath();
-        ctx.moveTo(lastX, lastY);
+        ctx.moveTo(lastX, lastRenderedY);
         ctx.setLineDash([6, 6]);
-        ctx.lineTo(endX, lastY);
+        ctx.lineTo(endX, lastRenderedY);
         ctx.stroke();
         ctx.restore();
       } else {
