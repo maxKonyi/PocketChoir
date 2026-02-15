@@ -297,7 +297,7 @@ function GuidedPathTab({ currentArrangementId, onSelect }: GuidedPathTabProps) {
 interface MyLibraryTabProps {
   currentArrangementId: string | undefined;
   onSelect: (arrangement: Arrangement) => void;
-  onEdit: (arrangement: Arrangement) => void;
+  onEdit: (arrangement: Arrangement, itemId: string) => void;
   currentArrangement: Arrangement | null;
 }
 
@@ -583,7 +583,7 @@ function MyLibraryTab({ currentArrangementId, onSelect, onEdit, currentArrangeme
                   arrangement={item.arrangement}
                   isSelected={currentArrangementId === item.arrangement.id}
                   onSelect={() => onSelect(item.arrangement)}
-                  onEdit={() => onEdit(item.arrangement)}
+                  onEdit={() => onEdit(item.arrangement, item.id)}
                   isFavorite={item.isFavorite}
                   onFavorite={() => handleToggleFavorite(item.id)}
                   onDelete={() => handleDelete(item.id)}
@@ -609,6 +609,7 @@ export function LibraryModal() {
   const setArrangement = useAppStore((s) => s.setArrangement);
   const setMode = useAppStore((s) => s.setMode);
   const setCreateModalMode = useAppStore((s) => s.setCreateModalMode);
+  const setEditingLibraryItemId = useAppStore((s) => s.setEditingLibraryItemId);
 
   /* ---- Local state ---- */
   const [activeTab, setActiveTab] = useState<LibraryTab>('guided');
@@ -623,8 +624,10 @@ export function LibraryModal() {
 
   const handleClose = () => setLibraryOpen(false);
 
-  const handleEdit = (arrangement: Arrangement) => {
+  const handleEdit = (arrangement: Arrangement, itemId: string) => {
     setArrangement(arrangement);
+    // Mark this arrangement as "editing an existing library item" so Save can overwrite.
+    setEditingLibraryItemId(itemId);
     setMode('create');
     setCreateModalMode('edit');
     setLibraryOpen(false);

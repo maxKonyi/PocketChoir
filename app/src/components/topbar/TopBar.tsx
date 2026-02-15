@@ -5,10 +5,12 @@
    Controls: Library, Mic Setup, Display Settings, Theme, Mode Toggle
    ============================================================ */
 
-import { Library, Mic, Eye, Palette, Download } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Library, Mic, Eye, Palette, Download, Save, Check, AlertCircle } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { applyTheme, type ThemeName } from '../../utils/colors';
 import { AudioService } from '../../services/AudioService';
+import { LibraryService } from '../../services/LibraryService';
 
 /* ------------------------------------------------------------
    Theme options for the dropdown
@@ -32,6 +34,7 @@ export function TopBar() {
   const arrangement = useAppStore((state) => state.arrangement);
   const mode = useAppStore((state) => state.mode);
   const theme = useAppStore((state) => state.theme);
+  const editingLibraryItemId = useAppStore((state) => state.editingLibraryItemId);
 
   // Get actions from store
   const setLibraryOpen = useAppStore((state) => state.setLibraryOpen);
@@ -41,6 +44,63 @@ export function TopBar() {
   const setTheme = useAppStore((state) => state.setTheme);
   const setCreateModalOpen = useAppStore((state) => state.setCreateModalOpen);
   const setCreateModalMode = useAppStore((state) => state.setCreateModalMode);
+  const setEditingLibraryItemId = useAppStore((state) => state.setEditingLibraryItemId);
+
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const saveStatusResetTimerRef = useRef<number | null>(null);
+
+  // Keep transient save feedback clean when arrangement changes.
+  useEffect(() => {
+    setSaveStatus('idle');
+  }, [arrangement?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (saveStatusResetTimerRef.current !== null) {
+        window.clearTimeout(saveStatusResetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const scheduleSaveStatusReset = (delayMs: number) => {
+    if (saveStatusResetTimerRef.current !== null) {
+      window.clearTimeout(saveStatusResetTimerRef.current);
+      saveStatusResetTimerRef.current = null;
+    }
+
+    saveStatusResetTimerRef.current = window.setTimeout(() => {
+      setSaveStatus('idle');
+      saveStatusResetTimerRef.current = null;
+    }, delayMs);
+  };
+
+  /**
+   * Save the current arrangement from Create mode:
+   * - If editing an existing My Library item, overwrite it.
+   * - Otherwise, create a new My Library item and link future saves to it.
+   */
+  const handleSaveArrangement = async () => {
+    if (!arrangement || mode !== 'create') return;
+    if (saveStatus === 'saving') return;
+
+    setSaveStatus('saving');
+    try {
+      if (editingLibraryItemId) {
+        await LibraryService.updateArrangement(editingLibraryItemId, arrangement);
+      } else {
+        const savedItem = await LibraryService.saveArrangement(arrangement, null, 'user');
+        // After first save, switch to overwrite behavior for subsequent saves.
+        setEditingLibraryItemId(savedItem.id);
+      }
+
+      setSaveStatus('saved');
+      scheduleSaveStatusReset(1600);
+    } catch (error) {
+      console.error('Failed to save arrangement:', error);
+      setSaveStatus('error');
+      scheduleSaveStatusReset(2200);
+    }
+  };
 
   /**
    * Export the current arrangement as JSON file.
@@ -116,7 +176,7 @@ export function TopBar() {
       </div>
 
       {/* Center - Library / Arrangement selector */}
-      <div className="absolute left-1/2 -translate-x-1/2">
+      <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
         <button
           onClick={() => {
             // In Create mode, clicking the arrangement name should edit the current arrangement
@@ -146,6 +206,44 @@ export function TopBar() {
             {arrangement?.title || 'Choose Arrangement...'}
           </span>
         </button>
+
+        {/* Save button (Create mode only): writes current arrangement to My Library. */}
+        {mode === 'create' && arrangement && (
+          <button
+            onClick={() => { void handleSaveArrangement(); }}
+            aria-label="Save Arrangement"
+            disabled={saveStatus === 'saving'}
+            className="
+              h-9 px-3 rounded-full
+              border border-[var(--border-color)]
+              bg-[var(--button-bg)] text-[var(--text-primary)]
+              hover:bg-[var(--button-bg-hover)]
+              transition-all duration-200
+              flex items-center gap-1.5 text-xs font-semibold
+              disabled:opacity-60 disabled:cursor-not-allowed
+            "
+            title={
+              saveStatus === 'saving'
+                ? 'Saving arrangement...'
+                : saveStatus === 'saved'
+                  ? 'Saved to My Library'
+                  : saveStatus === 'error'
+                    ? 'Save failed'
+                    : 'Save to My Library'
+            }
+          >
+            {saveStatus === 'saved' ? <Check size={13} /> : saveStatus === 'error' ? <AlertCircle size={13} /> : <Save size={13} />}
+            <span>
+              {saveStatus === 'saving'
+                ? 'Saving...'
+                : saveStatus === 'saved'
+                  ? 'Saved'
+                  : saveStatus === 'error'
+                    ? 'Retry'
+                    : 'Save'}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Right section - Settings buttons and mode toggle */}

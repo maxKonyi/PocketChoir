@@ -314,6 +314,10 @@ interface AppState {
   // - 'create': create a new arrangement
   // - 'edit': edit params of the currently loaded arrangement (while in Create mode)
   createModalMode: 'create' | 'edit';
+
+  // If non-null, the currently edited arrangement came from My Library and
+  // should overwrite this library item on save.
+  editingLibraryItemId: string | null;
 }
 
 /**
@@ -493,6 +497,7 @@ interface AppActions {
   setSaveLoadOpen: (open: boolean) => void;
   setCreateModalOpen: (open: boolean) => void;
   setCreateModalMode: (mode: 'create' | 'edit') => void;
+  setEditingLibraryItemId: (itemId: string | null) => void;
 
   // Utility
   initializeVoiceStates: (voices: Voice[]) => void;
@@ -626,6 +631,7 @@ const initialState: AppState = {
   followMode: initialFollowModeState,
   createView: initialCreateViewState,
   createModalMode: 'create',
+  editingLibraryItemId: null,
 };
 
 /* ------------------------------------------------------------
@@ -732,6 +738,7 @@ export const useAppStore = create<AppState & AppActions>()(
         // Clear recordings and armed voice when changing arrangement
         set({
           arrangement,
+          editingLibraryItemId: null,
           transposition: 0,
           recordings: new Map(),
           livePitchTrace: [],
@@ -2305,6 +2312,9 @@ export const useAppStore = create<AppState & AppActions>()(
         if (mode === 'create') {
           return {
             mode,
+            // In Create mode, always edit in the arrangement's original key
+            // (Play mode can still use auto-transposition for singing comfort).
+            transposition: 0,
 
             // Create mode defaults:
             // - One-shot (no looping)
@@ -2369,6 +2379,7 @@ export const useAppStore = create<AppState & AppActions>()(
       setSaveLoadOpen: (open) => set({ isSaveLoadOpen: open }),
       setCreateModalOpen: (open) => set({ isCreateModalOpen: open }),
       setCreateModalMode: (mode) => set({ createModalMode: mode }),
+      setEditingLibraryItemId: (itemId) => set({ editingLibraryItemId: itemId }),
 
       // -- Utility --
       initializeVoiceStates: (voices) => {

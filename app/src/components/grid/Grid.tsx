@@ -106,6 +106,25 @@ function buildContourHoldPieces(
   return pieces;
 }
 
+/**
+ * Read the effective stack info at the RIGHT edge of a hold-piece list.
+ *
+ * This is used to keep bend transitions smooth:
+ * - bend START uses the hold's final offset
+ * - bend END uses bend-stack offset (or 0 if not stacked)
+ */
+function getRightEdgeHoldStackInfo(
+  holdPieces: Array<{ startT: number; endT: number; stackIndex: number | null; stackSize: number | null }>
+): ContourSegmentStackInfo | null {
+  if (holdPieces.length === 0) return null;
+  const lastPiece = holdPieces[holdPieces.length - 1];
+  if (lastPiece.stackIndex === null || lastPiece.stackSize === null) return null;
+  return {
+    stackIndex: lastPiece.stackIndex,
+    stackSize: lastPiece.stackSize,
+  };
+}
+
 
 /* ------------------------------------------------------------
    Helper Functions
@@ -1441,6 +1460,7 @@ export function Grid({
           const holdEndT = isPitchChange ? Math.max(lastT16, node.t16 - bendWidthT) : node.t16;
 
           const holdPieces = buildContourHoldPieces(lastT16, holdEndT, segmentData?.holdSlices ?? []);
+          const holdRightStackInfo = getRightEdgeHoldStackInfo(holdPieces);
           for (const piece of holdPieces) {
             const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
               ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
@@ -1461,13 +1481,16 @@ export function Grid({
 
           if (isPitchChange) {
             const bendStackInfo = segmentData?.bendStack;
-            const bendOffsetY = bendStackInfo
+            const bendStartOffsetY = holdRightStackInfo
+              ? getContourSegmentStackOffsetY(holdRightStackInfo, baseContourWidth)
+              : 0;
+            const bendEndOffsetY = bendStackInfo
               ? getContourSegmentStackOffsetY(bendStackInfo, baseContourWidth)
               : 0;
 
             const bendStartX = toScreenX(holdEndT);
-            const lastYOffset = lastY + bendOffsetY;
-            const yOffset = y + bendOffsetY;
+            const lastYOffset = lastY + bendStartOffsetY;
+            const yOffset = y + bendEndOffsetY;
             const d2 = distToSegmentSq(mouseX, mouseY, bendStartX, lastYOffset, x, yOffset);
             if (d2 < thresholdSq && d2 < bestDistSq) {
               bestDistSq = d2;
@@ -2482,7 +2505,7 @@ export function Grid({
 
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -2607,6 +2630,7 @@ export function Grid({
         const holdEndT = isPitchChange ? Math.max(lastT16, node.t16 - bendWidthT) : node.t16;
 
         const holdPieces = buildContourHoldPieces(lastT16, holdEndT, segmentData?.holdSlices ?? []);
+        const holdRightStackInfo = getRightEdgeHoldStackInfo(holdPieces);
         for (const piece of holdPieces) {
           const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
             ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
@@ -2624,13 +2648,16 @@ export function Grid({
 
         if (isPitchChange) {
           const bendStackInfo = segmentData?.bendStack;
-          const bendOffsetY = bendStackInfo
+          const bendStartOffsetY = holdRightStackInfo
+            ? getContourSegmentStackOffsetY(holdRightStackInfo, stackLineWidth)
+            : 0;
+          const bendEndOffsetY = bendStackInfo
             ? getContourSegmentStackOffsetY(bendStackInfo, stackLineWidth)
             : 0;
 
           const bendStartX = nodeToX(holdEndT);
-          const stackedLastY = ensurePathStart(bendStartX, lastY, bendOffsetY);
-          const stackedY = y + bendOffsetY;
+          const stackedLastY = ensurePathStart(bendStartX, lastY, bendStartOffsetY);
+          const stackedY = y + bendEndOffsetY;
 
           // Draw curved connection from previous node to this one
           const nodeRadius = 12 * display.noteSize;
