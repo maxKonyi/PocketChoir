@@ -125,11 +125,6 @@ function getRightEdgeHoldStackInfo(
   };
 }
 
-// Width (in CSS pixels) used to ease from one stacked hold offset to another.
-// This removes abrupt "snap" corrections when overlap ends before a node.
-const HOLD_OFFSET_EASE_PX = 14;
-
-
 /* ------------------------------------------------------------
    Helper Functions
    ------------------------------------------------------------ */
@@ -1434,21 +1429,16 @@ export function Grid({
               const x1 = toScreenX(piece.startT);
               const x2 = toScreenX(piece.endT);
               const y = lastY + segmentOffsetY;
-              // Match draw-time easing: when hold-offset changes, the contour now
-              // curves over a short horizontal distance instead of snapping.
               if (previousHoldY !== null && Math.abs(previousHoldY - y) > 0.001) {
-                const easeEndX = Math.min(x1 + HOLD_OFFSET_EASE_PX, x2);
-                const dEase = distToSegmentSq(mouseX, mouseY, x1, previousHoldY, easeEndX, y);
-                if (dEase < thresholdSq && dEase < bestDistSq) {
-                  bestDistSq = dEase;
+                // Immediate row switch at piece boundary (no smoothing/easing).
+                const dStep = distToSegmentSq(mouseX, mouseY, x1, previousHoldY, x1, y);
+                if (dStep < thresholdSq && dStep < bestDistSq) {
+                  bestDistSq = dStep;
                   bestVoiceId = voice.id;
                 }
               }
 
-              const straightStartX = previousHoldY !== null && Math.abs(previousHoldY - y) > 0.001
-                ? Math.min(x1 + HOLD_OFFSET_EASE_PX, x2)
-                : x1;
-              const d = distToSegmentSq(mouseX, mouseY, straightStartX, y, x2, y);
+              const d = distToSegmentSq(mouseX, mouseY, x1, y, x2, y);
               if (d < thresholdSq && d < bestDistSq) {
                 bestDistSq = d;
                 bestVoiceId = voice.id;
@@ -1499,21 +1489,16 @@ export function Grid({
             const x1 = toScreenX(piece.startT);
             const x2 = toScreenX(piece.endT);
             const yHold = lastY + segmentOffsetY;
-            // Match draw-time easing at hold offset boundaries so hover/click hit
-            // behavior follows the same smooth transition the user sees.
             if (previousHoldY !== null && Math.abs(previousHoldY - yHold) > 0.001) {
-              const easeEndX = Math.min(x1 + HOLD_OFFSET_EASE_PX, x2);
-              const dEase = distToSegmentSq(mouseX, mouseY, x1, previousHoldY, easeEndX, yHold);
-              if (dEase < thresholdSq && dEase < bestDistSq) {
-                bestDistSq = dEase;
+              // Immediate row switch at hold-piece boundary (no smoothing/easing).
+              const dStep = distToSegmentSq(mouseX, mouseY, x1, previousHoldY, x1, yHold);
+              if (dStep < thresholdSq && dStep < bestDistSq) {
+                bestDistSq = dStep;
                 bestVoiceId = voice.id;
               }
             }
 
-            const straightStartX = previousHoldY !== null && Math.abs(previousHoldY - yHold) > 0.001
-              ? Math.min(x1 + HOLD_OFFSET_EASE_PX, x2)
-              : x1;
-            const d1 = distToSegmentSq(mouseX, mouseY, straightStartX, yHold, x2, yHold);
+            const d1 = distToSegmentSq(mouseX, mouseY, x1, yHold, x2, yHold);
             if (d1 < thresholdSq && d1 < bestDistSq) {
               bestDistSq = d1;
               bestVoiceId = voice.id;
@@ -2746,9 +2731,8 @@ export function Grid({
       return startY;
     };
 
-    // Draw one hold piece (horizontal segment) with optional eased offset transition.
-    // If the stack offset changes at this boundary, we use a short bezier blend
-    // instead of an abrupt jump so the release into a straight continuation feels smooth.
+    // Draw one hold piece (horizontal segment).
+    // If the stack offset changes at this boundary, we switch rows immediately.
     const drawHoldPieceWithOffsetEasing = (
       pieceStartX: number,
       pieceEndX: number,
@@ -2767,25 +2751,9 @@ export function Grid({
       const hasOffsetChange = Math.abs(activeOffsetY - segmentOffsetY) > 0.001;
       if (hasOffsetChange) {
         const fromY = baseY + activeOffsetY;
-        const easeEndX = Math.min(pieceStartX + HOLD_OFFSET_EASE_PX, pieceEndX);
-
-        // Keep continuity pinned to the exact boundary before easing toward the new row.
         ctx.lineTo(pieceStartX, fromY);
-
-        if (easeEndX > pieceStartX + 0.001) {
-          const easeWidth = easeEndX - pieceStartX;
-          ctx.bezierCurveTo(
-            pieceStartX + easeWidth * 0.35,
-            fromY,
-            pieceStartX + easeWidth * 0.75,
-            targetY,
-            easeEndX,
-            targetY
-          );
-        }
-
-        const straightStartX = easeEndX > pieceStartX + 0.001 ? easeEndX : pieceStartX;
-        if (pieceEndX > straightStartX) {
+        ctx.lineTo(pieceStartX, targetY);
+        if (pieceEndX > pieceStartX) {
           ctx.lineTo(pieceEndX, targetY);
         }
 
