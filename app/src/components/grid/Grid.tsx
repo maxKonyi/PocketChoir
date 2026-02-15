@@ -125,6 +125,10 @@ function getRightEdgeHoldStackInfo(
   };
 }
 
+// Width (in CSS pixels) used to ease from one stacked hold offset to another.
+// This removes abrupt "snap" corrections when overlap ends before a node.
+const HOLD_OFFSET_EASE_PX = 14;
+
 
 /* ------------------------------------------------------------
    Helper Functions
@@ -501,7 +505,6 @@ function getContourSegmentStackOffsetY(stackInfo: ContourSegmentStackInfo, lineW
   return (stackInfo.stackIndex - (stackInfo.stackSize - 1) / 2) * lineWidth;
 }
 
-// Keep the grid margins consistent between drawing and mouse hit-testing.
 // If these differ, the "ghost" preview and click zones will feel offset.
 const GRID_MARGIN = { top: 40, right: 20, bottom: 40, left: 50 };
 
@@ -515,6 +518,12 @@ export function Grid({
   // Canvas ref
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Offscreen layers used for contour-only node shadows:
+  // - shadowMaskCanvasRef holds only contour pixels (white alpha mask)
+  // - shadowCompositeCanvasRef holds radial node shadows before masking
+  const shadowMaskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const shadowCompositeCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Playback flash state: keyed by voiceId + worldT16.
   // Value is performance.now() timestamp (ms) when the flash was triggered.
@@ -1412,6 +1421,7 @@ export function Grid({
           if (inPhrase) {
             const segmentData = voiceStackMap?.get(segmentIndex);
             const holdPieces = buildContourHoldPieces(lastT16, node.t16, segmentData?.holdSlices ?? []);
+            let previousHoldY: number | null = null;
 
             for (const piece of holdPieces) {
               const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
@@ -1424,11 +1434,27 @@ export function Grid({
               const x1 = toScreenX(piece.startT);
               const x2 = toScreenX(piece.endT);
               const y = lastY + segmentOffsetY;
-              const d = distToSegmentSq(mouseX, mouseY, x1, y, x2, y);
+              // Match draw-time easing: when hold-offset changes, the contour now
+              // curves over a short horizontal distance instead of snapping.
+              if (previousHoldY !== null && Math.abs(previousHoldY - y) > 0.001) {
+                const easeEndX = Math.min(x1 + HOLD_OFFSET_EASE_PX, x2);
+                const dEase = distToSegmentSq(mouseX, mouseY, x1, previousHoldY, easeEndX, y);
+                if (dEase < thresholdSq && dEase < bestDistSq) {
+                  bestDistSq = dEase;
+                  bestVoiceId = voice.id;
+                }
+              }
+
+              const straightStartX = previousHoldY !== null && Math.abs(previousHoldY - y) > 0.001
+                ? Math.min(x1 + HOLD_OFFSET_EASE_PX, x2)
+                : x1;
+              const d = distToSegmentSq(mouseX, mouseY, straightStartX, y, x2, y);
               if (d < thresholdSq && d < bestDistSq) {
                 bestDistSq = d;
                 bestVoiceId = voice.id;
               }
+
+              previousHoldY = y;
             }
 
             inPhrase = false;
@@ -1461,6 +1487,7 @@ export function Grid({
 
           const holdPieces = buildContourHoldPieces(lastT16, holdEndT, segmentData?.holdSlices ?? []);
           const holdRightStackInfo = getRightEdgeHoldStackInfo(holdPieces);
+          let previousHoldY: number | null = null;
           for (const piece of holdPieces) {
             const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
               ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
@@ -1472,11 +1499,27 @@ export function Grid({
             const x1 = toScreenX(piece.startT);
             const x2 = toScreenX(piece.endT);
             const yHold = lastY + segmentOffsetY;
-            const d1 = distToSegmentSq(mouseX, mouseY, x1, yHold, x2, yHold);
+            // Match draw-time easing at hold offset boundaries so hover/click hit
+            // behavior follows the same smooth transition the user sees.
+            if (previousHoldY !== null && Math.abs(previousHoldY - yHold) > 0.001) {
+              const easeEndX = Math.min(x1 + HOLD_OFFSET_EASE_PX, x2);
+              const dEase = distToSegmentSq(mouseX, mouseY, x1, previousHoldY, easeEndX, yHold);
+              if (dEase < thresholdSq && dEase < bestDistSq) {
+                bestDistSq = dEase;
+                bestVoiceId = voice.id;
+              }
+            }
+
+            const straightStartX = previousHoldY !== null && Math.abs(previousHoldY - yHold) > 0.001
+              ? Math.min(x1 + HOLD_OFFSET_EASE_PX, x2)
+              : x1;
+            const d1 = distToSegmentSq(mouseX, mouseY, straightStartX, yHold, x2, yHold);
             if (d1 < thresholdSq && d1 < bestDistSq) {
               bestDistSq = d1;
               bestVoiceId = voice.id;
             }
+
+            previousHoldY = yHold;
           }
 
           if (isPitchChange) {
@@ -2189,6 +2232,117 @@ export function Grid({
         }
       }
 
+      // Pass A.5: Node radial shadows projected onto contours only.
+      // We render shadows into an offscreen layer, then mask it with a contour-only
+      // alpha mask so the darkening affects contour lines but NOT nodes/background.
+      const ensureOffscreenCanvas = (
+        canvasRefObj: React.MutableRefObject<HTMLCanvasElement | null>
+      ): HTMLCanvasElement => {
+        if (!canvasRefObj.current) {
+          canvasRefObj.current = document.createElement('canvas');
+        }
+        const offscreen = canvasRefObj.current;
+        if (offscreen.width !== canvas.width || offscreen.height !== canvas.height) {
+          offscreen.width = canvas.width;
+          offscreen.height = canvas.height;
+        }
+        return offscreen;
+      };
+
+      const shadowMaskCanvas = ensureOffscreenCanvas(shadowMaskCanvasRef);
+      const shadowCompositeCanvas = ensureOffscreenCanvas(shadowCompositeCanvasRef);
+      const maskCtx = shadowMaskCanvas.getContext('2d');
+      const shadowCtx = shadowCompositeCanvas.getContext('2d');
+
+      if (maskCtx && shadowCtx) {
+        // 1) Build contour mask layer (only contour pixels are opaque).
+        maskCtx.setTransform(1, 0, 0, 1, 0, 0);
+        maskCtx.clearRect(0, 0, shadowMaskCanvas.width, shadowMaskCanvas.height);
+        maskCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        maskCtx.save();
+        maskCtx.beginPath();
+        maskCtx.rect(gridLeft, gridTop, gridWidth, gridHeight);
+        maskCtx.clip();
+        maskCtx.lineCap = 'round';
+        maskCtx.lineJoin = 'round';
+        maskCtx.strokeStyle = '#ffffff';
+
+        for (let k = kStart; k <= kEnd; k++) {
+          const tileOffset = k * loopLengthT;
+          for (const voiceIndex of voiceRenderOrder) {
+            const voice = arrangement.voices[voiceIndex];
+            const isHoveredContour = hoveredContourVoiceIdRef.current === voice.id;
+            const baseContourWidth = 3 * display.lineThickness;
+            const contourLineWidth = isHoveredContour ? baseContourWidth * 1.67 : baseContourWidth;
+            const voiceSegmentStackMap = contourStackLookup.get(voice.id);
+
+            maskCtx.lineWidth = contourLineWidth;
+            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth);
+          }
+        }
+        maskCtx.restore();
+
+        // 2) Draw radial shadows at node positions.
+        shadowCtx.setTransform(1, 0, 0, 1, 0, 0);
+        shadowCtx.clearRect(0, 0, shadowCompositeCanvas.width, shadowCompositeCanvas.height);
+        shadowCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        shadowCtx.save();
+        shadowCtx.beginPath();
+        shadowCtx.rect(gridLeft, gridTop, gridWidth, gridHeight);
+        shadowCtx.clip();
+
+        for (let k = kStart; k <= kEnd; k++) {
+          const tileOffset = k * loopLengthT;
+          for (const voice of arrangement.voices) {
+            for (const node of voice.nodes) {
+              const nodeWorldT = node.t16 + tileOffset;
+              if (nodeWorldT < 0) continue;
+              const x = wToX(nodeWorldT);
+              if (x < gridLeft - 30 || x > gridLeft + gridWidth + 30) continue;
+
+              const y = node.semi !== undefined
+                ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+                : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+
+              const nodeShadowRadius = node.term ? anchorRadius * 2.6 : nodeRadius * 2.1;
+              const shadowGradient = shadowCtx.createRadialGradient(
+                x,
+                y,
+                0,
+                x,
+                y,
+                nodeShadowRadius
+              );
+              shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.100)');
+              shadowGradient.addColorStop(0.55, 'rgba(0, 0, 0, 0.60)');
+              shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+              shadowCtx.fillStyle = shadowGradient;
+              shadowCtx.beginPath();
+              shadowCtx.arc(x, y, nodeShadowRadius, 0, Math.PI * 2);
+              shadowCtx.fill();
+            }
+          }
+        }
+        shadowCtx.restore();
+
+        // 3) Keep shadow only where contours exist.
+        shadowCtx.save();
+        shadowCtx.setTransform(1, 0, 0, 1, 0, 0);
+        shadowCtx.globalCompositeOperation = 'destination-in';
+        shadowCtx.drawImage(shadowMaskCanvas, 0, 0);
+        shadowCtx.restore();
+
+        // 4) Composite shadow onto main canvas before nodes draw.
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.globalAlpha = 0.95;
+        ctx.drawImage(shadowCompositeCanvas, 0, 0);
+        ctx.restore();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
       // Draw playhead above contour lines but below nodes.
       // In follow states the playhead is near viewport center;
       // in static states it can be anywhere on screen.
@@ -2571,6 +2725,59 @@ export function Grid({
       return startY;
     };
 
+    // Draw one hold piece (horizontal segment) with optional eased offset transition.
+    // If the stack offset changes at this boundary, we use a short bezier blend
+    // instead of an abrupt jump so the release into a straight continuation feels smooth.
+    const drawHoldPieceWithOffsetEasing = (
+      pieceStartX: number,
+      pieceEndX: number,
+      baseY: number,
+      segmentOffsetY: number
+    ): number => {
+      const targetY = baseY + segmentOffsetY;
+
+      if (!hasActivePath) {
+        ctx.beginPath();
+        ctx.moveTo(pieceStartX, targetY);
+        hasActivePath = true;
+        activeOffsetY = segmentOffsetY;
+      }
+
+      const hasOffsetChange = Math.abs(activeOffsetY - segmentOffsetY) > 0.001;
+      if (hasOffsetChange) {
+        const fromY = baseY + activeOffsetY;
+        const easeEndX = Math.min(pieceStartX + HOLD_OFFSET_EASE_PX, pieceEndX);
+
+        // Keep continuity pinned to the exact boundary before easing toward the new row.
+        ctx.lineTo(pieceStartX, fromY);
+
+        if (easeEndX > pieceStartX + 0.001) {
+          const easeWidth = easeEndX - pieceStartX;
+          ctx.bezierCurveTo(
+            pieceStartX + easeWidth * 0.35,
+            fromY,
+            pieceStartX + easeWidth * 0.75,
+            targetY,
+            easeEndX,
+            targetY
+          );
+        }
+
+        const straightStartX = easeEndX > pieceStartX + 0.001 ? easeEndX : pieceStartX;
+        if (pieceEndX > straightStartX) {
+          ctx.lineTo(pieceEndX, targetY);
+        }
+
+        activeOffsetY = segmentOffsetY;
+        return targetY;
+      }
+
+      if (pieceEndX > pieceStartX) {
+        ctx.lineTo(pieceEndX, targetY);
+      }
+      return targetY;
+    };
+
     for (let i = 0; i < voice.nodes.length; i++) {
       const node = voice.nodes[i];
 
@@ -2590,8 +2797,7 @@ export function Grid({
 
             const pieceStartX = nodeToX(piece.startT);
             const pieceEndX = nodeToX(piece.endT);
-            const stackedY = ensurePathStart(pieceStartX, lastY, segmentOffsetY);
-            ctx.lineTo(pieceEndX, stackedY);
+            const stackedY = drawHoldPieceWithOffsetEasing(pieceStartX, pieceEndX, lastY, segmentOffsetY);
             lastRenderedY = stackedY;
           }
 
@@ -2641,8 +2847,7 @@ export function Grid({
 
           const pieceStartX = nodeToX(piece.startT);
           const pieceEndX = nodeToX(piece.endT);
-          const stackedY = ensurePathStart(pieceStartX, lastY, segmentOffsetY);
-          ctx.lineTo(pieceEndX, stackedY);
+          const stackedY = drawHoldPieceWithOffsetEasing(pieceStartX, pieceEndX, lastY, segmentOffsetY);
           lastRenderedY = stackedY;
         }
 
