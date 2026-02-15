@@ -500,6 +500,38 @@ function getContourSegmentStackOffsetY(stackInfo: ContourSegmentStackInfo, lineW
   return (stackInfo.stackIndex - (stackInfo.stackSize - 1) / 2) * lineWidth;
 }
 
+/**
+ * Build a bright prismatic gradient used to represent a stacked/unison contour.
+ *
+ * We phase the hue by X so adjacent stacked pieces feel like one continuous,
+ * shifting rainbow line instead of hard-resetting every segment.
+ */
+function createPrismaticContourGradient(
+  ctx: CanvasRenderingContext2D,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  phaseSeedX: number
+): CanvasGradient {
+  const hasLength = Math.abs(endX - startX) > 0.001 || Math.abs(endY - startY) > 0.001;
+  const safeEndX = hasLength ? endX : startX + 1;
+  const safeEndY = hasLength ? endY : startY;
+  const gradient = ctx.createLinearGradient(startX, startY, safeEndX, safeEndY);
+
+  const PRISM_CYCLE_PX = 220;
+  const normalizedPhase = (((phaseSeedX % PRISM_CYCLE_PX) + PRISM_CYCLE_PX) % PRISM_CYCLE_PX) / PRISM_CYCLE_PX;
+  const stopCount = 8;
+
+  for (let i = 0; i <= stopCount; i++) {
+    const progress = i / stopCount;
+    const hue = (normalizedPhase * 360 + progress * 360) % 360;
+    gradient.addColorStop(progress, `hsl(${hue.toFixed(1)} 95% 62%)`);
+  }
+
+  return gradient;
+}
+
 // If these differ, the "ghost" preview and click zones will feel offset.
 const GRID_MARGIN = { top: 40, right: 20, bottom: 40, left: 50 };
 
@@ -1361,6 +1393,11 @@ export function Grid({
   ): string | null => {
     if (!arrangement) return null;
 
+    // Default hit-testing follows the collapsed "single rainbow line" geometry.
+    // While hovering a contour, we temporarily switch to split-stack geometry so
+    // the cursor can target the individual separated lines.
+    const splitStackedContoursForHit = hoveredContourVoiceIdRef.current !== null;
+
     // How close the mouse must be to the contour line (in CSS pixels).
     // The visual line radius is (1.5 * display.lineThickness).
     // We add a fixed 6px padding to make it easy to hit.
@@ -1423,7 +1460,7 @@ export function Grid({
                 ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
                 : null;
               const segmentOffsetY = stackInfo
-                ? getContourSegmentStackOffsetY(stackInfo, baseContourWidth)
+                ? (splitStackedContoursForHit ? getContourSegmentStackOffsetY(stackInfo, baseContourWidth) : 0)
                 : 0;
 
               const x1 = toScreenX(piece.startT);
@@ -1483,7 +1520,7 @@ export function Grid({
               ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
               : null;
             const segmentOffsetY = stackInfo
-              ? getContourSegmentStackOffsetY(stackInfo, baseContourWidth)
+              ? (splitStackedContoursForHit ? getContourSegmentStackOffsetY(stackInfo, baseContourWidth) : 0)
               : 0;
 
             const x1 = toScreenX(piece.startT);
@@ -1510,10 +1547,10 @@ export function Grid({
           if (isPitchChange) {
             const bendStackInfo = segmentData?.bendStack;
             const bendStartOffsetY = holdRightStackInfo
-              ? getContourSegmentStackOffsetY(holdRightStackInfo, baseContourWidth)
+              ? (splitStackedContoursForHit ? getContourSegmentStackOffsetY(holdRightStackInfo, baseContourWidth) : 0)
               : 0;
             const bendEndOffsetY = bendStackInfo
-              ? getContourSegmentStackOffsetY(bendStackInfo, baseContourWidth)
+              ? (splitStackedContoursForHit ? getContourSegmentStackOffsetY(bendStackInfo, baseContourWidth) : 0)
               : 0;
 
             const bendStartX = toScreenX(holdEndT);
@@ -2175,6 +2212,9 @@ export function Grid({
       }
 
       // Pass A: Contour lines only (including glow) — for each visible tile
+      // Hovering any contour temporarily expands stacked lines so users can inspect
+      // which voices are currently in a unison stack.
+      const splitStackedContours = hoveredContourVoiceIdRef.current !== null;
       for (let k = kStart; k <= kEnd; k++) {
         const tileOffset = k * loopLengthT;
 
@@ -2205,14 +2245,14 @@ export function Grid({
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours);
           }
 
           // Main line
           ctx.shadowBlur = 0;
           ctx.strokeStyle = voiceColor;
           ctx.lineWidth = contourLineWidth;
-          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth);
+          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours);
           ctx.restore();
         }
       }
@@ -2262,7 +2302,7 @@ export function Grid({
             const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 
             maskCtx.lineWidth = contourLineWidth;
-            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth);
+            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours);
           }
         }
         maskCtx.restore();
@@ -2691,9 +2731,18 @@ export function Grid({
     gridLeftPx: number,
     loopLen: number,
     segmentStackMap: Map<number, ContourSegmentStackData> | undefined,
-    stackLineWidth: number
+    stackLineWidth: number,
+    splitStackedContours: boolean
   ) {
     if (voice.nodes.length === 0) return;
+
+    // Each voice draw starts from a known line style so no dash/gradient settings
+    // can leak from earlier voices or other rendering passes.
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
     // Helper: convert a local t16 to screen X via world time
     const nodeToX = (localT16: number) =>
@@ -2737,9 +2786,56 @@ export function Grid({
       pieceStartX: number,
       pieceEndX: number,
       baseY: number,
-      segmentOffsetY: number
+      segmentOffsetY: number,
+      stackInfo: ContourSegmentStackInfo | null
     ): number => {
       const targetY = baseY + segmentOffsetY;
+
+      const isStackedPiece = !!stackInfo && stackInfo.stackSize > 1;
+      const shouldCollapseToRainbow = isStackedPiece && !splitStackedContours;
+      const shouldSkipHiddenStackVoice = shouldCollapseToRainbow && !!stackInfo && stackInfo.stackIndex > 0;
+      const shouldDrawRainbow = shouldCollapseToRainbow && !!stackInfo && stackInfo.stackIndex === 0;
+
+      if (shouldSkipHiddenStackVoice) {
+        // Non-leading voices disappear while collapsed, so only one rainbow line remains.
+        if (hasActivePath) {
+          ctx.stroke();
+          hasActivePath = false;
+        }
+        activeOffsetY = segmentOffsetY;
+        return targetY;
+      }
+
+      if (shouldDrawRainbow) {
+        // Rainbow stack segments are drawn independently to avoid recoloring normal
+        // single-voice sections before/after the stack.
+        if (hasActivePath) {
+          ctx.stroke();
+          hasActivePath = false;
+        }
+
+        if (pieceEndX > pieceStartX) {
+          const prismGradient = createPrismaticContourGradient(
+            ctx,
+            pieceStartX,
+            targetY,
+            pieceEndX,
+            targetY,
+            pieceStartX
+          );
+
+          ctx.save();
+          ctx.strokeStyle = prismGradient;
+          ctx.beginPath();
+          ctx.moveTo(pieceStartX, targetY);
+          ctx.lineTo(pieceEndX, targetY);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        activeOffsetY = segmentOffsetY;
+        return targetY;
+      }
 
       if (!hasActivePath) {
         ctx.beginPath();
@@ -2767,6 +2863,35 @@ export function Grid({
       return targetY;
     };
 
+    // Draw one bend (straight or curved) from start to end.
+    const drawBendPathSegment = (
+      bendStartX: number,
+      bendStartY: number,
+      bendEndX: number,
+      bendEndY: number
+    ) => {
+      const nodeRadius = 12 * display.noteSize;
+      const bendWidth = Math.max(0, bendEndX - bendStartX);
+
+      if (Math.abs(bendEndY - bendStartY) < 1 || bendWidth < 0.001) {
+        // Same pitch, or tiny bend width: just draw a straight line.
+        ctx.lineTo(bendEndX, bendEndY);
+        return;
+      }
+
+      // Pitch changes: enter from bottom if moving up, top if moving down.
+      const isMovingUp = bendEndY < bendStartY;
+      const entryY = isMovingUp ? bendEndY + nodeRadius : bendEndY - nodeRadius;
+
+      const cp1x = bendStartX + bendWidth * 0.5;
+      const cp1y = bendStartY;
+      const cp2x = bendEndX;
+      const cp2y = bendStartY;
+
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, bendEndX, entryY);
+      ctx.lineTo(bendEndX, bendEndY);
+    };
+
     for (let i = 0; i < voice.nodes.length; i++) {
       const node = voice.nodes[i];
 
@@ -2781,12 +2906,12 @@ export function Grid({
               ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
               : null;
             const segmentOffsetY = stackInfo
-              ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth)
+              ? (splitStackedContours ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth) : 0)
               : 0;
 
             const pieceStartX = nodeToX(piece.startT);
             const pieceEndX = nodeToX(piece.endT);
-            const stackedY = drawHoldPieceWithOffsetEasing(pieceStartX, pieceEndX, lastY, segmentOffsetY);
+            const stackedY = drawHoldPieceWithOffsetEasing(pieceStartX, pieceEndX, lastY, segmentOffsetY, stackInfo);
             lastRenderedY = stackedY;
           }
 
@@ -2831,47 +2956,68 @@ export function Grid({
             ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
             : null;
           const segmentOffsetY = stackInfo
-            ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth)
+            ? (splitStackedContours ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth) : 0)
             : 0;
 
           const pieceStartX = nodeToX(piece.startT);
           const pieceEndX = nodeToX(piece.endT);
-          const stackedY = drawHoldPieceWithOffsetEasing(pieceStartX, pieceEndX, lastY, segmentOffsetY);
+          const stackedY = drawHoldPieceWithOffsetEasing(pieceStartX, pieceEndX, lastY, segmentOffsetY, stackInfo);
           lastRenderedY = stackedY;
         }
 
         if (isPitchChange) {
           const bendStackInfo = segmentData?.bendStack;
           const bendStartOffsetY = holdRightStackInfo
-            ? getContourSegmentStackOffsetY(holdRightStackInfo, stackLineWidth)
+            ? (splitStackedContours ? getContourSegmentStackOffsetY(holdRightStackInfo, stackLineWidth) : 0)
             : 0;
           const bendEndOffsetY = bendStackInfo
-            ? getContourSegmentStackOffsetY(bendStackInfo, stackLineWidth)
+            ? (splitStackedContours ? getContourSegmentStackOffsetY(bendStackInfo, stackLineWidth) : 0)
             : 0;
 
           const bendStartX = nodeToX(holdEndT);
-          const stackedLastY = ensurePathStart(bendStartX, lastY, bendStartOffsetY);
+          const bendStartY = lastY + bendStartOffsetY;
           const stackedY = y + bendEndOffsetY;
 
-          // Draw curved connection from previous node to this one
-          const nodeRadius = 12 * display.noteSize;
-          const bendWidth = Math.max(0, x - bendStartX);
+          const isStackedBend = !!bendStackInfo && bendStackInfo.stackSize > 1;
+          const shouldCollapseBendToRainbow = isStackedBend && !splitStackedContours;
+          const shouldSkipHiddenBend = shouldCollapseBendToRainbow && !!bendStackInfo && bendStackInfo.stackIndex > 0;
+          const shouldDrawRainbowBend = shouldCollapseBendToRainbow && !!bendStackInfo && bendStackInfo.stackIndex === 0;
 
-          if (Math.abs(stackedY - stackedLastY) < 1 || bendWidth < 0.001) {
-            // Same pitch, or tiny bend width: just draw a straight line.
-            ctx.lineTo(x, stackedY);
+          if (shouldSkipHiddenBend) {
+            // Non-leading bend voices are hidden while collapsed so one rainbow
+            // bend represents the whole stack.
+            if (hasActivePath) {
+              ctx.stroke();
+              hasActivePath = false;
+            }
+            activeOffsetY = bendEndOffsetY;
+          } else if (shouldDrawRainbowBend) {
+            if (hasActivePath) {
+              ctx.stroke();
+              hasActivePath = false;
+            }
+
+            const prismGradient = createPrismaticContourGradient(
+              ctx,
+              bendStartX,
+              bendStartY,
+              x,
+              stackedY,
+              bendStartX
+            );
+
+            ctx.save();
+            ctx.strokeStyle = prismGradient;
+            ctx.beginPath();
+            ctx.moveTo(bendStartX, bendStartY);
+            drawBendPathSegment(bendStartX, bendStartY, x, stackedY);
+            ctx.stroke();
+            ctx.restore();
+
+            activeOffsetY = bendEndOffsetY;
           } else {
-            // Pitch changes: enter from bottom if moving up, top if moving down.
-            const isMovingUp = stackedY < stackedLastY;
-            const entryY = isMovingUp ? stackedY + nodeRadius : stackedY - nodeRadius;
-
-            const cp1x = bendStartX + bendWidth * 0.5;
-            const cp1y = stackedLastY;
-            const cp2x = x;
-            const cp2y = stackedLastY;
-
-            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, entryY);
-            ctx.lineTo(x, stackedY);
+            const stackedLastY = ensurePathStart(bendStartX, lastY, bendStartOffsetY);
+            drawBendPathSegment(bendStartX, stackedLastY, x, stackedY);
           }
 
           lastRenderedY = stackedY;
@@ -2919,6 +3065,8 @@ export function Grid({
         ctx.stroke();
       }
     }
+
+    ctx.restore();
   }
 
   /**
@@ -4008,9 +4156,9 @@ export function Grid({
         const gridHeight = rect.height - GRID_MARGIN.top - GRID_MARGIN.bottom;
         const { minSemitone, maxSemitone } = getPitchRange();
 
-        // In Create mode, contour hover hint should only appear while Shift is held.
-        // (Shift is the contour-focus modifier in Create mode.)
-        const allowContourHover = mode !== 'create' || e.shiftKey;
+        // Rainbow-stack inspect mode: allow contour hover in both Play and Create.
+        // This lets users reveal temporary split stacks just by hovering.
+        const allowContourHover = true;
 
         // Node hit has priority over contour hover in BOTH modes.
         // If the pointer is inside a node hit-radius, suppress contour hover hint.
