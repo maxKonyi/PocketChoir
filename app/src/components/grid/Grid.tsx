@@ -522,10 +522,10 @@ function createPrismaticContourGradient(
   const PRISM_CYCLE_PX = 400;
   const dist = Math.sqrt((safeEndX - startX) ** 2 + (safeEndY - startY) ** 2);
 
-  // Vibrant pearlescent: slightly higher saturation with high brightness.
+  // Brighter pearlescent: higher lightness and moderated saturation.
   const getRainbowColorByDistance = (distancePx: number) => {
     const hue = (((phaseSeedX + distancePx) / PRISM_CYCLE_PX) * 360) % 360;
-    return `hsl(${hue.toFixed(1)} 65% 80%)`;
+    return `hsl(${hue.toFixed(1)} 58% 88%)`;
   };
 
   const stopCount = 6;
@@ -544,7 +544,7 @@ function createPrismaticContourGradient(
 function getPrismaticContourColorAtPhase(phaseSeedX: number): string {
   const PRISM_CYCLE_PX = 400;
   const hue = (((phaseSeedX / PRISM_CYCLE_PX) * 360) % 360 + 360) % 360;
-  return `hsl(${hue.toFixed(1)} 65% 80%)`;
+  return `hsl(${hue.toFixed(1)} 58% 88%)`;
 }
 
 // If these differ, the "ghost" preview and click zones will feel offset.
@@ -2774,6 +2774,14 @@ export function Grid({
     let activeOffsetY = 0;
     let segmentIndex = 0;
 
+    // Keep prism colors moving even when camera/playhead is static.
+    const PRISM_ANIMATION_SPEED_PX_PER_MS = 0.04;
+    const prismAnimationPhasePx = window.performance.now() * PRISM_ANIMATION_SPEED_PX_PER_MS;
+
+    // Subtle glow dedicated to rainbow stack segments so they stand out.
+    // This is independent from the global contour glow pass.
+    const rainbowGlowBlurPx = 5;
+
     // Start or switch the active path when a segment's stacking offset changes.
     const ensurePathStart = (startX: number, startBaseY: number, segmentOffsetY: number): number => {
       const startY = startBaseY + segmentOffsetY;
@@ -2831,7 +2839,7 @@ export function Grid({
         }
 
         const transition = ctx.createLinearGradient(pieceStartX, targetY, pieceEndX, targetY);
-        const prismAtStart = getPrismaticContourColorAtPhase(pieceStartX);
+        const prismAtStart = getPrismaticContourColorAtPhase(pieceStartX + prismAnimationPhasePx);
         const dist = Math.max(1, pieceEndX - pieceStartX);
         const blendRatio = Math.min(0.5, 40 / dist);
         transition.addColorStop(0, prismAtStart);
@@ -2865,10 +2873,12 @@ export function Grid({
             targetY,
             pieceEndX,
             targetY,
-            pieceStartX
+            pieceStartX + prismAnimationPhasePx
           );
 
           ctx.save();
+          ctx.shadowBlur = rainbowGlowBlurPx;
+          ctx.shadowColor = getPrismaticContourColorAtPhase(pieceStartX + prismAnimationPhasePx);
           ctx.strokeStyle = prismGradient;
           ctx.beginPath();
           ctx.moveTo(pieceStartX, targetY);
@@ -3075,10 +3085,12 @@ export function Grid({
               bendStartY,
               x,
               stackedY,
-              bendStartX
+              bendStartX + prismAnimationPhasePx
             );
 
             ctx.save();
+            ctx.shadowBlur = rainbowGlowBlurPx;
+            ctx.shadowColor = getPrismaticContourColorAtPhase(bendStartX + prismAnimationPhasePx);
             ctx.strokeStyle = prismGradient;
             ctx.beginPath();
             ctx.moveTo(bendStartX, bendStartY);
@@ -3101,7 +3113,7 @@ export function Grid({
               }
 
               const transition = ctx.createLinearGradient(bendStartX, bendStartY, x, stackedY);
-              const prismAtStart = getPrismaticContourColorAtPhase(bendStartX);
+              const prismAtStart = getPrismaticContourColorAtPhase(bendStartX + prismAnimationPhasePx);
               const bendDist = Math.max(1, Math.sqrt((x - bendStartX) ** 2 + (stackedY - bendStartY) ** 2));
               const blendRatio = Math.min(0.5, 40 / bendDist);
               transition.addColorStop(0, prismAtStart);
