@@ -50,6 +50,42 @@ export interface Chord {
 }
 
 /**
+ * One lyric token attached to a specific melody node in Voice 1.
+ *
+ * `text` stores exactly what should render under that node.
+ * Connector visuals (split dashes / hold lines) are stored separately in
+ * `connectorToNext`, not embedded in this text.
+ * Examples:
+ * - "Wel"
+ * - "come"
+ * - "ther"
+ */
+export interface LyricEntry {
+  t16: number;      // Time of the Voice 1 node this lyric belongs to
+  text: string;     // Word/syllable text for this node
+  connectorToNext?: LyricConnector; // Optional visual connector from this node to the next node
+}
+
+/**
+ * Visual connector from one lyric token to the next melody node.
+ *
+ * - 'dash' = split-syllable connector (e.g. Wel - come)
+ * - 'hold' = sustained-syllable line (e.g. To_____)
+ */
+export type LyricConnector = 'dash' | 'hold';
+
+/**
+ * Optional lyrics track.
+ *
+ * - `enabled=false` means this arrangement has no notated lyrics.
+ * - `enabled=true` means lyrics are attached to Voice 1 nodes via `entries`.
+ */
+export interface LyricsTrack {
+  enabled: boolean;
+  entries: LyricEntry[];
+}
+
+/**
  * Scale type for the arrangement.
  * Determines which pitches are available.
  */
@@ -84,6 +120,7 @@ export interface Arrangement {
   // Content
   voices: Voice[];              // Array of voice parts (1-6 voices)
   chords?: Chord[];             // Optional chord track for display
+  lyrics?: LyricsTrack;         // Optional lyrics track attached to Voice 1 nodes
   
   // Metadata
   difficulty?: number;          // Difficulty rating (1-5)

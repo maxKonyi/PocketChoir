@@ -11,7 +11,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Arrangement, Voice, PitchPoint, Chord } from '../../types';
+import type { Arrangement, Voice, PitchPoint, Chord, LyricConnector } from '../../types';
 import { useAppStore, makeNodeKey, type NodeKey } from '../../stores/appStore';
 import { degreeToSemitoneOffset, semitoneToLabel, semitoneToSolfege, semitoneToLetterName, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
 import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
@@ -58,6 +58,79 @@ interface GridProps {
  */
 function contourNumberKey(value: number): string {
   return value.toFixed(6);
+}
+
+type LyricUiEntry = {
+  text: string;
+  connectorToNext?: LyricConnector;
+};
+
+/**
+ * Parse one lyric draft into clean text + optional connector metadata.
+ *
+ * Editing convenience:
+ * - trailing '-' means "split syllable to next node"
+ * - trailing '_' means "hold syllable to next node"
+ */
+function parseLyricDraft(
+  rawText: string,
+  connectorHint?: LyricConnector
+): LyricUiEntry {
+  let text = String(rawText ?? '').trim();
+  let connector = connectorHint;
+
+  if (!connector) {
+    if (/_+$/.test(text)) {
+      connector = 'hold';
+      text = text.replace(/_+$/, '').trimEnd();
+    } else if (/-+$/.test(text)) {
+      connector = 'dash';
+      text = text.replace(/-+$/, '').trimEnd();
+    }
+  }
+
+  return {
+    text,
+    ...(connector ? { connectorToNext: connector } : {}),
+  };
+}
+
+/**
+ * Convert one stored lyric entry into the editing draft string.
+ * We show connector markers while editing so users can remove them by backspace.
+ */
+function formatLyricDraft(entry: LyricUiEntry | undefined): string {
+  if (!entry) return '';
+  if (entry.connectorToNext === 'dash') return `${entry.text}-`;
+  if (entry.connectorToNext === 'hold') return `${entry.text}_`;
+  return entry.text;
+}
+
+/**
+ * Keep canonical local lyric times (0..loopLength) visually locked to whatever
+ * world-time loop copy is currently nearest to the camera.
+ *
+ * This makes lyric chips/labels scroll exactly with smart/follow/static camera
+ * behavior even when world time has advanced beyond the first loop copy.
+ */
+function localT16ToNearestWorldT(localT16: number, loopLengthT: number, referenceWorldT: number): number {
+  if (loopLengthT <= 0) return localT16;
+
+  const approxK = Math.floor(referenceWorldT / loopLengthT);
+  let bestWorldT = localT16 + Math.max(0, approxK) * loopLengthT;
+  let bestDistance = Math.abs(bestWorldT - referenceWorldT);
+
+  for (let k = Math.max(0, approxK - 1); k <= approxK + 1; k++) {
+    if (k < 0) continue;
+    const candidateWorldT = localT16 + k * loopLengthT;
+    const candidateDistance = Math.abs(candidateWorldT - referenceWorldT);
+    if (candidateDistance < bestDistance) {
+      bestWorldT = candidateWorldT;
+      bestDistance = candidateDistance;
+    }
+  }
+
+  return bestWorldT;
 }
 
 /**
@@ -1144,6 +1217,11 @@ export function Grid({
   const resizeChordBoundary = useAppStore((state) => state.resizeChordBoundary);
   const deleteChord = useAppStore((state) => state.deleteChord);
 
+  // Lyrics-track editor actions (Create mode)
+  const enableLyricsTrack = useAppStore((state) => state.enableLyricsTrack);
+  const disableLyricsTrack = useAppStore((state) => state.disableLyricsTrack);
+  const setLyricEntry = useAppStore((state) => state.setLyricEntry);
+
   // Which chord label is currently being edited (inline rename).
   const [editingChordIndex, setEditingChordIndex] = useState<number | null>(null);
   const [editingChordName, setEditingChordName] = useState<string>('');
@@ -1155,8 +1233,66 @@ export function Grid({
   // DOM ref for the chord lane overlay (used for boundary-drag hit testing).
   const chordLaneRef = useRef<HTMLDivElement | null>(null);
 
+  // DOM ref for the lyrics lane overlay (used for node-aligned lyric editing).
+  const lyricLaneRef = useRef<HTMLDivElement | null>(null);
+  const lyricLaneCameraTrackRef = useRef<HTMLDivElement | null>(null);
+
   // Temporary drag state for resizing a boundary between two chord blocks.
   const chordBoundaryDragRef = useRef<{ leftChordIndex: number } | null>(null);
+
+  // Which lyric token is currently being edited (by Voice 1 node time).
+  const [editingLyricT16, setEditingLyricT16] = useState<number | null>(null);
+  const [editingLyricText, setEditingLyricText] = useState<string>('');
+  const editingLyricT16Ref = useRef<number | null>(null);
+
+  // Voice 1 melody nodes are the only legal lyric-attachment targets.
+  const voice1MelodyNodes = useMemo(() => {
+    if (!arrangement?.voices[0]) return [] as Array<{ t16: number }>;
+    return arrangement.voices[0].nodes
+      .filter((node) => !node.term)
+      .sort((a, b) => a.t16 - b.t16)
+      .map((node) => ({ t16: node.t16 }));
+  }, [arrangement]);
+
+  const voice1LyricNodeTimes = useMemo(() => {
+    return new Set<number>(voice1MelodyNodes.map((node) => node.t16));
+  }, [voice1MelodyNodes]);
+
+  // Fast lookup of "this node has a next melody node".
+  const voice1NextNodeT16ByT16 = useMemo(() => {
+    const byTime = new Map<number, number>();
+    for (let i = 0; i < voice1MelodyNodes.length - 1; i++) {
+      byTime.set(voice1MelodyNodes[i].t16, voice1MelodyNodes[i + 1].t16);
+    }
+    return byTime;
+  }, [voice1MelodyNodes]);
+
+  // Fast lookup for rendered lyric payload per Voice 1 node.
+  const lyricEntryByT16 = useMemo(() => {
+    const byTime = new Map<number, LyricUiEntry>();
+    if (!arrangement?.lyrics?.entries) return byTime;
+
+    for (const entry of arrangement.lyrics.entries) {
+      const snappedT16 = Math.round(entry.t16);
+      if (!voice1LyricNodeTimes.has(snappedT16)) continue;
+
+      const normalized = parseLyricDraft(entry.text, entry.connectorToNext);
+
+      // Connector is only valid when this node has a following melody node.
+      const allowConnector = voice1NextNodeT16ByT16.has(snappedT16);
+      const payload: LyricUiEntry = {
+        text: normalized.text,
+        ...(allowConnector && normalized.connectorToNext
+          ? { connectorToNext: normalized.connectorToNext }
+          : {}),
+      };
+
+      if (!payload.text && !payload.connectorToNext) continue;
+      byTime.set(snappedT16, payload);
+    }
+
+    return byTime;
+  }, [arrangement?.lyrics?.entries, voice1LyricNodeTimes, voice1NextNodeT16ByT16]);
 
   // ── Memoized vertical grid lines ──
   // Only recompute when the arrangement's bar count or time signature changes.
@@ -1203,7 +1339,163 @@ export function Grid({
     setEditingChordName('');
     setHoverSplitT16(null);
     setHoverSplitScreenX(null);
+    editingLyricT16Ref.current = null;
+    setEditingLyricT16(null);
+    setEditingLyricText('');
   }, [arrangement?.id]);
+
+  // Keep a live ref of the currently edited lyric node so blur handlers
+  // can ignore stale commits after auto-advance / focus handoff.
+  useEffect(() => {
+    editingLyricT16Ref.current = editingLyricT16;
+  }, [editingLyricT16]);
+
+  // If lyrics are disabled externally, always close the inline lyric editor.
+  useEffect(() => {
+    if (!arrangement?.lyrics?.enabled) {
+      editingLyricT16Ref.current = null;
+      setEditingLyricT16(null);
+      setEditingLyricText('');
+    }
+  }, [arrangement?.lyrics?.enabled]);
+
+  // If the lyrics lane is hidden in Display Settings, close the editor.
+  useEffect(() => {
+    if (!display.showLyricsTrack) {
+      editingLyricT16Ref.current = null;
+      setEditingLyricT16(null);
+      setEditingLyricText('');
+    }
+  }, [display.showLyricsTrack]);
+
+  // If the currently edited lyric node no longer exists, close the editor.
+  useEffect(() => {
+    if (editingLyricT16 === null) return;
+    if (voice1LyricNodeTimes.has(editingLyricT16)) return;
+    editingLyricT16Ref.current = null;
+    setEditingLyricT16(null);
+    setEditingLyricText('');
+  }, [editingLyricT16, voice1LyricNodeTimes]);
+
+  // Keep the DOM-based Create-mode lyric lane continuously synced to the camera.
+  // We update this with RAF because camera position lives in a mutable module ref,
+  // not in React state, so normal React rerenders are not guaranteed each frame.
+  useEffect(() => {
+    if (mode !== 'create') return;
+    if (!display.showLyricsTrack) return;
+    if (!arrangement?.lyrics?.enabled) return;
+
+    let rafId = 0;
+
+    const updateTrackTransform = () => {
+      const laneEl = lyricLaneRef.current;
+      const trackEl = lyricLaneCameraTrackRef.current;
+      const pxPerTVal = followMode.pxPerT;
+
+      if (laneEl && trackEl && pxPerTVal > 0) {
+        const laneWidth = laneEl.getBoundingClientRect().width;
+        if (laneWidth > 0) {
+          const loopLengthT = arrangement.bars * arrangement.timeSig.numerator * 4;
+          const currentWorldT = followMode.pendingWorldT !== null
+            ? followMode.pendingWorldT
+            : getCameraCenterWorldT();
+          const camLeft = cameraLeftWorldT(currentWorldT, laneWidth, pxPerTVal);
+          const worldTileOriginT = localT16ToNearestWorldT(0, loopLengthT, currentWorldT);
+          const translateX = worldTToScreenX(worldTileOriginT, camLeft, pxPerTVal);
+
+          trackEl.style.transform = `translateX(${translateX}px)`;
+        }
+      }
+
+      rafId = window.requestAnimationFrame(updateTrackTransform);
+    };
+
+    rafId = window.requestAnimationFrame(updateTrackTransform);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [
+    mode,
+    display.showLyricsTrack,
+    arrangement?.lyrics?.enabled,
+    arrangement?.bars,
+    arrangement?.timeSig.numerator,
+    followMode.pxPerT,
+    followMode.pendingWorldT,
+  ]);
+
+  /**
+   * Return the previous/next Voice 1 melody-node time from a given node time.
+   */
+  const getAdjacentVoice1NodeT16 = useCallback((fromT16: number, direction: -1 | 1): number | null => {
+    const idx = voice1MelodyNodes.findIndex((node) => node.t16 === fromT16);
+    if (idx < 0) return null;
+    const nextIdx = idx + direction;
+    if (nextIdx < 0 || nextIdx >= voice1MelodyNodes.length) return null;
+    return voice1MelodyNodes[nextIdx].t16;
+  }, [voice1MelodyNodes]);
+
+  /**
+   * Start editing one lyric token attached to a specific Voice 1 node.
+   */
+  const startLyricEditAt = useCallback((t16: number) => {
+    editingLyricT16Ref.current = t16;
+    setEditingLyricT16(t16);
+    setEditingLyricText(formatLyricDraft(lyricEntryByT16.get(t16)));
+  }, [lyricEntryByT16]);
+
+  /**
+   * Save the current lyric edit and optionally continue to another node.
+   */
+  const commitLyricEdit = useCallback((
+    nextNodeT16: number | null = null,
+    connectorOverride?: LyricConnector | null
+  ) => {
+    if (editingLyricT16 === null) return;
+
+    const parsedDraft = parseLyricDraft(editingLyricText);
+    const connectorToNext = connectorOverride !== undefined
+      ? (connectorOverride ?? undefined)
+      : parsedDraft.connectorToNext;
+
+    setLyricEntry(editingLyricT16, parsedDraft.text, {
+      connectorToNext: connectorToNext ?? null,
+    });
+
+    if (nextNodeT16 !== null) {
+      editingLyricT16Ref.current = nextNodeT16;
+      setEditingLyricT16(nextNodeT16);
+      setEditingLyricText(formatLyricDraft(lyricEntryByT16.get(nextNodeT16)));
+      return;
+    }
+
+    editingLyricT16Ref.current = null;
+    setEditingLyricT16(null);
+    setEditingLyricText('');
+  }, [editingLyricT16, editingLyricText, setLyricEntry, lyricEntryByT16]);
+
+  /**
+   * Apply a connector shortcut (dash/hold), save this node, then jump to next node.
+   */
+  const applyLyricConnectorAndAdvance = useCallback((
+    connectorToNext: LyricConnector,
+    draftTextOverride?: string
+  ) => {
+    if (editingLyricT16 === null) return;
+
+    const nextNodeT16 = getAdjacentVoice1NodeT16(editingLyricT16, 1);
+    const draftToUse = draftTextOverride ?? editingLyricText;
+    const parsedDraft = parseLyricDraft(draftToUse);
+
+    // If there is no next melody node, we cannot keep a connector.
+    if (nextNodeT16 === null) {
+      commitLyricEdit(null, null);
+      return;
+    }
+
+    setLyricEntry(editingLyricT16, parsedDraft.text, { connectorToNext });
+    editingLyricT16Ref.current = nextNodeT16;
+    setEditingLyricT16(nextNodeT16);
+    setEditingLyricText(formatLyricDraft(lyricEntryByT16.get(nextNodeT16)));
+  }, [editingLyricT16, editingLyricText, getAdjacentVoice1NodeT16, setLyricEntry, lyricEntryByT16, commitLyricEdit]);
 
   /**
    * Stop editing (commit changes back into the store).
@@ -2055,8 +2347,8 @@ export function Grid({
 
           // Path for the rounded "chip".
           ctx.beginPath();
-          if ((ctx as any).roundRect) {
-            (ctx as any).roundRect(bStartX, blockY, bWidth, blockHeight, radius);
+          if (typeof ctx.roundRect === 'function') {
+            ctx.roundRect(bStartX, blockY, bWidth, blockHeight, radius);
           } else {
             ctx.rect(bStartX, blockY, bWidth, blockHeight);
           }
@@ -2723,7 +3015,157 @@ export function Grid({
 
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup]);
+
+    // ── Lyrics lane (Play mode) ──
+    // Draw AFTER the contour clip is restored so bottom-lane text is not clipped.
+    // IMPORTANT:
+    // App.tsx renders two Grid instances:
+    // - hideChords=true  -> main contour layer (inside vertical fade mask)
+    // - hideChords=false -> overlay lane used for chords (outside vertical fade mask)
+    // Lyrics should live on the overlay lane so bottom text stays readable.
+    if (!hideChords && mode === 'play' && display.showLyricsTrack && arrangement.lyrics?.enabled && voice1MelodyNodes.length > 0) {
+      const lyricLaneHeight = 24;
+      const lyricLaneBottom = 8;
+      const lyricLaneTop = height - lyricLaneBottom - lyricLaneHeight;
+      const lyricBaselineY = lyricLaneTop + lyricLaneHeight / 2 + 0.5;
+      const voice1Id = arrangement.voices[0]?.id ?? null;
+
+      // Match the node-flash timing so lyric flashes feel synchronized with note hits.
+      const LYRIC_FLASH_ATTACK_MS = 35;
+      const LYRIC_FLASH_DECAY_MS = 2000;
+
+      // Determine the currently active lyric by playhead position.
+      let activeLyricT16: number | null = null;
+      if (isPlaying) {
+        // In loop mode, wrap world time into one arrangement-length local lane.
+        // In one-shot mode, clamp instead of wrapping so the final frame does not
+        // briefly jump back to lyric #1 at the very end.
+        const localPlayheadT16 = loopLengthT > 0
+          ? (
+            loopEnabled
+              ? (((playheadWorldT % loopLengthT) + loopLengthT) % loopLengthT)
+              : Math.max(0, Math.min(loopLengthT, playheadWorldT))
+          )
+          : playheadWorldT;
+
+        for (const node of voice1MelodyNodes) {
+          if (node.t16 > localPlayheadT16) break;
+          const entry = lyricEntryByT16.get(node.t16);
+          if (entry?.text) {
+            activeLyricT16 = node.t16;
+          }
+        }
+      }
+
+      ctx.save();
+
+      // Subtle lane baseline (sheet-music style guide line).
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(gridLeft, lyricBaselineY);
+      ctx.lineTo(gridLeft + gridWidth, lyricBaselineY);
+      ctx.stroke();
+
+      // Draw connector lines first so text sits cleanly on top.
+      for (let i = 0; i < voice1MelodyNodes.length - 1; i++) {
+        const fromNode = voice1MelodyNodes[i];
+        const toNode = voice1MelodyNodes[i + 1];
+        const connector = lyricEntryByT16.get(fromNode.t16)?.connectorToNext;
+        if (!connector) continue;
+
+        const fromWorldT = localT16ToNearestWorldT(fromNode.t16, loopLengthT, worldT);
+        const toWorldT = localT16ToNearestWorldT(toNode.t16, loopLengthT, fromWorldT + (toNode.t16 - fromNode.t16));
+        const x1 = wToX(fromWorldT);
+        const x2 = wToX(toWorldT);
+
+        if (Math.max(x1, x2) < gridLeft - 36 || Math.min(x1, x2) > gridLeft + gridWidth + 36) continue;
+
+        const left = Math.min(x1, x2);
+        const right = Math.max(x1, x2);
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.lineWidth = connector === 'hold' ? 1.7 : 1.4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+
+        if (connector === 'dash') {
+          const mid = (left + right) / 2;
+          const dashLength = Math.min(16, Math.max(7, (right - left) * 0.35));
+          ctx.moveTo(mid - dashLength / 2, lyricBaselineY + 0.5);
+          ctx.lineTo(mid + dashLength / 2, lyricBaselineY + 0.5);
+        } else {
+          const pad = 8;
+          const lineStart = left + pad;
+          const lineEnd = right - pad;
+          if (lineEnd <= lineStart) {
+            ctx.restore();
+            continue;
+          }
+          ctx.moveTo(lineStart, lyricBaselineY + 5.5);
+          ctx.lineTo(lineEnd, lyricBaselineY + 5.5);
+        }
+
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Render lyric tokens centered under their Voice 1 melody node.
+      ctx.font = '600 13px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      for (const node of voice1MelodyNodes) {
+        const text = lyricEntryByT16.get(node.t16)?.text ?? '';
+        if (!text) continue;
+
+        const drawWorldT = localT16ToNearestWorldT(node.t16, loopLengthT, worldT);
+        const x = wToX(drawWorldT);
+        if (x < gridLeft - 36 || x > gridLeft + gridWidth + 36) continue;
+
+        // Triggered flash comes from playback-engine note events (same source as node flashes).
+        let flashIntensity = 0;
+        if (voice1Id) {
+          const flashKey = `${voice1Id}:${node.t16}`;
+          const flashStartMs = nodeFlashStartMsRef.current.get(flashKey);
+          const nowMs = window.performance.now();
+          const flashAgeMs = flashStartMs !== undefined ? (nowMs - flashStartMs) : Infinity;
+
+          if (flashAgeMs >= 0 && flashAgeMs <= (LYRIC_FLASH_ATTACK_MS + LYRIC_FLASH_DECAY_MS)) {
+            if (flashAgeMs <= LYRIC_FLASH_ATTACK_MS) {
+              flashIntensity = Math.max(0, Math.min(1, flashAgeMs / LYRIC_FLASH_ATTACK_MS));
+            } else {
+              const DECAY_K = 4;
+              const decay01 = (flashAgeMs - LYRIC_FLASH_ATTACK_MS) / LYRIC_FLASH_DECAY_MS;
+              flashIntensity = Math.exp(-DECAY_K * decay01);
+            }
+          }
+        }
+
+        const isActive = activeLyricT16 === node.t16;
+        const highlightStrength = Math.max(isActive ? 0.45 : 0, flashIntensity);
+
+        if (highlightStrength > 0.001) {
+          ctx.save();
+          const textAlpha = Math.min(1, 0.78 + highlightStrength * 0.22);
+          const glowAlpha = Math.min(0.82, 0.24 + highlightStrength * 0.58);
+          const glowBlur = 4 + highlightStrength * 10;
+
+          ctx.fillStyle = `rgba(255, 250, 205, ${textAlpha})`;
+          ctx.shadowColor = `rgba(255, 235, 140, ${glowAlpha})`;
+          ctx.shadowBlur = glowBlur;
+          ctx.fillText(text, x, lyricBaselineY);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+          ctx.fillText(text, x, lyricBaselineY);
+        }
+      }
+
+      ctx.restore();
+    }
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, hideChords, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup, voice1MelodyNodes, lyricEntryByT16]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -5402,6 +5844,261 @@ export function Grid({
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/*
+        Lyrics Track Editor (Create mode)
+
+        - Must be enabled explicitly (like chord track)
+        - Tokens are locked to Voice 1 melody nodes only
+        - Use "-" for split syllables, "_" for held syllables
+
+        Render this on the same overlay layer as the chord editor (hideChords=false)
+        so the lane is not cut by the vertical edge-mask used on the contour layer.
+      */}
+      {!hideChords && mode === 'create' && display.showLyricsTrack && arrangement && (
+        <div className="absolute inset-0 z-30 pointer-events-none">
+          <div
+            ref={lyricLaneRef}
+            className="absolute pointer-events-auto overflow-hidden"
+            style={{
+              left: GRID_MARGIN.left,
+              right: GRID_MARGIN.right,
+              bottom: 8,
+              height: 34,
+            }}
+            title="Lyrics track for Voice 1. Use '-' to split syllables and '_' to hold a syllable."
+            onMouseDown={(e) => {
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
+          >
+            <div className="absolute inset-0 rounded-lg border border-white/10 bg-black/20 backdrop-blur-[1px]">
+              {!(arrangement.lyrics?.enabled ?? false) ? (
+                <div className="h-full px-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="h-6 px-2 rounded-md border border-white/20 bg-white/8 text-[11px] font-semibold text-[var(--text-primary)] hover:bg-white/12 disabled:opacity-45 disabled:cursor-not-allowed"
+                    disabled={voice1MelodyNodes.length === 0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      enableLyricsTrack();
+                    }}
+                  >
+                    Enable Lyrics Track
+                  </button>
+                  <span className="text-[11px] text-[var(--text-muted)]">
+                    {voice1MelodyNodes.length > 0
+                      ? 'Add syllables under Voice 1 melody notes.'
+                      : 'Place Voice 1 melody notes first.'}
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <div className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold tracking-wide uppercase text-[var(--text-muted)]">
+                    Lyrics
+                  </div>
+
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-6 px-2 rounded-md border border-red-400/25 bg-red-500/10 text-[10px] font-semibold text-red-200 hover:bg-red-500/16"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      disableLyricsTrack();
+                    }}
+                    title="Disable lyrics track"
+                  >
+                    Disable
+                  </button>
+
+                  {(() => {
+                    const pxPerTVal = followMode.pxPerT;
+                    if (pxPerTVal <= 0) return null;
+
+                    const connectorLines: React.ReactNode[] = [];
+                    const chips: React.ReactNode[] = [];
+                    for (const node of voice1MelodyNodes) {
+                      const x = node.t16 * pxPerTVal;
+
+                      const entry = lyricEntryByT16.get(node.t16);
+                      const text = entry?.text ?? '';
+                      const connectorToNext = entry?.connectorToNext;
+
+                      // Render connector lines between this node and the next node.
+                      const nextNodeT16 = voice1NextNodeT16ByT16.get(node.t16);
+                      if (connectorToNext && nextNodeT16 !== undefined) {
+                        const x2 = nextNodeT16 * pxPerTVal;
+
+                        const left = Math.min(x, x2);
+                        const right = Math.max(x, x2);
+                        if (connectorToNext === 'dash') {
+                          const mid = (left + right) / 2;
+                          const dashWidth = Math.min(16, Math.max(7, (right - left) * 0.35));
+                          connectorLines.push(
+                            <div
+                              key={`lyric-connector-dash-${node.t16}`}
+                              className="absolute pointer-events-none bg-white/85"
+                              style={{
+                                left: mid - dashWidth / 2,
+                                width: dashWidth,
+                                top: '50%',
+                                height: 1,
+                                transform: 'translateY(0.5px)',
+                              }}
+                            />
+                          );
+                        } else {
+                          // Keep the hold line outside both lyric bubbles.
+                          const bubbleInset = 22;
+                          const lineStart = left + bubbleInset;
+                          const lineEnd = right - bubbleInset;
+                          const lineWidth = Math.max(0, lineEnd - lineStart);
+                          if (lineWidth > 0) {
+                            connectorLines.push(
+                              <div
+                                key={`lyric-connector-hold-${node.t16}`}
+                                className="absolute pointer-events-none rounded-full bg-white/85"
+                                style={{
+                                  left: lineStart,
+                                  width: lineWidth,
+                                  top: '50%',
+                                  height: 2,
+                                  transform: 'translateY(10px)',
+                                }}
+                              />
+                            );
+                          }
+                        }
+                      }
+
+                      const isEditingToken = editingLyricT16 === node.t16;
+
+                      chips.push(
+                        <div
+                          key={`lyric-${node.t16}`}
+                          className="absolute top-1/2"
+                          style={{
+                            left: x,
+                            transform: 'translate(-50%, -50%)',
+                          }}
+                        >
+                          {isEditingToken ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                value={editingLyricText}
+                                autoFocus
+                                placeholder="lyric"
+                                className="w-24 px-2 py-1 rounded-md text-xs text-center bg-black/50 text-[var(--text-primary)] border border-white/30 outline-none focus:border-[var(--accent-primary)]"
+                                onChange={(evt) => {
+                                  const nextValue = evt.target.value;
+                                  setEditingLyricText(nextValue);
+
+                                  const trimmedEnd = nextValue.trimEnd();
+                                  if (trimmedEnd.endsWith('-')) {
+                                    applyLyricConnectorAndAdvance('dash', nextValue);
+                                    return;
+                                  }
+
+                                  if (trimmedEnd.endsWith('_')) {
+                                    applyLyricConnectorAndAdvance('hold', nextValue);
+                                  }
+                                }}
+                                onBlur={() => {
+                                  if (editingLyricT16Ref.current !== node.t16) return;
+                                  commitLyricEdit();
+                                }}
+                                onKeyDown={(evt) => {
+                                  if (evt.key === 'Enter') {
+                                    evt.preventDefault();
+                                    const nextNodeT16 = getAdjacentVoice1NodeT16(node.t16, 1);
+                                    commitLyricEdit(nextNodeT16);
+                                    return;
+                                  }
+
+                                  if (evt.key === 'Tab') {
+                                    evt.preventDefault();
+                                    const direction: -1 | 1 = evt.shiftKey ? -1 : 1;
+                                    const nextNodeT16 = getAdjacentVoice1NodeT16(node.t16, direction);
+                                    commitLyricEdit(nextNodeT16);
+                                    return;
+                                  }
+
+                                  if (evt.key === 'Escape') {
+                                    evt.preventDefault();
+                                    setEditingLyricT16(null);
+                                    setEditingLyricText('');
+                                  }
+                                }}
+                              />
+
+                              {/* Quick helpers for choir-style lyric notation. */}
+                              <button
+                                type="button"
+                                className="h-6 w-6 rounded border border-white/15 bg-white/6 text-[11px] text-[var(--text-muted)] hover:bg-white/12 hover:text-[var(--text-primary)]"
+                                title="Split syllable to next node"
+                                onMouseDown={(evt) => evt.preventDefault()}
+                                onClick={(evt) => {
+                                  evt.stopPropagation();
+                                  applyLyricConnectorAndAdvance('dash');
+                                }}
+                              >
+                                -
+                              </button>
+
+                              <button
+                                type="button"
+                                className="h-6 w-6 rounded border border-white/15 bg-white/6 text-[11px] text-[var(--text-muted)] hover:bg-white/12 hover:text-[var(--text-primary)]"
+                                title="Hold syllable to next node"
+                                onMouseDown={(evt) => evt.preventDefault()}
+                                onClick={(evt) => {
+                                  evt.stopPropagation();
+                                  applyLyricConnectorAndAdvance('hold');
+                                }}
+                              >
+                                _
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className={`max-w-[120px] px-2 py-1 rounded-md text-xs border transition-colors ${text
+                                ? 'border-white/15 bg-white/8 text-[var(--text-primary)] hover:bg-white/14'
+                                : 'border-dashed border-white/15 bg-white/4 text-[var(--text-disabled)] hover:bg-white/10'
+                                }`}
+                              onClick={(evt) => {
+                                evt.stopPropagation();
+                                if (editingLyricT16 !== null && editingLyricT16 !== node.t16) {
+                                  commitLyricEdit(node.t16);
+                                  return;
+                                }
+                                startLyricEditAt(node.t16);
+                              }}
+                              title={text || 'Add lyric'}
+                            >
+                              <span className="block truncate">{text || '·'}</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        ref={lyricLaneCameraTrackRef}
+                        className="absolute inset-y-0 left-0 will-change-transform"
+                      >
+                        {connectorLines}
+                        {chips}
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

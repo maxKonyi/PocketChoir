@@ -11,6 +11,9 @@ import { persist } from 'zustand/middleware';
 import type {
   Arrangement,
   Chord,
+  LyricConnector,
+  LyricEntry,
+  LyricsTrack,
   Voice,
   Node as ArrangementNode,
   PlaybackState,
@@ -57,6 +60,7 @@ interface VoiceState {
 interface DisplaySettings {
   showMinimap: boolean;         // Show/hide the minimap (overview strip above the grid)
   showChordTrack: boolean;      // Show chord labels above grid
+  showLyricsTrack: boolean;     // Show lyrics lane (create + play)
   showNoteLabels: boolean;      // Show labels on nodes (degree, solfege, or note name)
   labelFormat: 'degree' | 'solfege' | 'noteName';
   noteSize: number;             // 0.5-2.0, scale factor for node circles and their labels
@@ -244,6 +248,181 @@ const applySnapshot = (snapshot: ArrangementSnapshot) => ({
 });
 
 /**
+ * Return all regular (non-anchor) melody nodes from Voice 1.
+ * Lyrics are only allowed to attach to these nodes.
+ */
+const getVoice1MelodyNodes = (arrangement: Arrangement): ArrangementNode[] => {
+  const voice1 = arrangement.voices[0];
+  if (!voice1) return [];
+  return voice1.nodes
+    .filter((node) => !node.term)
+    .sort((a, b) => a.t16 - b.t16);
+};
+
+/**
+ * Build a fast lookup of valid Voice 1 melody-node times.
+ */
+const getVoice1MelodyNodeTimeSet = (arrangement: Arrangement): Set<number> => {
+  return new Set(getVoice1MelodyNodes(arrangement).map((node) => node.t16));
+};
+
+type LyricPayload = {
+  text: string;
+  connectorToNext?: LyricConnector;
+};
+
+/**
+ * Allow only known lyric connector values.
+ */
+const normalizeLyricConnector = (value: unknown): LyricConnector | undefined => {
+  if (value === 'dash' || value === 'hold') return value;
+  return undefined;
+};
+
+/**
+ * Normalize one lyric payload.
+ *
+ * Backward compatibility:
+ * Older saved data may encode connector intent by trailing text symbols:
+ * - "Wel-"   -> text "Wel" + connector "dash"
+ * - "ther___" -> text "ther" + connector "hold"
+ */
+const normalizeLyricPayload = (rawText: unknown, rawConnector: unknown): LyricPayload => {
+  let text = String(rawText ?? '').trim();
+  let connector = normalizeLyricConnector(rawConnector);
+
+  if (!connector) {
+    if (/_+$/.test(text)) {
+      connector = 'hold';
+      text = text.replace(/_+$/, '').trimEnd();
+    } else if (/-+$/.test(text)) {
+      connector = 'dash';
+      text = text.replace(/-+$/, '').trimEnd();
+    }
+  }
+
+  return {
+    text,
+    ...(connector ? { connectorToNext: connector } : {}),
+  };
+};
+
+/**
+ * A lyric row is meaningful if it has either visible text OR a connector.
+ */
+const hasLyricPayloadContent = (payload: LyricPayload): boolean => {
+  return payload.text.length > 0 || payload.connectorToNext !== undefined;
+};
+
+/**
+ * Normalize a lyrics track so it always follows these rules:
+ * - entries are attached only to existing Voice 1 melody nodes
+ * - entry text is trimmed
+ * - legacy suffixes ("-", "___") are migrated into connector metadata
+ * - connectors exist only when a following Voice 1 node exists
+ * - there is at most one entry per t16
+ * - entries are sorted by time
+ */
+const normalizeLyricsTrack = (
+  lyrics: LyricsTrack | undefined,
+  arrangement: Arrangement
+): LyricsTrack => {
+  const voice1Nodes = getVoice1MelodyNodes(arrangement);
+  const validTimes = new Set(voice1Nodes.map((node) => node.t16));
+
+  // Connector is legal only when there is a next Voice 1 melody node.
+  const hasNextNodeByT16 = new Set<number>();
+  for (let i = 0; i < voice1Nodes.length - 1; i++) {
+    hasNextNodeByT16.add(voice1Nodes[i].t16);
+  }
+
+  const merged = new Map<number, LyricPayload>();
+
+  for (const entry of lyrics?.entries ?? []) {
+    if (!Number.isFinite(entry.t16)) continue;
+    const t16 = Math.round(entry.t16);
+    if (!validTimes.has(t16)) continue;
+
+    const payload = normalizeLyricPayload(entry.text, entry.connectorToNext);
+    const connectorToNext = hasNextNodeByT16.has(t16)
+      ? payload.connectorToNext
+      : undefined;
+
+    const normalizedPayload: LyricPayload = {
+      text: payload.text,
+      ...(connectorToNext ? { connectorToNext } : {}),
+    };
+
+    if (!hasLyricPayloadContent(normalizedPayload)) continue;
+    merged.set(t16, normalizedPayload);
+  }
+
+  const entries: LyricEntry[] = [...merged.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([t16, payload]) => ({
+      t16,
+      text: payload.text,
+      ...(payload.connectorToNext ? { connectorToNext: payload.connectorToNext } : {}),
+    }));
+
+  return {
+    enabled: lyrics?.enabled ?? false,
+    entries,
+  };
+};
+
+/**
+ * Move lyric entries alongside moved Voice 1 melody nodes.
+ *
+ * `moveMap` maps old node t16 -> new node t16.
+ */
+const remapLyricsEntries = (
+  entries: LyricEntry[],
+  moveMap: Map<number, number>,
+  validTimes: Set<number>
+): LyricEntry[] => {
+  const movedFrom = new Set(moveMap.keys());
+  const result = new Map<number, LyricPayload>();
+
+  // First keep entries that were not moved.
+  for (const entry of entries) {
+    if (movedFrom.has(entry.t16)) continue;
+    if (!validTimes.has(entry.t16)) continue;
+    const payload = normalizeLyricPayload(entry.text, entry.connectorToNext);
+    if (!hasLyricPayloadContent(payload)) continue;
+    result.set(entry.t16, payload);
+  }
+
+  // Then apply moved entries so moved notes win on collisions.
+  for (const entry of entries) {
+    const mappedT16 = moveMap.get(entry.t16);
+    if (mappedT16 === undefined) continue;
+    if (!validTimes.has(mappedT16)) continue;
+    const payload = normalizeLyricPayload(entry.text, entry.connectorToNext);
+    if (!hasLyricPayloadContent(payload)) continue;
+    result.set(mappedT16, payload);
+  }
+
+  return [...result.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([t16, payload]) => ({
+      t16,
+      text: payload.text,
+      ...(payload.connectorToNext ? { connectorToNext: payload.connectorToNext } : {}),
+    }));
+};
+
+/**
+ * Return a copy of the arrangement with a normalized lyrics track.
+ */
+const withNormalizedLyricsTrack = (arrangement: Arrangement): Arrangement => {
+  return {
+    ...arrangement,
+    lyrics: normalizeLyricsTrack(arrangement.lyrics, arrangement),
+  };
+};
+
+/**
  * Complete application state.
  */
 interface AppState {
@@ -396,6 +575,15 @@ interface AppActions {
   splitChordAt: (t16: number) => void;
   resizeChordBoundary: (leftChordIndex: number, newBoundaryT16: number) => void;
   deleteChord: (chordIndex: number) => void;
+
+  // Create mode - lyrics track editing
+  enableLyricsTrack: () => void;
+  disableLyricsTrack: () => void;
+  setLyricEntry: (
+    t16: number,
+    text: string,
+    options?: { connectorToNext?: LyricConnector | null }
+  ) => void;
 
   // Create mode - arrangement parameter editing
   updateArrangementParams: (update: ArrangementParamsUpdate) => void;
@@ -562,6 +750,7 @@ const initialVocalRange: VocalRange = {
 const initialDisplaySettings: DisplaySettings = {
   showMinimap: true,
   showChordTrack: true,
+  showLyricsTrack: true,
   showNoteLabels: true,
   labelFormat: 'degree',
   noteSize: 1.0,
@@ -770,10 +959,14 @@ export const useAppStore = create<AppState & AppActions>()(
             ? get().normalizeChordTrack(arrangement.chords, totalT16)
             : arrangement.chords;
 
-          if (normalizedChords) {
-            arrangement = { ...arrangement, chords: normalizedChords };
-            set({ arrangement });
-          }
+          // Always normalize lyrics too so imported JSON cannot contain floating
+          // lyric entries that point to missing/non-melody nodes.
+          arrangement = {
+            ...arrangement,
+            ...(normalizedChords !== undefined ? { chords: normalizedChords } : {}),
+            lyrics: normalizeLyricsTrack(arrangement.lyrics, arrangement),
+          };
+          set({ arrangement });
 
           // In Create mode, always default the editor to the first available voice.
           // This prevents stale selection from a previous arrangement (e.g. selecting Voice 3
@@ -993,7 +1186,7 @@ export const useAppStore = create<AppState & AppActions>()(
 
         return {
           ...historyUpdate,
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: withNormalizedLyricsTrack({ ...state.arrangement, voices: updatedVoices }),
         };
       }),
 
@@ -1034,7 +1227,7 @@ export const useAppStore = create<AppState & AppActions>()(
 
         return {
           ...historyUpdate,
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: withNormalizedLyricsTrack({ ...state.arrangement, voices: updatedVoices }),
         };
       }),
 
@@ -1144,9 +1337,30 @@ export const useAppStore = create<AppState & AppActions>()(
           return { ...voice, nodes: sortedNodes };
         });
 
+        const voice1Id = state.arrangement.voices[0]?.id;
+        const previousLyrics = normalizeLyricsTrack(state.arrangement.lyrics, state.arrangement);
+
+        let nextArrangement: Arrangement = { ...state.arrangement, voices: updatedVoices };
+
+        // If a Voice 1 melody node moved, move its lyric with it.
+        if (voiceId === voice1Id && !term) {
+          const moveMap = new Map<number, number>([[oldT16, newT16]]);
+          const validTimes = getVoice1MelodyNodeTimeSet(nextArrangement);
+          nextArrangement = {
+            ...nextArrangement,
+            lyrics: {
+              enabled: previousLyrics.enabled,
+              entries: remapLyricsEntries(previousLyrics.entries, moveMap, validTimes),
+            },
+          };
+          nextArrangement = withNormalizedLyricsTrack(nextArrangement);
+        } else {
+          nextArrangement = withNormalizedLyricsTrack(nextArrangement);
+        }
+
         return {
           ...(historyUpdate ?? {}),
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: nextArrangement,
         };
       }),
 
@@ -1305,7 +1519,7 @@ export const useAppStore = create<AppState & AppActions>()(
 
         return {
           ...(historyUpdate ?? {}),
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: withNormalizedLyricsTrack({ ...state.arrangement, voices: updatedVoices }),
           createView: { ...state.createView, selectedNodeKeys: newSelection },
         };
       }),
@@ -1351,7 +1565,7 @@ export const useAppStore = create<AppState & AppActions>()(
 
         return {
           ...historyUpdate,
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: withNormalizedLyricsTrack({ ...state.arrangement, voices: updatedVoices }),
           createView: { ...state.createView, selectedNodeKeys: new Set() },
         };
       }),
@@ -1370,6 +1584,8 @@ export const useAppStore = create<AppState & AppActions>()(
         if (shouldRecordHistory && !historyUpdate) return state;
 
         const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
+        const voice1Id = state.arrangement.voices[0]?.id ?? null;
+        const lyricMoveMap = new Map<number, number>();
 
         // Parse selected keys into a lookup.
         const selectedLookup = new Map<string, Set<number>>();
@@ -1430,6 +1646,12 @@ export const useAppStore = create<AppState & AppActions>()(
                 isAutoMovedAnchor: !!node.term && !selectedTimes.has(node.t16),
                 isAnchor: !!node.term,
               });
+
+              // Lyrics follow moved Voice 1 melody nodes.
+              if (voice.id === voice1Id && !node.term && selectedTimes.has(node.t16)) {
+                lyricMoveMap.set(node.t16, newT16);
+              }
+
               // Preserve selection membership only for nodes that were actually
               // selected by the user; auto-moved attached anchors should move
               // visually but should not become selected automatically.
@@ -1468,9 +1690,26 @@ export const useAppStore = create<AppState & AppActions>()(
           return { ...voice, nodes: merged };
         });
 
+        const previousLyrics = normalizeLyricsTrack(state.arrangement.lyrics, state.arrangement);
+        let nextArrangement: Arrangement = { ...state.arrangement, voices: updatedVoices };
+
+        if (lyricMoveMap.size > 0) {
+          const validTimes = getVoice1MelodyNodeTimeSet(nextArrangement);
+          nextArrangement = {
+            ...nextArrangement,
+            lyrics: {
+              enabled: previousLyrics.enabled,
+              entries: remapLyricsEntries(previousLyrics.entries, lyricMoveMap, validTimes),
+            },
+          };
+          nextArrangement = withNormalizedLyricsTrack(nextArrangement);
+        } else {
+          nextArrangement = withNormalizedLyricsTrack(nextArrangement);
+        }
+
         return {
           ...historyUpdate,
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: nextArrangement,
           createView: { ...state.createView, selectedNodeKeys: newSelection },
         };
       }),
@@ -1492,7 +1731,7 @@ export const useAppStore = create<AppState & AppActions>()(
 
         return {
           ...historyUpdate,
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: withNormalizedLyricsTrack({ ...state.arrangement, voices: updatedVoices }),
         };
       }),
 
@@ -1509,7 +1748,7 @@ export const useAppStore = create<AppState & AppActions>()(
 
         return {
           ...historyUpdate,
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: withNormalizedLyricsTrack({ ...state.arrangement, voices: updatedVoices }),
         };
       }),
 
@@ -1527,7 +1766,133 @@ export const useAppStore = create<AppState & AppActions>()(
 
         return {
           ...historyUpdate,
-          arrangement: { ...state.arrangement, voices: updatedVoices },
+          arrangement: withNormalizedLyricsTrack({ ...state.arrangement, voices: updatedVoices }),
+        };
+      }),
+
+      // -- Create Mode - Lyrics Track Editing --
+
+      /**
+       * Enable the lyrics track.
+       *
+       * We keep any existing valid entries and only flip `enabled` to true.
+       */
+      enableLyricsTrack: () => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const normalized = normalizeLyricsTrack(state.arrangement.lyrics, state.arrangement);
+        return {
+          ...historyUpdate,
+          arrangement: {
+            ...state.arrangement,
+            lyrics: {
+              ...normalized,
+              enabled: true,
+            },
+          },
+        };
+      }),
+
+      /**
+       * Disable the lyrics track and clear all lyric entries.
+       */
+      disableLyricsTrack: () => set((state) => {
+        if (!state.arrangement) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        return {
+          ...historyUpdate,
+          arrangement: {
+            ...state.arrangement,
+            lyrics: {
+              enabled: false,
+              entries: [],
+            },
+          },
+        };
+      }),
+
+      /**
+       * Set/replace one lyric token for a Voice 1 melody node.
+       *
+       * - Stores visible text and optional connector metadata in one history step.
+       * - If both text and connector are empty, the entry is removed.
+       */
+      setLyricEntry: (t16, text, options) => set((state) => {
+        if (!state.arrangement) return state;
+
+        const lyrics = normalizeLyricsTrack(state.arrangement.lyrics, state.arrangement);
+        if (!lyrics.enabled) return state;
+
+        const voice1Nodes = getVoice1MelodyNodes(state.arrangement);
+        const validTimes = new Set(voice1Nodes.map((node) => node.t16));
+        const snappedT16 = Math.round(t16);
+        if (!validTimes.has(snappedT16)) return state;
+
+        const existingEntry = lyrics.entries.find((entry) => entry.t16 === snappedT16);
+        const existingPayload = normalizeLyricPayload(existingEntry?.text, existingEntry?.connectorToNext);
+        const normalizedInput = normalizeLyricPayload(text, undefined);
+
+        const hasConnectorOverride = options !== undefined
+          && Object.prototype.hasOwnProperty.call(options, 'connectorToNext');
+        const requestedConnector = hasConnectorOverride
+          ? normalizeLyricConnector(options?.connectorToNext)
+          : normalizedInput.connectorToNext;
+
+        const nodeIndex = voice1Nodes.findIndex((node) => node.t16 === snappedT16);
+        const hasNextNode = nodeIndex >= 0 && nodeIndex < voice1Nodes.length - 1;
+
+        const nextPayload: LyricPayload = {
+          text: normalizedInput.text,
+          ...(hasNextNode && requestedConnector ? { connectorToNext: requestedConnector } : {}),
+        };
+
+        // Skip no-op edits so we don't spam undo history when the user simply
+        // opens/closes a lyric input without changing anything.
+        const sameText = nextPayload.text === existingPayload.text;
+        const sameConnector = nextPayload.connectorToNext === existingPayload.connectorToNext;
+        if (sameText && sameConnector) return state;
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const nextEntriesMap = new Map<number, LyricPayload>(
+          lyrics.entries.map((entry) => {
+            const payload = normalizeLyricPayload(entry.text, entry.connectorToNext);
+            return [entry.t16, payload];
+          })
+        );
+
+        if (!hasLyricPayloadContent(nextPayload)) {
+          nextEntriesMap.delete(snappedT16);
+        } else {
+          nextEntriesMap.set(snappedT16, nextPayload);
+        }
+
+        const nextEntries: LyricEntry[] = [...nextEntriesMap.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([entryT16, payload]) => ({
+            t16: entryT16,
+            text: payload.text,
+            ...(payload.connectorToNext ? { connectorToNext: payload.connectorToNext } : {}),
+          }));
+
+        const nextArrangement = withNormalizedLyricsTrack({
+          ...state.arrangement,
+          lyrics: {
+            enabled: true,
+            entries: nextEntries,
+          },
+        });
+
+        return {
+          ...historyUpdate,
+          arrangement: nextArrangement,
         };
       }),
 
@@ -1599,7 +1964,7 @@ export const useAppStore = create<AppState & AppActions>()(
           nextChords = get().normalizeChordTrack(nextChords, nextTotalT16);
         }
 
-        const nextArrangement: Arrangement = {
+        let nextArrangement: Arrangement = {
           ...prev,
           title: update.title,
           tempo: nextTempo,
@@ -1610,6 +1975,9 @@ export const useAppStore = create<AppState & AppActions>()(
           voices: nextVoices,
           chords: nextChords,
         };
+
+        // Keep lyrics attached only to surviving Voice 1 nodes after timeline changes.
+        nextArrangement = withNormalizedLyricsTrack(nextArrangement);
 
         const nextPosition = Math.max(0, Math.min(state.playback.position, nextTotalT16));
 
@@ -2407,19 +2775,19 @@ export const useAppStore = create<AppState & AppActions>()(
           ...next,
           display: {
             ...currentState.display,
-            ...(persisted as any).display,
+            ...(persisted.display ?? {}),
           },
           microphoneState: {
             ...currentState.microphoneState,
-            ...(persisted as any).microphoneState,
+            ...(persisted.microphoneState ?? {}),
           },
           countIn: {
             ...currentState.countIn,
-            ...(persisted as any).countIn,
+            ...(persisted.countIn ?? {}),
           },
           vocalRange: {
             ...currentState.vocalRange,
-            ...(persisted as any).vocalRange,
+            ...(persisted.vocalRange ?? {}),
           },
         };
       },

@@ -420,6 +420,7 @@ function MyLibraryTab({ currentArrangementId, onSelect, onEdit, currentArrangeme
       timeSig,
       voices,
       chords: candidate.chords as Arrangement['chords'],
+      lyrics: candidate.lyrics as Arrangement['lyrics'],
       difficulty: candidate.difficulty,
       tags: candidate.tags,
       author: candidate.author,

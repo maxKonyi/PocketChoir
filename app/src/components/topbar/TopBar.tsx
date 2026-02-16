@@ -125,6 +125,8 @@ export function TopBar() {
         nodes: v.nodes,
       })),
       chords: arrangement.chords || [],
+      // Include lyrics so exported files keep node-attached word/syllable data.
+      lyrics: arrangement.lyrics ?? { enabled: false, entries: [] },
     };
 
     // Convert to JSON string with formatting

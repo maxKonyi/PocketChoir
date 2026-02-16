@@ -4,6 +4,7 @@
    Modal for configuring visual display options:
    - Show/hide minimap
    - Show/hide chord labels
+   - Show/hide lyrics track
    - Show/hide note labels (with label style selector)
    - Note size scaling
    - Line thickness scaling
@@ -143,6 +144,30 @@ export function DisplaySettingsModal() {
                 className={`
                   w-5 h-5 rounded-full bg-white shadow transition-transform
                   ${display.showChordTrack ? 'translate-x-6' : 'translate-x-0.5'}
+                `}
+              />
+            </button>
+          </div>
+
+          {/* Show lyrics track */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-[var(--text-primary)]">
+              Show Lyrics Track
+            </span>
+            <button
+              onClick={() => handleToggle('showLyricsTrack', !display.showLyricsTrack)}
+              className={`
+                w-12 h-6 rounded-full transition-colors
+                ${display.showLyricsTrack
+                  ? 'bg-[var(--accent-primary)]'
+                  : 'bg-[var(--button-bg)]'
+                }
+              `}
+            >
+              <div
+                className={`
+                  w-5 h-5 rounded-full bg-white shadow transition-transform
+                  ${display.showLyricsTrack ? 'translate-x-6' : 'translate-x-0.5'}
                 `}
               />
             </button>
