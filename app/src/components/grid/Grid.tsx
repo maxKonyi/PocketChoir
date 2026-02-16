@@ -501,10 +501,10 @@ function getContourSegmentStackOffsetY(stackInfo: ContourSegmentStackInfo, lineW
 }
 
 /**
- * Build a bright prismatic gradient used to represent a stacked/unison contour.
+ * Build a vibrant pearlescent gradient used to represent a stacked/unison contour.
  *
- * We phase the hue by X so adjacent stacked pieces feel like one continuous,
- * shifting rainbow line instead of hard-resetting every segment.
+ * Hue is sampled by traveled pixel distance so color flow stays continuous
+ * across connected hold/bend segments (no restart at curve boundaries).
  */
 function createPrismaticContourGradient(
   ctx: CanvasRenderingContext2D,
@@ -519,17 +519,32 @@ function createPrismaticContourGradient(
   const safeEndY = hasLength ? endY : startY;
   const gradient = ctx.createLinearGradient(startX, startY, safeEndX, safeEndY);
 
-  const PRISM_CYCLE_PX = 220;
-  const normalizedPhase = (((phaseSeedX % PRISM_CYCLE_PX) + PRISM_CYCLE_PX) % PRISM_CYCLE_PX) / PRISM_CYCLE_PX;
-  const stopCount = 8;
+  const PRISM_CYCLE_PX = 400;
+  const dist = Math.sqrt((safeEndX - startX) ** 2 + (safeEndY - startY) ** 2);
 
+  // Vibrant pearlescent: slightly higher saturation with high brightness.
+  const getRainbowColorByDistance = (distancePx: number) => {
+    const hue = (((phaseSeedX + distancePx) / PRISM_CYCLE_PX) * 360) % 360;
+    return `hsl(${hue.toFixed(1)} 65% 80%)`;
+  };
+
+  const stopCount = 6;
   for (let i = 0; i <= stopCount; i++) {
-    const progress = i / stopCount;
-    const hue = (normalizedPhase * 360 + progress * 360) % 360;
-    gradient.addColorStop(progress, `hsl(${hue.toFixed(1)} 95% 62%)`);
+    const p = i / stopCount;
+    gradient.addColorStop(p, getRainbowColorByDistance(dist * p));
   }
 
   return gradient;
+}
+
+/**
+ * Return the prismatic color at a specific X phase seed.
+ * Used to blend OUT of a collapsed rainbow stack into a voice's own color.
+ */
+function getPrismaticContourColorAtPhase(phaseSeedX: number): string {
+  const PRISM_CYCLE_PX = 400;
+  const hue = (((phaseSeedX / PRISM_CYCLE_PX) * 360) % 360 + 360) % 360;
+  return `hsl(${hue.toFixed(1)} 65% 80%)`;
 }
 
 // If these differ, the "ghost" preview and click zones will feel offset.
@@ -2245,14 +2260,14 @@ export function Grid({
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor);
           }
 
           // Main line
           ctx.shadowBlur = 0;
           ctx.strokeStyle = voiceColor;
           ctx.lineWidth = contourLineWidth;
-          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours);
+          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor);
           ctx.restore();
         }
       }
@@ -2302,7 +2317,7 @@ export function Grid({
             const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 
             maskCtx.lineWidth = contourLineWidth;
-            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours);
+            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, '#ffffff');
           }
         }
         maskCtx.restore();
@@ -2732,7 +2747,8 @@ export function Grid({
     loopLen: number,
     segmentStackMap: Map<number, ContourSegmentStackData> | undefined,
     stackLineWidth: number,
-    splitStackedContours: boolean
+    splitStackedContours: boolean,
+    voiceColor: string
   ) {
     if (voice.nodes.length === 0) return;
 
@@ -2787,7 +2803,8 @@ export function Grid({
       pieceEndX: number,
       baseY: number,
       segmentOffsetY: number,
-      stackInfo: ContourSegmentStackInfo | null
+      stackInfo: ContourSegmentStackInfo | null,
+      transitionFromRainbow: boolean = false
     ): number => {
       const targetY = baseY + segmentOffsetY;
 
@@ -2802,6 +2819,33 @@ export function Grid({
           ctx.stroke();
           hasActivePath = false;
         }
+        activeOffsetY = segmentOffsetY;
+        return targetY;
+      }
+
+      if (transitionFromRainbow && pieceEndX > pieceStartX) {
+        // Fade from prism color into the voice's true color when peeling off.
+        if (hasActivePath) {
+          ctx.stroke();
+          hasActivePath = false;
+        }
+
+        const transition = ctx.createLinearGradient(pieceStartX, targetY, pieceEndX, targetY);
+        const prismAtStart = getPrismaticContourColorAtPhase(pieceStartX);
+        const dist = Math.max(1, pieceEndX - pieceStartX);
+        const blendRatio = Math.min(0.5, 40 / dist);
+        transition.addColorStop(0, prismAtStart);
+        transition.addColorStop(blendRatio, voiceColor);
+        transition.addColorStop(1, voiceColor);
+
+        ctx.save();
+        ctx.strokeStyle = transition;
+        ctx.beginPath();
+        ctx.moveTo(pieceStartX, targetY);
+        ctx.lineTo(pieceEndX, targetY);
+        ctx.stroke();
+        ctx.restore();
+
         activeOffsetY = segmentOffsetY;
         return targetY;
       }
@@ -2901,7 +2945,8 @@ export function Grid({
           const segmentData = segmentStackMap?.get(segmentIndex);
           const holdPieces = buildContourHoldPieces(lastT16, node.t16, segmentData?.holdSlices ?? []);
 
-          for (const piece of holdPieces) {
+          for (let pIdx = 0; pIdx < holdPieces.length; pIdx++) {
+            const piece = holdPieces[pIdx];
             const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
               ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
               : null;
@@ -2911,7 +2956,20 @@ export function Grid({
 
             const pieceStartX = nodeToX(piece.startT);
             const pieceEndX = nodeToX(piece.endT);
-            const stackedY = drawHoldPieceWithOffsetEasing(pieceStartX, pieceEndX, lastY, segmentOffsetY, stackInfo);
+
+            const isStacked = !!stackInfo && stackInfo.stackSize > 1;
+            const prevPiece = pIdx > 0 ? holdPieces[pIdx - 1] : null;
+            const prevIsStacked = !!prevPiece && prevPiece.stackSize !== null && prevPiece.stackSize > 1;
+            const transitionFromRainbow = !splitStackedContours && !isStacked && prevIsStacked;
+
+            const stackedY = drawHoldPieceWithOffsetEasing(
+              pieceStartX,
+              pieceEndX,
+              lastY,
+              segmentOffsetY,
+              stackInfo,
+              transitionFromRainbow
+            );
             lastRenderedY = stackedY;
           }
 
@@ -2951,7 +3009,8 @@ export function Grid({
 
         const holdPieces = buildContourHoldPieces(lastT16, holdEndT, segmentData?.holdSlices ?? []);
         const holdRightStackInfo = getRightEdgeHoldStackInfo(holdPieces);
-        for (const piece of holdPieces) {
+        for (let pIdx = 0; pIdx < holdPieces.length; pIdx++) {
+          const piece = holdPieces[pIdx];
           const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
             ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
             : null;
@@ -2961,7 +3020,20 @@ export function Grid({
 
           const pieceStartX = nodeToX(piece.startT);
           const pieceEndX = nodeToX(piece.endT);
-          const stackedY = drawHoldPieceWithOffsetEasing(pieceStartX, pieceEndX, lastY, segmentOffsetY, stackInfo);
+
+          const isStacked = !!stackInfo && stackInfo.stackSize > 1;
+          const prevPiece = pIdx > 0 ? holdPieces[pIdx - 1] : null;
+          const prevIsStacked = !!prevPiece && prevPiece.stackSize !== null && prevPiece.stackSize > 1;
+          const transitionFromRainbow = !splitStackedContours && !isStacked && prevIsStacked;
+
+          const stackedY = drawHoldPieceWithOffsetEasing(
+            pieceStartX,
+            pieceEndX,
+            lastY,
+            segmentOffsetY,
+            stackInfo,
+            transitionFromRainbow
+          );
           lastRenderedY = stackedY;
         }
 
@@ -3016,8 +3088,39 @@ export function Grid({
 
             activeOffsetY = bendEndOffsetY;
           } else {
-            const stackedLastY = ensurePathStart(bendStartX, lastY, bendStartOffsetY);
-            drawBendPathSegment(bendStartX, stackedLastY, x, stackedY);
+            const transitionFromRainbowBend =
+              !splitStackedContours &&
+              !!holdRightStackInfo &&
+              holdRightStackInfo.stackSize > 1 &&
+              (!bendStackInfo || bendStackInfo.stackSize <= 1);
+
+            if (transitionFromRainbowBend) {
+              if (hasActivePath) {
+                ctx.stroke();
+                hasActivePath = false;
+              }
+
+              const transition = ctx.createLinearGradient(bendStartX, bendStartY, x, stackedY);
+              const prismAtStart = getPrismaticContourColorAtPhase(bendStartX);
+              const bendDist = Math.max(1, Math.sqrt((x - bendStartX) ** 2 + (stackedY - bendStartY) ** 2));
+              const blendRatio = Math.min(0.5, 40 / bendDist);
+              transition.addColorStop(0, prismAtStart);
+              transition.addColorStop(blendRatio, voiceColor);
+              transition.addColorStop(1, voiceColor);
+
+              ctx.save();
+              ctx.strokeStyle = transition;
+              ctx.beginPath();
+              ctx.moveTo(bendStartX, bendStartY);
+              drawBendPathSegment(bendStartX, bendStartY, x, stackedY);
+              ctx.stroke();
+              ctx.restore();
+
+              activeOffsetY = bendEndOffsetY;
+            } else {
+              const stackedLastY = ensurePathStart(bendStartX, lastY, bendStartOffsetY);
+              drawBendPathSegment(bendStartX, stackedLastY, x, stackedY);
+            }
           }
 
           lastRenderedY = stackedY;
