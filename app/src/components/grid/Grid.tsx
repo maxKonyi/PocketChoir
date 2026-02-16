@@ -358,7 +358,9 @@ function buildContourSegmentStackLookup(arrangement: Arrangement, pxPerT: number
     return created;
   };
 
-  const holdRefsByPitch = new Map<number, Array<{
+  // Use a normalized pitch key so tiny float noise does not break hold stacking.
+  // This is especially important for node→anchor hold segments.
+  const holdRefsByPitch = new Map<string, Array<{
     voiceId: string;
     voiceOrder: number;
     segmentIndex: number;
@@ -378,12 +380,12 @@ function buildContourSegmentStackLookup(arrangement: Arrangement, pxPerT: number
     for (const node of voice.nodes) {
       if (node.term) {
         if (inPhrase && lastNode) {
-          const holdPitch = lastSemitone;
+          const holdPitchKey = contourNumberKey(lastSemitone);
           const holdStartT = lastNode.t16;
           const holdEndT = node.t16;
 
           if (holdEndT > holdStartT) {
-            const refs = holdRefsByPitch.get(holdPitch) ?? [];
+            const refs = holdRefsByPitch.get(holdPitchKey) ?? [];
             refs.push({
               voiceId: voice.id,
               voiceOrder,
@@ -391,7 +393,7 @@ function buildContourSegmentStackLookup(arrangement: Arrangement, pxPerT: number
               startT: holdStartT,
               endT: holdEndT,
             });
-            holdRefsByPitch.set(holdPitch, refs);
+            holdRefsByPitch.set(holdPitchKey, refs);
           }
 
           segmentIndex += 1;
@@ -420,7 +422,8 @@ function buildContourSegmentStackLookup(arrangement: Arrangement, pxPerT: number
         const holdEndT = isPitchChange ? Math.max(holdStartT, node.t16 - bendWidthT) : node.t16;
 
         if (holdEndT > holdStartT) {
-          const refs = holdRefsByPitch.get(lastSemitone) ?? [];
+          const holdPitchKey = contourNumberKey(lastSemitone);
+          const refs = holdRefsByPitch.get(holdPitchKey) ?? [];
           refs.push({
             voiceId: voice.id,
             voiceOrder,
@@ -428,7 +431,7 @@ function buildContourSegmentStackLookup(arrangement: Arrangement, pxPerT: number
             startT: holdStartT,
             endT: holdEndT,
           });
-          holdRefsByPitch.set(lastSemitone, refs);
+          holdRefsByPitch.set(holdPitchKey, refs);
         }
 
         if (isPitchChange) {
@@ -2983,8 +2986,15 @@ export function Grid({
             lastRenderedY = stackedY;
           }
 
-          ctx.stroke();
-          hasActivePath = false;
+          if (hasActivePath) {
+            ctx.stroke();
+            hasActivePath = false;
+          } else {
+            // Rainbow pieces are drawn as independent immediate strokes.
+            // Clear any residual canvas path so later fallback strokes do not repaint
+            // that segment with the plain voice color.
+            ctx.beginPath();
+          }
           inPhrase = false;
           segmentIndex += 1;
         }
@@ -3176,7 +3186,7 @@ export function Grid({
         ctx.lineTo(endX, lastRenderedY);
         ctx.stroke();
         ctx.restore();
-      } else {
+      } else if (hasActivePath) {
         ctx.stroke();
       }
     }
