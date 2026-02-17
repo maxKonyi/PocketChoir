@@ -191,6 +191,8 @@ export function DevControls() {
     applyGridVar('--grid-pitch-line-tonic', tonicRgba);
     applyGridVar('--grid-pitch-line', otherRgba);
 
+    window.dispatchEvent(new Event('grid-css-vars-updated'));
+
     saveToStorage(settings);
   }, [settings]);
 

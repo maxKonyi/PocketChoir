@@ -98,3 +98,53 @@ Under `app/src/components/grid/`:
 - **Phase 4 completed**: extracted interaction helpers into `gridInteractionUtils.ts` (`pointToSegmentDistanceSq`, contour hit-testing helper, loop-handle helpers, editable-target guard) and rewired handler call sites in `Grid.tsx`. Build passes.
 - **Phase 5 completed**: removed remaining dead handler imports/deps, validated current grid index exports, and re-ran final build verification.
 - **Follow-up accuracy pass completed**: extracted group-drag delta math into `gridInteractionUtils.ts` (`getGroupDragDelta`), rewired `Grid.tsx` group-drag handler, and re-verified build/lint status for grid files.
+
+## Next Stage Refactor Plan (Post-Phase-5)
+
+Goal: reduce `Grid.tsx` size further while keeping behavior unchanged.
+
+### Phase 6 — Extract draw orchestration into `useGridRenderer`
+
+- [ ] Create `app/src/components/grid/useGridRenderer.ts`.
+- [ ] Move pure draw-pass sequencing from `Grid.tsx` into hook internals (keep function order unchanged).
+- [ ] Keep `Grid.tsx` responsible for wiring refs/store values and calling the hook.
+- [ ] Do not change any canvas math constants in this phase.
+- [ ] Verify `npm run build` passes.
+
+### Phase 7 — Extract overlay editors into components
+
+- [ ] Create `GridChordLaneEditor.tsx` for Create-mode chord lane JSX/UI.
+- [ ] Create `GridLyricLaneEditor.tsx` for Create-mode lyric lane JSX/UI.
+- [ ] Keep all store mutations/callback contracts identical.
+- [ ] Ensure `pointer-events`, z-index, and lane positioning are unchanged.
+- [ ] Verify `npm run build` passes.
+
+### Phase 8 — Extract smart-cam and animation loop hook
+
+- [ ] Create `useGridPlaybackCamera.ts` to encapsulate RAF + visual-world-time smoothing + smart-cam stepping.
+- [ ] Keep current free-look/recenter/restart behavior exactly as-is.
+- [ ] Keep loop wrap/anchor drift correction constants unchanged.
+- [ ] Verify `npm run build` passes.
+
+### Phase 9 — Extract interaction wiring hook
+
+- [ ] Create `useGridInteractions.ts` to hold `onMouseDown/move/up/wheel/context` callbacks and drag refs.
+- [ ] Keep existing keyboard shortcuts and focus guards unchanged.
+- [ ] Keep loop-handle hit-testing behavior unchanged.
+- [ ] Verify `npm run build` passes.
+
+## Next Stage Verification Rules
+
+For each next-stage phase:
+
+1. Move one responsibility only.
+2. Build immediately (`npm run build`).
+3. Smoke-check: node drag, marquee select, loop handles, playhead follow, chord lane edit, lyric lane edit.
+4. If anything regresses, roll back only that phase and split it into smaller moves.
+
+## Definition of Done for Next Stage
+
+- `Grid.tsx` is reduced to orchestration + high-level JSX.
+- Draw/event/camera/editor responsibilities are in dedicated files.
+- All existing behavior remains intact.
+- Build passes after each phase and at the final stage.

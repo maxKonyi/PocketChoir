@@ -35,7 +35,7 @@ import {
 import {
   type ContourStackLookup,
   buildContourSegmentStackLookup,
-} from './gridContourUtils';
+} from './gridContourUtils.ts';
 import { drawPitchTrace, drawVoiceContour } from './gridCanvasRenderers';
 import {
   getContourHitAtMouseVoiceId,
@@ -828,6 +828,16 @@ export function Grid({
     return generateGridLines(arrangement.bars, arrangement.timeSig);
   }, [arrangement?.bars, arrangement?.timeSig.numerator, arrangement?.timeSig.denominator]);
 
+  // DevControls updates grid colors by mutating CSS variables at runtime.
+  // Because we memoize `cssColors`, we need a tiny signal to re-read the CSS vars
+  // when the DevControls sliders change.
+  const [cssVarRevision, setCssVarRevision] = useState(0);
+  useEffect(() => {
+    const onCssVarsUpdated = () => setCssVarRevision((v) => v + 1);
+    window.addEventListener('grid-css-vars-updated', onCssVarsUpdated);
+    return () => window.removeEventListener('grid-css-vars-updated', onCssVarsUpdated);
+  }, []);
+
   // ── Cached CSS colors ──
   // Reading CSS variables via getComputedStyle is expensive when done every frame.
   // We cache all the colors here and only re-read when the theme or display settings change.
@@ -857,7 +867,7 @@ export function Grid({
       ),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [theme, display]);
+  }, [theme, display, cssVarRevision]);
 
   // If the arrangement changes (or chord list is replaced), cancel any inline rename.
   useEffect(() => {
@@ -1614,7 +1624,6 @@ export function Grid({
         if (!isDiatonic) continue;
 
         const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
-        const label = semitoneToLabel(semi);
 
         // Make tonic (1) and octave brighter for orientation
         if (semi % 12 === 0) {
@@ -1630,19 +1639,19 @@ export function Grid({
         ctx.moveTo(gridLeft, y);
         ctx.lineTo(gridLeft + gridWidth, y);
         ctx.stroke();
-
-        // Draw semitone label on the left
-        if (semi >= minSemitone + 1 && semi <= maxSemitone - 1) {
-          ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.35)';
-          ctx.font = 'bold 10px system-ui';
-          ctx.textAlign = 'right';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(label, gridLeft - 15, y);
-        }
       }
 
-      // ── Tiled vertical grid lines ──
-      // Draw grid lines for every visible tile (seamless infinite looping).
+      // Restore after pitch lines so subsequent passes (bar/beat/subdivision, chords,
+      // contours, etc.) are not affected by display.gridOpacity.
+      ctx.restore();
+    }
+
+    // ── Tiled vertical grid lines ──
+    // Draw grid lines for every visible tile (seamless infinite looping).
+    // These should only be drawn on the MAIN grid layer.
+    // The chord-only overlay layer must remain “clean” so it doesn't cover contours
+    // or bypass the vertical (top/bottom) fade.
+    if (!onlyChords) {
       // Uses the memoized array (only recomputed when bars/timeSig change).
       const gridLines = memoizedGridLines;
 
@@ -1721,7 +1730,6 @@ export function Grid({
           ctx.fillText(`${bar + 1}`, bx, gridTop - 10);
         }
       }
-      ctx.restore();
     }
 
     // Draw chord track (tiled across visible tiles)
@@ -2639,7 +2647,9 @@ export function Grid({
       sideGradient.addColorStop(1 - sideEdgePadRatio, 'rgba(0, 0, 0, 0)');
       sideGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = sideGradient;
-      ctx.fillRect(0, 0, width, height);
+      // Limit horizontal fade to the grid's X band so left-side pitch labels
+      // (drawn outside the grid area) stay fully readable.
+      ctx.fillRect(gridLeft, 0, gridWidth, height);
 
       // Vertical fades (top/bottom): applied only to the main grid layer.
       // The chord/lyric overlay should keep full vertical readability.
@@ -2662,6 +2672,35 @@ export function Grid({
       }
 
       ctx.restore();
+    }
+
+    // Pitch labels are drawn AFTER the edge fades.
+    // Reason: the fades use `destination-in` compositing, which would otherwise
+    // erase the labels even though they live in the left margin area.
+    if (!onlyChords) {
+      for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
+        const noteInScale = ((semi % 12) + 12) % 12;
+        const scalePattern = SCALE_PATTERNS[arrangement.scale] || SCALE_PATTERNS['major'];
+        const isDiatonic = scalePattern.includes(noteInScale);
+        if (!isDiatonic) continue;
+
+        if (semi < minSemitone + 1 || semi > maxSemitone - 1) continue;
+
+        const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
+        const label = semitoneToLabel(semi);
+
+        ctx.save();
+        // Match label intensity to grid intensity (so the grid opacity control
+        // affects labels the same way it affects grid lines).
+        ctx.globalAlpha = display.gridOpacity;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.98)' : 'rgba(255,255,255,0.78)';
+        ctx.font = 'bold 11px system-ui';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, gridLeft - 15, y);
+        ctx.restore();
+      }
     }
   }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, hideChords, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup, voice1MelodyNodes, lyricEntryByT16, lyricHoldSpans, hiddenLyricNodeTimes]);
 
