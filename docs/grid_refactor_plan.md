@@ -98,6 +98,11 @@ Under `app/src/components/grid/`:
 - **Phase 4 completed**: extracted interaction helpers into `gridInteractionUtils.ts` (`pointToSegmentDistanceSq`, contour hit-testing helper, loop-handle helpers, editable-target guard) and rewired handler call sites in `Grid.tsx`. Build passes.
 - **Phase 5 completed**: removed remaining dead handler imports/deps, validated current grid index exports, and re-ran final build verification.
 - **Follow-up accuracy pass completed**: extracted group-drag delta math into `gridInteractionUtils.ts` (`getGroupDragDelta`), rewired `Grid.tsx` group-drag handler, and re-verified build/lint status for grid files.
+- **Phase 6A completed**: created `useGridRenderer.ts`, moved main draw-pass orchestration into hook internals, rewired `Grid.tsx` to call the hook, and kept a temporary legacy draw function as a safety fallback while behavior is smoke-checked. `npm run build` passes.
+- **Phase 6B completed**: removed the temporary in-file `drawLegacy` fallback from `Grid.tsx`, kept `useGridRenderer` as the sole draw path, and re-verified `npm run build`.
+- **Phase 7 completed**: extracted Create-mode overlay editors into `GridChordLaneEditor.tsx` and `GridLyricLaneEditor.tsx`, rewired `Grid.tsx` to pass existing callbacks/state refs, and re-verified `npm run build`.
+- **Phase 8 completed**: extracted RAF + visual-world-time smoothing + Smart Cam stepping into `useGridPlaybackCamera.ts`, rewired `Grid.tsx` to call the new hook, and re-verified `npm run build`.
+- **Phase 9 completed**: extracted canvas interaction callbacks into `useGridInteractions.ts` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onWheel`, `onContextMenu`), kept loop-handle hit-testing and focus/keyboard guard behavior unchanged, rewired `Grid.tsx` event handler wiring to the hook, and re-verified `npm run build`.
 
 ## Next Stage Refactor Plan (Post-Phase-5)
 
@@ -105,33 +110,36 @@ Goal: reduce `Grid.tsx` size further while keeping behavior unchanged.
 
 ### Phase 6 — Extract draw orchestration into `useGridRenderer`
 
-- [ ] Create `app/src/components/grid/useGridRenderer.ts`.
-- [ ] Move pure draw-pass sequencing from `Grid.tsx` into hook internals (keep function order unchanged).
-- [ ] Keep `Grid.tsx` responsible for wiring refs/store values and calling the hook.
-- [ ] Do not change any canvas math constants in this phase.
-- [ ] Verify `npm run build` passes.
+> Safety adjustment: split this into **Phase 6A (extract + wire)** and **Phase 6B (remove legacy draw block)** so behavior can be validated before deleting fallback code.
+
+- [x] Create `app/src/components/grid/useGridRenderer.ts`.
+- [x] Move pure draw-pass sequencing from `Grid.tsx` into hook internals (keep function order unchanged).
+- [x] Keep `Grid.tsx` responsible for wiring refs/store values and calling the hook.
+- [x] Do not change any canvas math constants in this phase.
+- [x] Verify `npm run build` passes.
+- [x] Phase 6B: remove temporary in-file legacy draw fallback after smoke-check confirms no visual/interaction regressions.
 
 ### Phase 7 — Extract overlay editors into components
 
-- [ ] Create `GridChordLaneEditor.tsx` for Create-mode chord lane JSX/UI.
-- [ ] Create `GridLyricLaneEditor.tsx` for Create-mode lyric lane JSX/UI.
-- [ ] Keep all store mutations/callback contracts identical.
-- [ ] Ensure `pointer-events`, z-index, and lane positioning are unchanged.
-- [ ] Verify `npm run build` passes.
+- [x] Create `GridChordLaneEditor.tsx` for Create-mode chord lane JSX/UI.
+- [x] Create `GridLyricLaneEditor.tsx` for Create-mode lyric lane JSX/UI.
+- [x] Keep all store mutations/callback contracts identical.
+- [x] Ensure `pointer-events`, z-index, and lane positioning are unchanged.
+- [x] Verify `npm run build` passes.
 
 ### Phase 8 — Extract smart-cam and animation loop hook
 
-- [ ] Create `useGridPlaybackCamera.ts` to encapsulate RAF + visual-world-time smoothing + smart-cam stepping.
-- [ ] Keep current free-look/recenter/restart behavior exactly as-is.
-- [ ] Keep loop wrap/anchor drift correction constants unchanged.
-- [ ] Verify `npm run build` passes.
+- [x] Create `useGridPlaybackCamera.ts` to encapsulate RAF + visual-world-time smoothing + smart-cam stepping.
+- [x] Keep current free-look/recenter/restart behavior exactly as-is.
+- [x] Keep loop wrap/anchor drift correction constants unchanged.
+- [x] Verify `npm run build` passes.
 
 ### Phase 9 — Extract interaction wiring hook
 
-- [ ] Create `useGridInteractions.ts` to hold `onMouseDown/move/up/wheel/context` callbacks and drag refs.
-- [ ] Keep existing keyboard shortcuts and focus guards unchanged.
-- [ ] Keep loop-handle hit-testing behavior unchanged.
-- [ ] Verify `npm run build` passes.
+- [x] Create `useGridInteractions.ts` to hold `onMouseDown/move/up/wheel/context` callbacks and drag refs.
+- [x] Keep existing keyboard shortcuts and focus guards unchanged.
+- [x] Keep loop-handle hit-testing behavior unchanged.
+- [x] Verify `npm run build` passes.
 
 ## Next Stage Verification Rules
 
