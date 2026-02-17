@@ -561,9 +561,16 @@ export function Grid({
     }
 
     // ── Smart mode ──
+    const isLoopActive = useAppStore.getState().playback.loopEnabled;
     // If loop is active, stay in STATIC_LOOP (already zoomed to fit).
-    if (useAppStore.getState().playback.loopEnabled) {
+    if (isLoopActive) {
       return;
+    }
+
+    // If this play-start came from a user panned FREE_LOOK state,
+    // promote back to explicit FOLLOW mode.
+    if (isFreeLook()) {
+      setCameraMode('follow');
     }
 
     // Otherwise: clear free-look and snap to playhead for strict follow.
@@ -655,16 +662,12 @@ export function Grid({
       smartCamStateRef.current = 'FOLLOW_CENTER';
       smartCamIsStaticRef.current = false;
       setSmartCamIsStatic(false);
-    } else if (cameraMode === 'smart') {
-      // Clear free-look so the evaluator can freshly determine the state
-      // (e.g., STATIC_LOOP if loop is visible, or follow otherwise).
-      setFreeLook(false);
-      setFreeLookReact(false);
     }
+    // Smart mode keeps the current free-look flag (if any).
     // Static mode: evaluator will return FREE_LOOK on the next frame.
   }, [mode, followMode.cameraMode]);
 
-  // When the restart button is pressed, reset camera to follow mode.
+  // When the restart button is pressed, reset camera to FOLLOW mode.
   // The restart button increments cameraFollowResetCount in the store;
   // this effect watches it and snaps the camera to the playhead (now at 0).
   useEffect(() => {
@@ -672,18 +675,15 @@ export function Grid({
     // Skip the initial mount (count = 0).
     if (followMode.cameraFollowResetCount === 0) return;
 
-    const cameraMode = useAppStore.getState().followMode.cameraMode;
-    // Only reset in smart mode (follow always follows; static stays put).
-    if (cameraMode !== 'smart') return;
-
     const worldT = playbackEngine.getWorldPositionT16();
     setCameraCenterWorldT(worldT);
     setFreeLook(false);
     setFreeLookReact(false);
+    setCameraMode('follow');
     smartCamStateRef.current = 'FOLLOW_CENTER';
     smartCamIsStaticRef.current = false;
     setSmartCamIsStatic(false);
-  }, [mode, followMode.cameraFollowResetCount]);
+  }, [mode, followMode.cameraFollowResetCount, setCameraMode]);
 
   // While scrubbing in Play mode (right-click drag), prevent the browser context menu.
   // If the mouse-up happens outside the canvas, the browser may try to open the menu anyway.
@@ -2607,6 +2607,62 @@ export function Grid({
 
       ctx.restore();
     }
+
+    // Apply edge fades directly in-canvas for reliable cross-browser behavior.
+    // We use destination-in so drawn content fades out toward transparent edges
+    // without adding any dark overlay box on top of the artwork.
+    {
+      // Fade tuning (in CSS pixels):
+      // - edgeClearPx: fully transparent strip at the edge
+      // - fadePx: transition distance from transparent -> fully visible
+      const sideFadePx = 80;
+      const verticalFadePx = 80;
+      const sideEdgeClearPx = 10;
+      const verticalEdgeClearPx = 10;
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-in';
+
+      // Side fades (left/right): applied to BOTH layers so chord + lyric lanes
+      // also fade smoothly at the horizontal edges.
+      // Anchor horizontal fade to the visible grid bounds so it can fully fade
+      // out exactly at the left/right edges of the grid area.
+      const sideRatio = Math.min(0.49, sideFadePx / Math.max(1, gridWidth));
+      const sideEdgePadRatio = Math.min(0.25, sideEdgeClearPx / Math.max(1, gridWidth));
+      const sideSolidStart = Math.max(sideEdgePadRatio, sideRatio);
+      const sideSolidEnd = Math.min(1 - sideEdgePadRatio, 1 - sideRatio);
+      const sideGradient = ctx.createLinearGradient(gridLeft, 0, gridLeft + gridWidth, 0);
+      sideGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      sideGradient.addColorStop(sideEdgePadRatio, 'rgba(0, 0, 0, 0)');
+      sideGradient.addColorStop(sideSolidStart, 'rgba(0, 0, 0, 1)');
+      sideGradient.addColorStop(sideSolidEnd, 'rgba(0, 0, 0, 1)');
+      sideGradient.addColorStop(1 - sideEdgePadRatio, 'rgba(0, 0, 0, 0)');
+      sideGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = sideGradient;
+      ctx.fillRect(0, 0, width, height);
+
+      // Vertical fades (top/bottom): applied only to the main grid layer.
+      // The chord/lyric overlay should keep full vertical readability.
+      if (!onlyChords) {
+        // Anchor vertical fade to the visible grid bounds so top/bottom fade reaches
+        // full transparency before the grid area ends.
+        const verticalRatio = Math.min(0.49, verticalFadePx / Math.max(1, gridHeight));
+        const verticalEdgePadRatio = Math.min(0.25, verticalEdgeClearPx / Math.max(1, gridHeight));
+        const verticalSolidStart = Math.max(verticalEdgePadRatio, verticalRatio);
+        const verticalSolidEnd = Math.min(1 - verticalEdgePadRatio, 1 - verticalRatio);
+        const verticalGradient = ctx.createLinearGradient(0, gridTop, 0, gridTop + gridHeight);
+        verticalGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        verticalGradient.addColorStop(verticalEdgePadRatio, 'rgba(0, 0, 0, 0)');
+        verticalGradient.addColorStop(verticalSolidStart, 'rgba(0, 0, 0, 1)');
+        verticalGradient.addColorStop(verticalSolidEnd, 'rgba(0, 0, 0, 1)');
+        verticalGradient.addColorStop(1 - verticalEdgePadRatio, 'rgba(0, 0, 0, 0)');
+        verticalGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = verticalGradient;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      ctx.restore();
+    }
   }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, hideChords, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup, voice1MelodyNodes, lyricEntryByT16, lyricHoldSpans, hiddenLyricNodeTimes]);
 
   // Keep the latest draw() in a ref so the RAF loop never needs to restart.
@@ -3094,16 +3150,14 @@ export function Grid({
         startCameraWorldT: camWorldT,
       };
 
-      // In Play mode, panning makes the camera static.
-      // - Follow mode: permanently switch to Static (user must manually switch back).
-      // - Smart mode: enter FREE_LOOK (recoverable on play restart).
+      // In Play mode, panning enters FREE_LOOK.
+      // If we were in Follow mode, switch to Smart first so FREE_LOOK can apply.
       const curCameraMode = useAppStore.getState().followMode.cameraMode;
       if (curCameraMode === 'follow') {
-        setCameraMode('static');
-      } else {
-        setFreeLook(true);
-        setFreeLookReact(true);
+        setCameraMode('smart');
       }
+      setFreeLook(true);
+      setFreeLookReact(true);
       return;
     }
 
@@ -4069,16 +4123,14 @@ export function Grid({
         const dT = dragPixelsToTimeDelta(delta, followMode.pxPerT);
         const currentCam = getCameraCenterWorldT();
         setCameraCenterWorldT(Math.max(0, currentCam + dT));
-        // Panning makes the camera static.
-        // Follow mode → permanently switch to Static.
-        // Smart mode  → enter FREE_LOOK (recoverable on play restart).
+        // Panning enters FREE_LOOK.
+        // If we were in Follow mode, switch to Smart first so FREE_LOOK can apply.
         const curCameraMode = useAppStore.getState().followMode.cameraMode;
         if (curCameraMode === 'follow') {
-          setCameraMode('static');
-        } else {
-          setFreeLook(true);
-          setFreeLookReact(true);
+          setCameraMode('smart');
         }
+        setFreeLook(true);
+        setFreeLookReact(true);
         return;
       }
 
@@ -4287,14 +4339,8 @@ export function Grid({
   }, []);
 
   /**
-   * Jump to Playhead: snap the camera to the playhead and return to
-   * smart-cam behavior.  The evaluator runs a fresh check (no prevState
-   * stickiness) so it naturally picks the right state:
-   *   - Loop enabled & visible → STATIC_LOOP
-   *   - Otherwise → FOLLOW_CENTER
-   *
-   * Also switches cameraMode to 'smart' if it was 'static' so auto-
-   * evaluation resumes.
+   * Jump to Playhead: snap the camera to the playhead and force FOLLOW mode.
+   * This is the explicit "re-center and follow" action.
    */
   const jumpToPlayhead = useCallback(() => {
     const playheadWorldT = playbackEngine.getWorldPositionT16();
@@ -4303,15 +4349,10 @@ export function Grid({
     // Clear free-look so the evaluator doesn't return FREE_LOOK.
     setFreeLook(false);
     setFreeLookReact(false);
-    // Switch to smart mode if currently in static (so auto-follow resumes).
-    // If already in smart or follow, this is harmless.
-    const curCameraMode = useAppStore.getState().followMode.cameraMode;
-    if (curCameraMode === 'static') {
-      setCameraMode('smart');
-    }
+    // Recenter should always return to FOLLOW behavior.
+    setCameraMode('follow');
     // Reset prevState so evaluator runs a fresh check with no stickiness.
-    // After snapping, camera center = playhead → evaluator will likely
-    // return FOLLOW_CENTER (or STATIC_LOOP if loop is visible).
+    // After snapping, camera center = playhead and follow mode is active.
     smartCamStateRef.current = null;
     smartCamIsStaticRef.current = false;
     setSmartCamIsStatic(false);

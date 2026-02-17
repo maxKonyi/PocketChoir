@@ -48,6 +48,8 @@ function App() {
   const mode = useAppStore((state) => state.mode);
   const showMinimap = useAppStore((state) => state.display.showMinimap);
   const showChordTrack = useAppStore((state) => state.display.showChordTrack);
+  const setPlaying = useAppStore((state) => state.setPlaying);
+  const voiceStates = useAppStore((state) => state.voiceStates);
   const disableChordTrack = useAppStore((state) => state.disableChordTrack);
   const undo = useAppStore((state) => state.undo);
   const redo = useAppStore((state) => state.redo);
@@ -361,7 +363,6 @@ function App() {
   /**
    * Sync voice states (volume, mute, solo) with the playback engine.
    */
-  const voiceStates = useAppStore((state) => state.voiceStates);
   useEffect(() => {
     voiceStates.forEach(vs => {
       // Synth sync
@@ -393,7 +394,6 @@ function App() {
    * Keyboard controls (Space for play/pause/stop recording).
    */
   const { startRecording, stopRecording } = useRecording();
-  const setPlaying = useAppStore((state) => state.setPlaying);
 
   useEffect(() => {
     const blurIfButtonFocused = () => {
@@ -495,16 +495,14 @@ function App() {
         modeAtStart,
       };
 
-      // In Play mode, panning makes the camera static.
-      // Follow mode → permanently switch to Static (user must switch back manually).
-      // Smart mode  → enter FREE_LOOK (recoverable on play restart).
+      // In Play mode, panning enters FREE_LOOK.
+      // If we were in Follow mode, switch to Smart first so FREE_LOOK can apply.
       if (modeAtStart === 'play') {
         const curCameraMode = useAppStore.getState().followMode.cameraMode;
         if (curCameraMode === 'follow') {
-          useAppStore.getState().setCameraMode('static');
-        } else {
-          setFreeLook(true);
+          useAppStore.getState().setCameraMode('smart');
         }
+        setFreeLook(true);
       }
     };
 
@@ -651,13 +649,14 @@ function App() {
           grid fade masks (for example, the Recenter pill).
         */}
         <div className="relative h-full w-full">
-          {/* Right-edge fade uses a real mask (not a color overlay) so it fades to transparency. */}
-          <div className="relative h-full w-full mask-right-fade">
-            <div className="relative h-full w-full mask-vertical-fade">
-              <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
-            </div>
+          {/*
+            Grid layers are stacked here.
+            Fades are applied inside Grid canvas rendering for consistent visuals.
+          */}
+          <div className="relative h-full w-full">
+            <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} />
 
-            {/* Chord Track layer - floating on top, not vertically masked, but DOES right-fade */}
+            {/* Chord/Lyric overlay layer: side fades are handled in this layer's canvas draw pass. */}
             <div className="absolute inset-0 pointer-events-none">
               <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} />
             </div>
