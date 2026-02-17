@@ -68,6 +68,7 @@ type LyricUiEntry = {
 type LyricHoldSpan = {
   startT16: number;
   endT16: number;
+  endAtAnchor: boolean;
 };
 
 /**
@@ -164,20 +165,22 @@ function buildLyricHoldSpans(
   const spans: LyricHoldSpan[] = [];
   if (melodyNodeTimes.length < 2 || loopLengthT <= 0) return spans;
 
-  const boundaryAfterNode = (nodeIndex: number): number => {
+  const boundaryAfterNode = (nodeIndex: number): { boundaryT16: number; endsAtAnchor: boolean } => {
     const nodeT16 = melodyNodeTimes[nodeIndex];
     const nextMelodyT16 = nodeIndex < melodyNodeTimes.length - 1
       ? melodyNodeTimes[nodeIndex + 1]
       : loopLengthT;
 
     let boundary = nextMelodyT16;
+    let endsAtAnchor = false;
     for (const anchorT16 of anchorTimes) {
       if (anchorT16 > nodeT16 && anchorT16 < boundary) {
         boundary = anchorT16;
+        endsAtAnchor = true;
         break;
       }
     }
-    return boundary;
+    return { boundaryT16: boundary, endsAtAnchor };
   };
 
   for (let i = 0; i < melodyNodeTimes.length - 1; i++) {
@@ -195,7 +198,9 @@ function buildLyricHoldSpans(
     }
 
     // Base rule: include the full duration of the following melody node.
-    let endT16 = boundaryAfterNode(i + 1);
+    const firstBoundary = boundaryAfterNode(i + 1);
+    let endT16 = firstBoundary.boundaryT16;
+    let endAtAnchor = firstBoundary.endsAtAnchor;
 
     // Continue extending while subsequent nodes explicitly request hold continuation.
     let cursor = i + 1;
@@ -203,15 +208,17 @@ function buildLyricHoldSpans(
       const cursorEntry = lyricByT16.get(melodyNodeTimes[cursor]);
       if (cursorEntry?.connectorToNext !== 'hold') break;
 
-      const candidateEndT16 = boundaryAfterNode(cursor + 1);
+      const candidateBoundary = boundaryAfterNode(cursor + 1);
+      const candidateEndT16 = candidateBoundary.boundaryT16;
       if (candidateEndT16 <= endT16) break;
 
       endT16 = candidateEndT16;
+      endAtAnchor = candidateBoundary.endsAtAnchor;
       cursor += 1;
     }
 
     if (endT16 > startT16) {
-      spans.push({ startT16, endT16 });
+      spans.push({ startT16, endT16, endAtAnchor });
     }
   }
 
@@ -1402,6 +1409,20 @@ export function Grid({
     );
   }, [arrangement, voice1MelodyNodes, voice1AnchorTimes, lyricEntryByT16]);
 
+  // Nodes covered by a hold span are hidden to keep one continuous held word.
+  const hiddenLyricNodeTimes = useMemo(() => {
+    const hidden = new Set<number>();
+    for (const node of voice1MelodyNodes) {
+      for (const span of lyricHoldSpans) {
+        if (node.t16 > span.startT16 && node.t16 < span.endT16) {
+          hidden.add(node.t16);
+          break;
+        }
+      }
+    }
+    return hidden;
+  }, [voice1MelodyNodes, lyricHoldSpans]);
+
   // ── Memoized vertical grid lines ──
   // Only recompute when the arrangement's bar count or time signature changes.
   // Previously this was called inside draw() on every frame (~60fps), allocating a new array each time.
@@ -1484,6 +1505,15 @@ export function Grid({
     setEditingLyricT16(null);
     setEditingLyricText('');
   }, [editingLyricT16, voice1LyricNodeTimes]);
+
+  // If a node becomes covered by a hold span, hide it and close inline editing.
+  useEffect(() => {
+    if (editingLyricT16 === null) return;
+    if (!hiddenLyricNodeTimes.has(editingLyricT16)) return;
+    editingLyricT16Ref.current = null;
+    setEditingLyricT16(null);
+    setEditingLyricText('');
+  }, [editingLyricT16, hiddenLyricNodeTimes]);
 
   // Keep the DOM-based Create-mode lyric lane continuously synced to the camera.
   // We update this with RAF because camera position lives in a mutable module ref,
@@ -1607,10 +1637,55 @@ export function Grid({
     }
 
     setLyricEntry(editingLyricT16, parsedDraft.text, { connectorToNext });
-    editingLyricT16Ref.current = nextNodeT16;
-    setEditingLyricT16(nextNodeT16);
-    setEditingLyricText(formatLyricDraft(lyricEntryByT16.get(nextNodeT16)));
-  }, [editingLyricT16, editingLyricText, getAdjacentVoice1NodeT16, setLyricEntry, lyricEntryByT16, commitLyricEdit]);
+
+    // Hold connectors skip held-through nodes so the editor lands on the next
+    // visible chip after the continued line.
+    let targetNodeT16: number | null = nextNodeT16;
+    if (connectorToNext === 'hold') {
+      const startIndex = voice1MelodyNodes.findIndex((node) => node.t16 === editingLyricT16);
+      if (startIndex >= 0) {
+        let targetIndex = startIndex + 2;
+        let cursor = startIndex + 1;
+
+        while (cursor < voice1MelodyNodes.length - 1) {
+          const cursorT16 = voice1MelodyNodes[cursor].t16;
+          const nextCursorT16 = voice1MelodyNodes[cursor + 1].t16;
+          const continuesHold = lyricEntryByT16.get(cursorT16)?.connectorToNext === 'hold';
+          const blockedByAnchor = hasAnchorBetween(voice1AnchorTimes, cursorT16, nextCursorT16);
+          if (!continuesHold || blockedByAnchor) break;
+
+          targetIndex = cursor + 2;
+          cursor += 1;
+        }
+
+        targetNodeT16 = targetIndex < voice1MelodyNodes.length
+          ? voice1MelodyNodes[targetIndex].t16
+          : null;
+      }
+    }
+
+    editingLyricT16Ref.current = targetNodeT16;
+    setEditingLyricT16(targetNodeT16);
+    setEditingLyricText(formatLyricDraft(targetNodeT16 !== null ? lyricEntryByT16.get(targetNodeT16) : undefined));
+  }, [editingLyricT16, editingLyricText, getAdjacentVoice1NodeT16, setLyricEntry, lyricEntryByT16, commitLyricEdit, voice1MelodyNodes, voice1AnchorTimes]);
+
+  /**
+   * Toggle a connector button while editing.
+   * - If the same connector is already active, remove it.
+   * - Otherwise apply the connector and advance to the next editable node.
+   */
+  const handleLyricConnectorButton = useCallback((connectorToNext: LyricConnector) => {
+    if (editingLyricT16 === null) return;
+
+    const parsedDraft = parseLyricDraft(editingLyricText);
+    if (parsedDraft.connectorToNext === connectorToNext) {
+      setLyricEntry(editingLyricT16, parsedDraft.text, { connectorToNext: null });
+      setEditingLyricText(parsedDraft.text);
+      return;
+    }
+
+    applyLyricConnectorAndAdvance(connectorToNext, editingLyricText);
+  }, [editingLyricT16, editingLyricText, setLyricEntry, applyLyricConnectorAndAdvance]);
 
   /**
    * Stop editing (commit changes back into the store).
@@ -3227,7 +3302,7 @@ export function Grid({
         const right = Math.max(x1, x2);
         const bubbleInset = 22;
         const lineStart = left + bubbleInset;
-        const lineEnd = right - bubbleInset;
+        const lineEnd = span.endAtAnchor ? right : (right - bubbleInset);
         if (lineEnd <= lineStart) continue;
 
         ctx.save();
@@ -3247,6 +3322,7 @@ export function Grid({
       ctx.textBaseline = 'middle';
 
       for (const node of voice1MelodyNodes) {
+        if (hiddenLyricNodeTimes.has(node.t16)) continue;
         const text = lyricEntryByT16.get(node.t16)?.text ?? '';
         if (!text) continue;
 
@@ -3295,7 +3371,7 @@ export function Grid({
 
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, hideChords, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup, voice1MelodyNodes, lyricEntryByT16, lyricHoldSpans]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, hideChords, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup, voice1MelodyNodes, lyricEntryByT16, lyricHoldSpans, hiddenLyricNodeTimes]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -5669,7 +5745,7 @@ export function Grid({
                            bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
                            shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
               style={{
-                bottom: 20,
+                top: GRID_MARGIN.top + 4,
                 left: 'calc(50% + 15px)',
                 transform: 'translateX(-50%)',
               }}
@@ -5677,7 +5753,7 @@ export function Grid({
             >
               {/* Simple arrow-to-center icon using SVG */}
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M7 1v12M7 1L3 5M7 1l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M7 13V1M7 13L3 9M7 13l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               Recenter
             </button>,
@@ -5691,7 +5767,7 @@ export function Grid({
                            bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
                            shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
               style={{
-                bottom: 20,
+                top: GRID_MARGIN.top + 4,
                 left: 'calc(50% + 15px)',
                 transform: 'translateX(-50%)',
               }}
@@ -5699,7 +5775,7 @@ export function Grid({
             >
               {/* Simple arrow-to-center icon using SVG */}
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M7 1v12M7 1L3 5M7 1l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M7 13V1M7 13L3 9M7 13l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               Recenter
             </button>
@@ -6051,6 +6127,7 @@ export function Grid({
                     const connectorLines: React.ReactNode[] = [];
                     const chips: React.ReactNode[] = [];
                     for (const node of voice1MelodyNodes) {
+                      if (hiddenLyricNodeTimes.has(node.t16)) continue;
                       const x = node.t16 * pxPerTVal;
 
                       const entry = lyricEntryByT16.get(node.t16);
@@ -6082,6 +6159,9 @@ export function Grid({
                       }
 
                       const isEditingToken = editingLyricT16 === node.t16;
+                      const editingDraftConnector = isEditingToken
+                        ? parseLyricDraft(editingLyricText).connectorToNext
+                        : null;
 
                       chips.push(
                         <div
@@ -6099,6 +6179,12 @@ export function Grid({
                                 autoFocus
                                 placeholder="lyric"
                                 className="w-24 px-2 py-1 rounded-md text-xs text-center bg-black/50 text-[var(--text-primary)] border border-white/30 outline-none focus:border-[var(--accent-primary)]"
+                                onFocus={(evt) => {
+                                  // Auto-select existing text so retyping/deleting is one action.
+                                  if (evt.currentTarget.value.trim().length > 0) {
+                                    evt.currentTarget.select();
+                                  }
+                                }}
                                 onChange={(evt) => {
                                   const nextValue = evt.target.value;
                                   setEditingLyricText(nextValue);
@@ -6144,12 +6230,15 @@ export function Grid({
                               {/* Quick helpers for choir-style lyric notation. */}
                               <button
                                 type="button"
-                                className="h-6 w-6 rounded border border-white/15 bg-white/6 text-[11px] text-[var(--text-muted)] hover:bg-white/12 hover:text-[var(--text-primary)]"
+                                className={`h-6 w-6 rounded border text-[11px] transition-colors ${editingDraftConnector === 'dash'
+                                  ? 'border-sky-300/70 bg-sky-400/25 text-sky-100'
+                                  : 'border-white/15 bg-white/6 text-[var(--text-muted)] hover:bg-white/12 hover:text-[var(--text-primary)]'
+                                  }`}
                                 title="Split syllable to next node"
                                 onMouseDown={(evt) => evt.preventDefault()}
                                 onClick={(evt) => {
                                   evt.stopPropagation();
-                                  applyLyricConnectorAndAdvance('dash');
+                                  handleLyricConnectorButton('dash');
                                 }}
                               >
                                 -
@@ -6157,12 +6246,15 @@ export function Grid({
 
                               <button
                                 type="button"
-                                className="h-6 w-6 rounded border border-white/15 bg-white/6 text-[11px] text-[var(--text-muted)] hover:bg-white/12 hover:text-[var(--text-primary)]"
+                                className={`h-6 w-6 rounded border text-[11px] transition-colors ${editingDraftConnector === 'hold'
+                                  ? 'border-sky-300/70 bg-sky-400/25 text-sky-100'
+                                  : 'border-white/15 bg-white/6 text-[var(--text-muted)] hover:bg-white/12 hover:text-[var(--text-primary)]'
+                                  }`}
                                 title="Hold syllable to next node"
                                 onMouseDown={(evt) => evt.preventDefault()}
                                 onClick={(evt) => {
                                   evt.stopPropagation();
-                                  applyLyricConnectorAndAdvance('hold');
+                                  handleLyricConnectorButton('hold');
                                 }}
                               >
                                 _
@@ -6199,7 +6291,7 @@ export function Grid({
                       // Keep the hold line outside both lyric bubbles.
                       const bubbleInset = 22;
                       const lineStart = left + bubbleInset;
-                      const lineEnd = right - bubbleInset;
+                      const lineEnd = span.endAtAnchor ? right : (right - bubbleInset);
                       const lineWidth = Math.max(0, lineEnd - lineStart);
                       if (lineWidth <= 0) continue;
 
