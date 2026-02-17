@@ -11,13 +11,41 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Arrangement, Voice, PitchPoint, Chord, LyricConnector } from '../../types';
+import type { Arrangement, LyricConnector } from '../../types';
 import { useAppStore, makeNodeKey, type NodeKey } from '../../stores/appStore';
-import { degreeToSemitoneOffset, semitoneToLabel, semitoneToSolfege, semitoneToLetterName, midiToFrequency, noteNameToMidi, A4_MIDI, A4_FREQUENCY, SCALE_PATTERNS } from '../../utils/music';
-import { generateGridLines, sixteenthDurationMs } from '../../utils/timing';
+import { degreeToSemitoneOffset, semitoneToLabel, semitoneToSolfege, semitoneToLetterName, midiToFrequency, noteNameToMidi, SCALE_PATTERNS } from '../../utils/music';
+import { generateGridLines } from '../../utils/timing';
 import { darkenColor } from '../../utils/colors';
 import { playbackEngine, type NodeEvent } from '../../services/PlaybackEngine';
 import { AudioService } from '../../services/AudioService';
+import {
+  type LyricUiEntry,
+  type LyricHoldSpan,
+  parseLyricDraft,
+  formatLyricDraft,
+  localT16ToNearestWorldT,
+  hasAnchorBetween,
+  buildLyricHoldSpans,
+  getCssVar,
+  lightenCssColorTowardWhite,
+  isChordDiatonic,
+  semitoneToY,
+  degreeToY,
+} from './gridDataUtils';
+import {
+  type ContourStackLookup,
+  buildContourSegmentStackLookup,
+} from './gridContourUtils';
+import { drawPitchTrace, drawVoiceContour } from './gridCanvasRenderers';
+import {
+  getContourHitAtMouseVoiceId,
+  getGroupDragDelta,
+  getLoopBoundaryScreenPositions,
+  getNearestLoopHandle,
+  getSnappedLoopTimeFromMouseX,
+  isEditableKeyboardTarget,
+  isMouseNearLoopHandle,
+} from './gridInteractionUtils';
 import {
   cameraLeftWorldT,
   worldTToScreenX,
@@ -53,382 +81,6 @@ interface GridProps {
   onlyChords?: boolean;
 }
 
-/**
- * Build a stable string key for floating point values used in overlap grouping.
- */
-function contourNumberKey(value: number): string {
-  return value.toFixed(6);
-}
-
-type LyricUiEntry = {
-  text: string;
-  connectorToNext?: LyricConnector;
-};
-
-type LyricHoldSpan = {
-  startT16: number;
-  endT16: number;
-  endAtAnchor: boolean;
-};
-
-/**
- * Parse one lyric draft into clean text + optional connector metadata.
- *
- * Editing convenience:
- * - trailing '-' means "split syllable to next node"
- * - trailing '_' means "hold syllable to next node"
- */
-function parseLyricDraft(
-  rawText: string,
-  connectorHint?: LyricConnector
-): LyricUiEntry {
-  let text = String(rawText ?? '').trim();
-  let connector = connectorHint;
-
-  if (!connector) {
-    if (/_+$/.test(text)) {
-      connector = 'hold';
-      text = text.replace(/_+$/, '').trimEnd();
-    } else if (/-+$/.test(text)) {
-      connector = 'dash';
-      text = text.replace(/-+$/, '').trimEnd();
-    }
-  }
-
-  return {
-    text,
-    ...(connector ? { connectorToNext: connector } : {}),
-  };
-}
-
-/**
- * Convert one stored lyric entry into the editing draft string.
- * We show connector markers while editing so users can remove them by backspace.
- */
-function formatLyricDraft(entry: LyricUiEntry | undefined): string {
-  if (!entry) return '';
-  if (entry.connectorToNext === 'dash') return `${entry.text}-`;
-  if (entry.connectorToNext === 'hold') return `${entry.text}_`;
-  return entry.text;
-}
-
-/**
- * Keep canonical local lyric times (0..loopLength) visually locked to whatever
- * world-time loop copy is currently nearest to the camera.
- *
- * This makes lyric chips/labels scroll exactly with smart/follow/static camera
- * behavior even when world time has advanced beyond the first loop copy.
- */
-function localT16ToNearestWorldT(localT16: number, loopLengthT: number, referenceWorldT: number): number {
-  if (loopLengthT <= 0) return localT16;
-
-  const approxK = Math.floor(referenceWorldT / loopLengthT);
-  let bestWorldT = localT16 + Math.max(0, approxK) * loopLengthT;
-  let bestDistance = Math.abs(bestWorldT - referenceWorldT);
-
-  for (let k = Math.max(0, approxK - 1); k <= approxK + 1; k++) {
-    if (k < 0) continue;
-    const candidateWorldT = localT16 + k * loopLengthT;
-    const candidateDistance = Math.abs(candidateWorldT - referenceWorldT);
-    if (candidateDistance < bestDistance) {
-      bestWorldT = candidateWorldT;
-      bestDistance = candidateDistance;
-    }
-  }
-
-  return bestWorldT;
-}
-
-/**
- * True when an anchor (term node) lies between two melody nodes.
- *
- * We treat anchor time as a hard lyric-hold break.
- */
-function hasAnchorBetween(anchorTimes: number[], fromT16: number, toT16: number): boolean {
-  return anchorTimes.some((anchorT16) => anchorT16 > fromT16 && anchorT16 <= toT16);
-}
-
-/**
- * Build anchor-aware hold spans from lyric connector metadata.
- *
- * Hold behavior rules:
- * - A hold on node N always includes the FULL duration of node N+1.
- * - Additional hold markers on following nodes continue the same line.
- * - Anchor points always stop the hold line.
- */
-function buildLyricHoldSpans(
-  melodyNodeTimes: number[],
-  anchorTimes: number[],
-  lyricByT16: Map<number, LyricUiEntry>,
-  loopLengthT: number
-): LyricHoldSpan[] {
-  const spans: LyricHoldSpan[] = [];
-  if (melodyNodeTimes.length < 2 || loopLengthT <= 0) return spans;
-
-  const boundaryAfterNode = (nodeIndex: number): { boundaryT16: number; endsAtAnchor: boolean } => {
-    const nodeT16 = melodyNodeTimes[nodeIndex];
-    const nextMelodyT16 = nodeIndex < melodyNodeTimes.length - 1
-      ? melodyNodeTimes[nodeIndex + 1]
-      : loopLengthT;
-
-    let boundary = nextMelodyT16;
-    let endsAtAnchor = false;
-    for (const anchorT16 of anchorTimes) {
-      if (anchorT16 > nodeT16 && anchorT16 < boundary) {
-        boundary = anchorT16;
-        endsAtAnchor = true;
-        break;
-      }
-    }
-    return { boundaryT16: boundary, endsAtAnchor };
-  };
-
-  for (let i = 0; i < melodyNodeTimes.length - 1; i++) {
-    const startT16 = melodyNodeTimes[i];
-    const entry = lyricByT16.get(startT16);
-    if (entry?.connectorToNext !== 'hold') continue;
-
-    // Do not start a duplicate span in the middle of an already-continuing hold.
-    if (i > 0) {
-      const prevT16 = melodyNodeTimes[i - 1];
-      const prevEntry = lyricByT16.get(prevT16);
-      if (prevEntry?.connectorToNext === 'hold' && !hasAnchorBetween(anchorTimes, prevT16, startT16)) {
-        continue;
-      }
-    }
-
-    // Base rule: include the full duration of the following melody node.
-    const firstBoundary = boundaryAfterNode(i + 1);
-    let endT16 = firstBoundary.boundaryT16;
-    let endAtAnchor = firstBoundary.endsAtAnchor;
-
-    // Continue extending while subsequent nodes explicitly request hold continuation.
-    let cursor = i + 1;
-    while (cursor < melodyNodeTimes.length - 1) {
-      const cursorEntry = lyricByT16.get(melodyNodeTimes[cursor]);
-      if (cursorEntry?.connectorToNext !== 'hold') break;
-
-      const candidateBoundary = boundaryAfterNode(cursor + 1);
-      const candidateEndT16 = candidateBoundary.boundaryT16;
-      if (candidateEndT16 <= endT16) break;
-
-      endT16 = candidateEndT16;
-      endAtAnchor = candidateBoundary.endsAtAnchor;
-      cursor += 1;
-    }
-
-    if (endT16 > startT16) {
-      spans.push({ startT16, endT16, endAtAnchor });
-    }
-  }
-
-  return spans;
-}
-
-/**
- * Build drawable hold pieces from stacked slices.
- *
- * The returned pieces cover [startT, endT] completely. Regions without overlap
- * use stackIndex/stackSize = null (which means no Y offset).
- */
-function buildContourHoldPieces(
-  startT: number,
-  endT: number,
-  holdSlices: ContourHoldSlice[]
-): Array<{ startT: number; endT: number; stackIndex: number | null; stackSize: number | null }> {
-  if (endT <= startT) return [];
-  if (holdSlices.length === 0) {
-    return [{ startT, endT, stackIndex: null, stackSize: null }];
-  }
-
-  const sortedSlices = [...holdSlices].sort((a, b) => a.startT - b.startT || a.endT - b.endT);
-  const pieces: Array<{ startT: number; endT: number; stackIndex: number | null; stackSize: number | null }> = [];
-  let cursor = startT;
-
-  for (const slice of sortedSlices) {
-    const sliceStart = Math.max(startT, slice.startT);
-    const sliceEnd = Math.min(endT, slice.endT);
-    if (sliceEnd <= sliceStart) continue;
-
-    if (sliceStart > cursor) {
-      pieces.push({ startT: cursor, endT: sliceStart, stackIndex: null, stackSize: null });
-    }
-
-    pieces.push({
-      startT: sliceStart,
-      endT: sliceEnd,
-      stackIndex: slice.stackIndex,
-      stackSize: slice.stackSize,
-    });
-
-    cursor = sliceEnd;
-  }
-
-  if (cursor < endT) {
-    pieces.push({ startT: cursor, endT, stackIndex: null, stackSize: null });
-  }
-
-  return pieces;
-}
-
-/**
- * Read the effective stack info at the RIGHT edge of a hold-piece list.
- *
- * This is used to keep bend transitions smooth:
- * - bend START uses the hold's final offset
- * - bend END uses bend-stack offset (or 0 if not stacked)
- */
-function getRightEdgeHoldStackInfo(
-  holdPieces: Array<{ startT: number; endT: number; stackIndex: number | null; stackSize: number | null }>
-): ContourSegmentStackInfo | null {
-  if (holdPieces.length === 0) return null;
-  const lastPiece = holdPieces[holdPieces.length - 1];
-  if (lastPiece.stackIndex === null || lastPiece.stackSize === null) return null;
-  return {
-    stackIndex: lastPiece.stackIndex,
-    stackSize: lastPiece.stackSize,
-  };
-}
-
-/* ------------------------------------------------------------
-   Helper Functions
-   ------------------------------------------------------------ */
-
-/**
- * Get CSS variable value from the document.
- */
-function getCssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-/**
- * Lighten a CSS color toward white.
- *
- * This is used for the playback "flash" effect on contour nodes.
- * Supported inputs:
- * - "#rrggbb"
- * - "rgb(r,g,b)"
- * - "rgba(r,g,b,a)"
- */
-function lightenCssColorTowardWhite(color: string, amount01: number): string {
-  const amount = Math.max(0, Math.min(1, amount01));
-
-  // #rrggbb
-  if (color.startsWith('#')) {
-    const hex = color.slice(1);
-    if (hex.length === 6) {
-      const r = parseInt(hex.slice(0, 2), 16);
-      const g = parseInt(hex.slice(2, 4), 16);
-      const b = parseInt(hex.slice(4, 6), 16);
-      const lr = Math.round(r + (255 - r) * amount);
-      const lg = Math.round(g + (255 - g) * amount);
-      const lb = Math.round(b + (255 - b) * amount);
-      return `rgb(${lr}, ${lg}, ${lb})`;
-    }
-    return color;
-  }
-
-  // rgb(...) / rgba(...)
-  const m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([0-9.]+))?\s*\)$/i);
-  if (m) {
-    const r = Math.max(0, Math.min(255, parseInt(m[1], 10)));
-    const g = Math.max(0, Math.min(255, parseInt(m[2], 10)));
-    const b = Math.max(0, Math.min(255, parseInt(m[3], 10)));
-    const a = m[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(m[4]))) : null;
-    const lr = Math.round(r + (255 - r) * amount);
-    const lg = Math.round(g + (255 - g) * amount);
-    const lb = Math.round(b + (255 - b) * amount);
-    return a === null ? `rgb(${lr}, ${lg}, ${lb})` : `rgba(${lr}, ${lg}, ${lb}, ${a})`;
-  }
-
-  // Fallback (named colors, hsl, etc.)
-  return color;
-}
-
-/**
- * Extract the root note (letter + accidental) from a chord name.
- */
-function parseChordRoot(chordName: string): string | null {
-  const match = chordName.match(/^([A-Ga-g][#b]?)/);
-  if (!match) return null;
-  const root = match[1];
-  return root.charAt(0).toUpperCase() + (root.charAt(1) || '').replace('b', 'b').replace('#', '#');
-}
-
-/**
- * Convert a bare note name to a semitone index (0-11).
- */
-function getNoteSemitone(noteName: string): number | null {
-  const midi = noteNameToMidi(`${noteName}4`);
-  if (midi === null) return null;
-  return ((midi % 12) + 12) % 12;
-}
-
-/**
- * Determine whether a chord belongs to the current scale/tonic.
- */
-function isChordDiatonic(chord: Chord, arrangement: Arrangement): boolean {
-  if (!arrangement?.tonic) return true;
-
-  // Prefer explicit scale-degree roots when available
-  if (typeof chord.root === 'number') {
-    return chord.root >= 1 && chord.root <= 7;
-  }
-
-  const rootNote = parseChordRoot(chord.name);
-  const tonicNote = arrangement.tonic;
-  if (!rootNote || !tonicNote) return true;
-
-  const chordSemitone = getNoteSemitone(rootNote);
-  const tonicSemitone = getNoteSemitone(tonicNote);
-  if (chordSemitone === null || tonicSemitone === null) return true;
-
-  const interval = ((chordSemitone - tonicSemitone) % 12 + 12) % 12;
-  const scalePattern = SCALE_PATTERNS[arrangement.scale] || SCALE_PATTERNS['major'];
-  return scalePattern.includes(interval);
-}
-
-/**
- * Convert a semitone offset to a Y position on the grid.
- * Higher pitches = lower Y values (top of canvas)
- * @param semitone - Semitones above base tonic (can be negative)
- * @param minSemitone - Minimum semitone shown on grid
- * @param maxSemitone - Maximum semitone shown on grid
- */
-function semitoneToY(
-  semitone: number,
-  minSemitone: number,
-  maxSemitone: number,
-  gridTop: number,
-  gridHeight: number
-): number {
-  const range = maxSemitone - minSemitone;
-  if (range === 0) return gridTop + gridHeight / 2;
-
-  // Normalize to 0-1 (inverted so higher pitch = lower Y)
-  const normalized = (semitone - minSemitone) / range;
-
-  // Map to grid area
-  return gridTop + gridHeight * (1 - normalized);
-}
-
-/**
- * Convert a scale degree + octave to Y position using semitones.
- * This bridges the old node format to the new semitone grid.
- */
-function degreeToY(
-  degree: number,
-  octaveOffset: number,
-  minSemitone: number,
-  maxSemitone: number,
-  gridTop: number,
-  gridHeight: number,
-  scaleType: string
-): number {
-  // Convert degree to semitone offset from tonic
-  const semitone = degreeToSemitoneOffset(degree, octaveOffset, scaleType);
-  return semitoneToY(semitone, minSemitone, maxSemitone, gridTop, gridHeight);
-}
 
 
 /* ------------------------------------------------------------
@@ -459,260 +111,6 @@ interface SnappedGridPoint {
   deg: number;
   octave: number;
   semi?: number;
-}
-
-// For each contour segment, if multiple voices share exactly the same segment
-// (same start/end time and same start/end pitch), we assign each voice a
-// vertical stack position so all lines remain visible.
-interface ContourSegmentStackInfo {
-  stackIndex: number;
-  stackSize: number;
-}
-
-interface ContourHoldSlice {
-  startT: number;
-  endT: number;
-  stackIndex: number;
-  stackSize: number;
-}
-
-interface ContourSegmentStackData {
-  holdSlices: ContourHoldSlice[];
-  bendStack?: ContourSegmentStackInfo;
-}
-
-type ContourStackLookup = Map<string, Map<number, ContourSegmentStackData>>;
-
-/**
- * Convert a contour node to a semitone value (relative to arrangement tonic).
- */
-function contourNodeToSemitone(
-  node: { semi?: number; deg?: number; octave?: number },
-  scaleType: string
-): number {
-  return node.semi !== undefined
-    ? node.semi
-    : degreeToSemitoneOffset(node.deg ?? 0, node.octave || 0, scaleType);
-}
-
-/**
- * Build a lookup that tells us which segments should be vertically stacked.
- *
- * Key idea:
- * - We walk every voice and index each drawn segment in the same order used by
- *   drawVoiceContour().
- * - We group segments that are geometrically identical.
- * - For groups with 2+ voices, we assign stack order by sidebar voice order
- *   (arrangement.voices order).
- */
-function buildContourSegmentStackLookup(arrangement: Arrangement, pxPerT: number): ContourStackLookup {
-  const lookup: ContourStackLookup = new Map();
-
-  const getOrCreateSegmentData = (voiceId: string, segmentIndex: number): ContourSegmentStackData => {
-    let perVoice = lookup.get(voiceId);
-    if (!perVoice) {
-      perVoice = new Map<number, ContourSegmentStackData>();
-      lookup.set(voiceId, perVoice);
-    }
-
-    const existing = perVoice.get(segmentIndex);
-    if (existing) return existing;
-
-    const created: ContourSegmentStackData = { holdSlices: [] };
-    perVoice.set(segmentIndex, created);
-    return created;
-  };
-
-  // Use a normalized pitch key so tiny float noise does not break hold stacking.
-  // This is especially important for node→anchor hold segments.
-  const holdRefsByPitch = new Map<string, Array<{
-    voiceId: string;
-    voiceOrder: number;
-    segmentIndex: number;
-    startT: number;
-    endT: number;
-  }>>();
-
-  const bendGroups = new Map<string, Array<{ voiceId: string; voiceOrder: number; segmentIndex: number }>>();
-
-  for (let voiceOrder = 0; voiceOrder < arrangement.voices.length; voiceOrder++) {
-    const voice = arrangement.voices[voiceOrder];
-    let inPhrase = false;
-    let segmentIndex = 0;
-    let lastNode: (typeof voice.nodes)[number] | null = null;
-    let lastSemitone = 0;
-
-    for (const node of voice.nodes) {
-      if (node.term) {
-        if (inPhrase && lastNode) {
-          const holdPitchKey = contourNumberKey(lastSemitone);
-          const holdStartT = lastNode.t16;
-          const holdEndT = node.t16;
-
-          if (holdEndT > holdStartT) {
-            const refs = holdRefsByPitch.get(holdPitchKey) ?? [];
-            refs.push({
-              voiceId: voice.id,
-              voiceOrder,
-              segmentIndex,
-              startT: holdStartT,
-              endT: holdEndT,
-            });
-            holdRefsByPitch.set(holdPitchKey, refs);
-          }
-
-          segmentIndex += 1;
-          inPhrase = false;
-          lastNode = null;
-        }
-        continue;
-      }
-
-      const nodeSemitone = contourNodeToSemitone(node, arrangement.scale);
-
-      if (!inPhrase) {
-        inPhrase = true;
-        lastNode = node;
-        lastSemitone = nodeSemitone;
-        continue;
-      }
-
-      const dt = node.t16 - lastNode!.t16;
-      if (dt > 0) {
-        const isPitchChange = Math.abs(nodeSemitone - lastSemitone) >= 1e-6;
-        const bendWidthT = isPitchChange
-          ? Math.min(40 / Math.max(pxPerT, 0.0001), dt * 0.8)
-          : 0;
-        const holdStartT = lastNode!.t16;
-        const holdEndT = isPitchChange ? Math.max(holdStartT, node.t16 - bendWidthT) : node.t16;
-
-        if (holdEndT > holdStartT) {
-          const holdPitchKey = contourNumberKey(lastSemitone);
-          const refs = holdRefsByPitch.get(holdPitchKey) ?? [];
-          refs.push({
-            voiceId: voice.id,
-            voiceOrder,
-            segmentIndex,
-            startT: holdStartT,
-            endT: holdEndT,
-          });
-          holdRefsByPitch.set(holdPitchKey, refs);
-        }
-
-        if (isPitchChange) {
-          const bendStartT = holdEndT;
-          const bendKey = `bend|${contourNumberKey(bendStartT)}|${contourNumberKey(node.t16)}|${contourNumberKey(lastSemitone)}|${contourNumberKey(nodeSemitone)}`;
-          const group = bendGroups.get(bendKey) ?? [];
-          group.push({ voiceId: voice.id, voiceOrder, segmentIndex });
-          bendGroups.set(bendKey, group);
-        }
-      }
-
-      segmentIndex += 1;
-      lastNode = node;
-      lastSemitone = nodeSemitone;
-    }
-  }
-
-  // Hold stacking: if intervals overlap at the same pitch, stack during that overlap.
-  for (const refs of holdRefsByPitch.values()) {
-    const boundariesSet = new Set<number>();
-    for (const ref of refs) {
-      boundariesSet.add(ref.startT);
-      boundariesSet.add(ref.endT);
-    }
-
-    const boundaries = [...boundariesSet].sort((a, b) => a - b);
-    for (let i = 0; i < boundaries.length - 1; i++) {
-      const sliceStart = boundaries[i];
-      const sliceEnd = boundaries[i + 1];
-      if (sliceEnd <= sliceStart) continue;
-
-      const active = refs.filter((ref) => ref.startT < sliceEnd && ref.endT > sliceStart);
-      if (active.length < 2) continue;
-
-      active.sort((a, b) => a.voiceOrder - b.voiceOrder);
-      const stackSize = active.length;
-
-      for (let stackIndex = 0; stackIndex < active.length; stackIndex++) {
-        const ref = active[stackIndex];
-        const data = getOrCreateSegmentData(ref.voiceId, ref.segmentIndex);
-        data.holdSlices.push({ startT: sliceStart, endT: sliceEnd, stackIndex, stackSize });
-      }
-    }
-  }
-
-  // Bend stacking: only when the bend geometry is exactly identical.
-  for (const refs of bendGroups.values()) {
-    if (refs.length < 2) continue;
-    refs.sort((a, b) => a.voiceOrder - b.voiceOrder);
-    const stackSize = refs.length;
-
-    for (let stackIndex = 0; stackIndex < refs.length; stackIndex++) {
-      const ref = refs[stackIndex];
-      const data = getOrCreateSegmentData(ref.voiceId, ref.segmentIndex);
-      data.bendStack = { stackIndex, stackSize };
-    }
-  }
-
-  return lookup;
-}
-
-/**
- * Convert stack slot to vertical pixel offset.
- *
- * We space centers by one line width so adjacent lines "butt" exactly with no gap.
- * Example with 2 lines: offsets are -0.5w and +0.5w.
- */
-function getContourSegmentStackOffsetY(stackInfo: ContourSegmentStackInfo, lineWidth: number): number {
-  return (stackInfo.stackIndex - (stackInfo.stackSize - 1) / 2) * lineWidth;
-}
-
-/**
- * Build a vibrant pearlescent gradient used to represent a stacked/unison contour.
- *
- * Hue is sampled by traveled pixel distance so color flow stays continuous
- * across connected hold/bend segments (no restart at curve boundaries).
- */
-function createPrismaticContourGradient(
-  ctx: CanvasRenderingContext2D,
-  startX: number,
-  startY: number,
-  endX: number,
-  endY: number,
-  phaseSeedX: number
-): CanvasGradient {
-  const hasLength = Math.abs(endX - startX) > 0.001 || Math.abs(endY - startY) > 0.001;
-  const safeEndX = hasLength ? endX : startX + 1;
-  const safeEndY = hasLength ? endY : startY;
-  const gradient = ctx.createLinearGradient(startX, startY, safeEndX, safeEndY);
-
-  const PRISM_CYCLE_PX = 400;
-  const dist = Math.sqrt((safeEndX - startX) ** 2 + (safeEndY - startY) ** 2);
-
-  // Brighter pearlescent: higher lightness and moderated saturation.
-  const getRainbowColorByDistance = (distancePx: number) => {
-    const hue = (((phaseSeedX + distancePx) / PRISM_CYCLE_PX) * 360) % 360;
-    return `hsl(${hue.toFixed(1)} 58% 88%)`;
-  };
-
-  const stopCount = 6;
-  for (let i = 0; i <= stopCount; i++) {
-    const p = i / stopCount;
-    gradient.addColorStop(p, getRainbowColorByDistance(dist * p));
-  }
-
-  return gradient;
-}
-
-/**
- * Return the prismatic color at a specific X phase seed.
- * Used to blend OUT of a collapsed rainbow stack into a voice's own color.
- */
-function getPrismaticContourColorAtPhase(phaseSeedX: number): string {
-  const PRISM_CYCLE_PX = 400;
-  const hue = (((phaseSeedX / PRISM_CYCLE_PX) * 360) % 360 + 360) % 360;
-  return `hsl(${hue.toFixed(1)} 58% 88%)`;
 }
 
 // If these differ, the "ghost" preview and click zones will feel offset.
@@ -988,7 +386,6 @@ export function Grid({
   // ── Node selection actions (Create mode) ──
   const selectedNodeKeys = useAppStore((state) => state.createView.selectedNodeKeys);
   const selectNode = useAppStore((state) => state.selectNode);
-  const addNodeToSelection = useAppStore((state) => state.addNodeToSelection);
   const toggleNodeInSelection = useAppStore((state) => state.toggleNodeInSelection);
   const clearNodeSelection = useAppStore((state) => state.clearNodeSelection);
   const setNodeSelection = useAppStore((state) => state.setNodeSelection);
@@ -1892,186 +1289,25 @@ export function Grid({
     maxSemitone: number
   ): string | null => {
     if (!arrangement) return null;
-
-    // Default hit-testing follows the collapsed "single rainbow line" geometry.
-    // While hovering a contour, we temporarily switch to split-stack geometry so
-    // the cursor can target the individual separated lines.
-    const splitStackedContoursForHit = hoveredContourVoiceIdRef.current !== null;
-
-    // How close the mouse must be to the contour line (in CSS pixels).
-    // The visual line radius is (1.5 * display.lineThickness).
-    // We add a fixed 6px padding to make it easy to hit.
-    const hitThreshold = 8 * display.noteSize;
-    const baseContourWidth = 3 * display.lineThickness;
-    const pxPerTVal = followMode.pxPerT;
-    const currentWorldT = followMode.pendingWorldT !== null
-      ? followMode.pendingWorldT
-      : getCameraCenterWorldT();
-    const camLeft = cameraLeftWorldT(currentWorldT, gridWidth, pxPerTVal);
-
-    // Helper: convert local t16 to screen X (no tiling — tile 0 only)
-    const toScreenX = (localT16: number) =>
-      gridLeft + worldTToScreenX(localT16, camLeft, pxPerTVal);
-
-    // Helper: convert a node to its Y position on screen
-    const nodeToY = (node: { deg?: number; octave?: number; semi?: number }) =>
-      node.semi !== undefined
-        ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-        : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
-
-    // Helper: point-to-segment distance (squared, for performance)
-    const distToSegmentSq = (px: number, py: number, ax: number, ay: number, bx: number, by: number): number => {
-      const dx = bx - ax;
-      const dy = by - ay;
-      const lenSq = dx * dx + dy * dy;
-      if (lenSq === 0) return (px - ax) * (px - ax) + (py - ay) * (py - ay);
-      let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
-      t = Math.max(0, Math.min(1, t));
-      const projX = ax + t * dx;
-      const projY = ay + t * dy;
-      return (px - projX) * (px - projX) + (py - projY) * (py - projY);
-    };
-
-    const thresholdSq = hitThreshold * hitThreshold;
-    let bestVoiceId: string | null = null;
-    let bestDistSq = Infinity;
-
-    // Tile 0 only — no tiling
-    for (const voice of arrangement.voices) {
-      if (voice.nodes.length === 0) continue;
-
-      const voiceStackMap = contourStackLookup.get(voice.id);
-
-      let lastY = 0;
-      let inPhrase = false;
-      let segmentIndex = 0;
-      let lastT16 = 0;
-      let lastSemitone = 0;
-
-      for (const node of voice.nodes) {
-        if (node.term) {
-          if (inPhrase) {
-            const segmentData = voiceStackMap?.get(segmentIndex);
-            const holdPieces = buildContourHoldPieces(lastT16, node.t16, segmentData?.holdSlices ?? []);
-            let previousHoldY: number | null = null;
-
-            for (const piece of holdPieces) {
-              const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
-                ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
-                : null;
-              const segmentOffsetY = stackInfo
-                ? (splitStackedContoursForHit ? getContourSegmentStackOffsetY(stackInfo, baseContourWidth) : 0)
-                : 0;
-
-              const x1 = toScreenX(piece.startT);
-              const x2 = toScreenX(piece.endT);
-              const y = lastY + segmentOffsetY;
-              if (previousHoldY !== null && Math.abs(previousHoldY - y) > 0.001) {
-                // Immediate row switch at piece boundary (no smoothing/easing).
-                const dStep = distToSegmentSq(mouseX, mouseY, x1, previousHoldY, x1, y);
-                if (dStep < thresholdSq && dStep < bestDistSq) {
-                  bestDistSq = dStep;
-                  bestVoiceId = voice.id;
-                }
-              }
-
-              const d = distToSegmentSq(mouseX, mouseY, x1, y, x2, y);
-              if (d < thresholdSq && d < bestDistSq) {
-                bestDistSq = d;
-                bestVoiceId = voice.id;
-              }
-
-              previousHoldY = y;
-            }
-
-            inPhrase = false;
-            segmentIndex += 1;
-          }
-          continue;
-        }
-
-        const x = toScreenX(node.t16);
-        const y = nodeToY(node);
-        const nodeSemitone = contourNodeToSemitone(node, arrangement.scale);
-
-        if (!inPhrase) {
-          lastY = y;
-          lastT16 = node.t16;
-          lastSemitone = nodeSemitone;
-          inPhrase = true;
-          continue;
-        }
-
-        const segmentData = voiceStackMap?.get(segmentIndex);
-        const dt = node.t16 - lastT16;
-
-        if (dt > 0) {
-          const isPitchChange = Math.abs(nodeSemitone - lastSemitone) >= 1e-6;
-          const bendWidthT = isPitchChange
-            ? Math.min(40 / Math.max(pxPerTVal, 0.0001), dt * 0.8)
-            : 0;
-          const holdEndT = isPitchChange ? Math.max(lastT16, node.t16 - bendWidthT) : node.t16;
-
-          const holdPieces = buildContourHoldPieces(lastT16, holdEndT, segmentData?.holdSlices ?? []);
-          const holdRightStackInfo = getRightEdgeHoldStackInfo(holdPieces);
-          let previousHoldY: number | null = null;
-          for (const piece of holdPieces) {
-            const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
-              ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
-              : null;
-            const segmentOffsetY = stackInfo
-              ? (splitStackedContoursForHit ? getContourSegmentStackOffsetY(stackInfo, baseContourWidth) : 0)
-              : 0;
-
-            const x1 = toScreenX(piece.startT);
-            const x2 = toScreenX(piece.endT);
-            const yHold = lastY + segmentOffsetY;
-            if (previousHoldY !== null && Math.abs(previousHoldY - yHold) > 0.001) {
-              // Immediate row switch at hold-piece boundary (no smoothing/easing).
-              const dStep = distToSegmentSq(mouseX, mouseY, x1, previousHoldY, x1, yHold);
-              if (dStep < thresholdSq && dStep < bestDistSq) {
-                bestDistSq = dStep;
-                bestVoiceId = voice.id;
-              }
-            }
-
-            const d1 = distToSegmentSq(mouseX, mouseY, x1, yHold, x2, yHold);
-            if (d1 < thresholdSq && d1 < bestDistSq) {
-              bestDistSq = d1;
-              bestVoiceId = voice.id;
-            }
-
-            previousHoldY = yHold;
-          }
-
-          if (isPitchChange) {
-            const bendStackInfo = segmentData?.bendStack;
-            const bendStartOffsetY = holdRightStackInfo
-              ? (splitStackedContoursForHit ? getContourSegmentStackOffsetY(holdRightStackInfo, baseContourWidth) : 0)
-              : 0;
-            const bendEndOffsetY = bendStackInfo
-              ? (splitStackedContoursForHit ? getContourSegmentStackOffsetY(bendStackInfo, baseContourWidth) : 0)
-              : 0;
-
-            const bendStartX = toScreenX(holdEndT);
-            const lastYOffset = lastY + bendStartOffsetY;
-            const yOffset = y + bendEndOffsetY;
-            const d2 = distToSegmentSq(mouseX, mouseY, bendStartX, lastYOffset, x, yOffset);
-            if (d2 < thresholdSq && d2 < bestDistSq) {
-              bestDistSq = d2;
-              bestVoiceId = voice.id;
-            }
-          }
-        }
-
-        lastY = y;
-        lastT16 = node.t16;
-        lastSemitone = nodeSemitone;
-        segmentIndex += 1;
-      }
-    }
-
-    return bestVoiceId;
+    return getContourHitAtMouseVoiceId({
+      arrangement,
+      contourStackLookup,
+      mouseX,
+      mouseY,
+      gridLeft,
+      gridTop,
+      gridWidth,
+      gridHeight,
+      minSemitone,
+      maxSemitone,
+      noteSize: display.noteSize,
+      lineThickness: display.lineThickness,
+      pxPerT: followMode.pxPerT,
+      worldT: followMode.pendingWorldT !== null
+        ? followMode.pendingWorldT
+        : getCameraCenterWorldT(),
+      splitStackedContoursForHit: hoveredContourVoiceIdRef.current !== null,
+    });
   }, [arrangement, contourStackLookup, display.noteSize, display.lineThickness, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
@@ -2745,14 +1981,14 @@ export function Grid({
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize);
           }
 
           // Main line
           ctx.shadowBlur = 0;
           ctx.strokeStyle = voiceColor;
           ctx.lineWidth = contourLineWidth;
-          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor);
+          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize);
           ctx.restore();
         }
       }
@@ -2802,7 +2038,7 @@ export function Grid({
             const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 
             maskCtx.lineWidth = contourLineWidth;
-            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, '#ffffff');
+            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, '#ffffff', display.noteSize);
           }
         }
         maskCtx.restore();
@@ -3373,645 +2609,6 @@ export function Grid({
     }
   }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, hideChords, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup, voice1MelodyNodes, lyricEntryByT16, lyricHoldSpans, hiddenLyricNodeTimes]);
 
-  /**
-   * Draw a voice's contour line (now using semitones).
-   * Uses follow-mode world-time coordinates for tiled rendering.
-   *
-   * @param tileOffset - world-time offset for this tile (k * loopLengthT)
-   * @param camLeft    - camera left edge in world time
-   * @param pxPerT     - pixels per 16th note (horizontal zoom)
-   * @param gridLeftPx - left edge of the grid area in CSS pixels
-   * @param loopLen    - loop length in 16th notes
-   */
-  function drawVoiceContour(
-    ctx: CanvasRenderingContext2D,
-    voice: Voice,
-    minSemitone: number,
-    maxSemitone: number,
-    gridTop: number,
-    gridHeight: number,
-    scaleType: string,
-    tileOffset: number,
-    camLeft: number,
-    pxPerT: number,
-    gridLeftPx: number,
-    loopLen: number,
-    segmentStackMap: Map<number, ContourSegmentStackData> | undefined,
-    stackLineWidth: number,
-    splitStackedContours: boolean,
-    voiceColor: string
-  ) {
-    if (voice.nodes.length === 0) return;
-
-    // Each voice draw starts from a known line style so no dash/gradient settings
-    // can leak from earlier voices or other rendering passes.
-    ctx.save();
-    ctx.setLineDash([]);
-    ctx.lineDashOffset = 0;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    // Helper: convert a local t16 to screen X via world time
-    const nodeToX = (localT16: number) =>
-      gridLeftPx + worldTToScreenX(localT16 + tileOffset, camLeft, pxPerT);
-
-    let lastX = 0;
-    let lastY = 0;
-    let lastRenderedY = 0;
-    let lastT16 = 0;
-    let lastSemitone = 0;
-    let inPhrase = false;
-    let hasActivePath = false;
-    let activeOffsetY = 0;
-    let segmentIndex = 0;
-
-    // Keep prism colors moving even when camera/playhead is static.
-    const PRISM_ANIMATION_SPEED_PX_PER_MS = 0.04;
-    const prismAnimationPhasePx = window.performance.now() * PRISM_ANIMATION_SPEED_PX_PER_MS;
-
-    // Subtle glow dedicated to rainbow stack segments so they stand out.
-    // This is independent from the global contour glow pass.
-    const rainbowGlowBlurPx = 5;
-
-    // Start or switch the active path when a segment's stacking offset changes.
-    const ensurePathStart = (startX: number, startBaseY: number, segmentOffsetY: number): number => {
-      const startY = startBaseY + segmentOffsetY;
-
-      if (!hasActivePath) {
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        hasActivePath = true;
-        activeOffsetY = segmentOffsetY;
-        return startY;
-      }
-
-      if (Math.abs(activeOffsetY - segmentOffsetY) > 0.001) {
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        activeOffsetY = segmentOffsetY;
-      }
-
-      return startY;
-    };
-
-    // Draw one hold piece (horizontal segment).
-    // If the stack offset changes at this boundary, we switch rows immediately.
-    const drawHoldPieceWithOffsetEasing = (
-      pieceStartX: number,
-      pieceEndX: number,
-      baseY: number,
-      segmentOffsetY: number,
-      stackInfo: ContourSegmentStackInfo | null,
-      transitionFromRainbow: boolean = false
-    ): number => {
-      const targetY = baseY + segmentOffsetY;
-
-      const isStackedPiece = !!stackInfo && stackInfo.stackSize > 1;
-      const shouldCollapseToRainbow = isStackedPiece && !splitStackedContours;
-      const shouldSkipHiddenStackVoice = shouldCollapseToRainbow && !!stackInfo && stackInfo.stackIndex > 0;
-      const shouldDrawRainbow = shouldCollapseToRainbow && !!stackInfo && stackInfo.stackIndex === 0;
-
-      if (shouldSkipHiddenStackVoice) {
-        // Non-leading voices disappear while collapsed, so only one rainbow line remains.
-        if (hasActivePath) {
-          ctx.stroke();
-          hasActivePath = false;
-        }
-        activeOffsetY = segmentOffsetY;
-        return targetY;
-      }
-
-      if (transitionFromRainbow && pieceEndX > pieceStartX) {
-        // Fade from prism color into the voice's true color when peeling off.
-        if (hasActivePath) {
-          ctx.stroke();
-          hasActivePath = false;
-        }
-
-        const transition = ctx.createLinearGradient(pieceStartX, targetY, pieceEndX, targetY);
-        const prismAtStart = getPrismaticContourColorAtPhase(pieceStartX + prismAnimationPhasePx);
-        const dist = Math.max(1, pieceEndX - pieceStartX);
-        const blendRatio = Math.min(0.5, 40 / dist);
-        transition.addColorStop(0, prismAtStart);
-        transition.addColorStop(blendRatio, voiceColor);
-        transition.addColorStop(1, voiceColor);
-
-        ctx.save();
-        ctx.strokeStyle = transition;
-        ctx.beginPath();
-        ctx.moveTo(pieceStartX, targetY);
-        ctx.lineTo(pieceEndX, targetY);
-        ctx.stroke();
-        ctx.restore();
-
-        activeOffsetY = segmentOffsetY;
-        return targetY;
-      }
-
-      if (shouldDrawRainbow) {
-        // Rainbow stack segments are drawn independently to avoid recoloring normal
-        // single-voice sections before/after the stack.
-        if (hasActivePath) {
-          ctx.stroke();
-          hasActivePath = false;
-        }
-
-        if (pieceEndX > pieceStartX) {
-          const prismGradient = createPrismaticContourGradient(
-            ctx,
-            pieceStartX,
-            targetY,
-            pieceEndX,
-            targetY,
-            pieceStartX + prismAnimationPhasePx
-          );
-
-          ctx.save();
-          ctx.shadowBlur = rainbowGlowBlurPx;
-          ctx.shadowColor = getPrismaticContourColorAtPhase(pieceStartX + prismAnimationPhasePx);
-          ctx.strokeStyle = prismGradient;
-          ctx.beginPath();
-          ctx.moveTo(pieceStartX, targetY);
-          ctx.lineTo(pieceEndX, targetY);
-          ctx.stroke();
-          ctx.restore();
-        }
-
-        activeOffsetY = segmentOffsetY;
-        return targetY;
-      }
-
-      if (!hasActivePath) {
-        ctx.beginPath();
-        ctx.moveTo(pieceStartX, targetY);
-        hasActivePath = true;
-        activeOffsetY = segmentOffsetY;
-      }
-
-      const hasOffsetChange = Math.abs(activeOffsetY - segmentOffsetY) > 0.001;
-      if (hasOffsetChange) {
-        const fromY = baseY + activeOffsetY;
-        ctx.lineTo(pieceStartX, fromY);
-        ctx.lineTo(pieceStartX, targetY);
-        if (pieceEndX > pieceStartX) {
-          ctx.lineTo(pieceEndX, targetY);
-        }
-
-        activeOffsetY = segmentOffsetY;
-        return targetY;
-      }
-
-      if (pieceEndX > pieceStartX) {
-        ctx.lineTo(pieceEndX, targetY);
-      }
-      return targetY;
-    };
-
-    // Draw one bend (straight or curved) from start to end.
-    const drawBendPathSegment = (
-      bendStartX: number,
-      bendStartY: number,
-      bendEndX: number,
-      bendEndY: number
-    ) => {
-      const nodeRadius = 12 * display.noteSize;
-      const bendWidth = Math.max(0, bendEndX - bendStartX);
-
-      if (Math.abs(bendEndY - bendStartY) < 1 || bendWidth < 0.001) {
-        // Same pitch, or tiny bend width: just draw a straight line.
-        ctx.lineTo(bendEndX, bendEndY);
-        return;
-      }
-
-      // Pitch changes: enter from bottom if moving up, top if moving down.
-      const isMovingUp = bendEndY < bendStartY;
-      const entryY = isMovingUp ? bendEndY + nodeRadius : bendEndY - nodeRadius;
-
-      const cp1x = bendStartX + bendWidth * 0.5;
-      const cp1y = bendStartY;
-      const cp2x = bendEndX;
-      const cp2y = bendStartY;
-
-      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, bendEndX, entryY);
-      ctx.lineTo(bendEndX, bendEndY);
-    };
-
-    for (let i = 0; i < voice.nodes.length; i++) {
-      const node = voice.nodes[i];
-
-      // Termination node ends the current phrase.
-      if (node.term) {
-        if (inPhrase) {
-          const segmentData = segmentStackMap?.get(segmentIndex);
-          const holdPieces = buildContourHoldPieces(lastT16, node.t16, segmentData?.holdSlices ?? []);
-
-          for (let pIdx = 0; pIdx < holdPieces.length; pIdx++) {
-            const piece = holdPieces[pIdx];
-            const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
-              ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
-              : null;
-            const segmentOffsetY = stackInfo
-              ? (splitStackedContours ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth) : 0)
-              : 0;
-
-            const pieceStartX = nodeToX(piece.startT);
-            const pieceEndX = nodeToX(piece.endT);
-
-            const isStacked = !!stackInfo && stackInfo.stackSize > 1;
-            const prevPiece = pIdx > 0 ? holdPieces[pIdx - 1] : null;
-            const prevIsStacked = !!prevPiece && prevPiece.stackSize !== null && prevPiece.stackSize > 1;
-            const transitionFromRainbow = !splitStackedContours && !isStacked && prevIsStacked;
-
-            const stackedY = drawHoldPieceWithOffsetEasing(
-              pieceStartX,
-              pieceEndX,
-              lastY,
-              segmentOffsetY,
-              stackInfo,
-              transitionFromRainbow
-            );
-            lastRenderedY = stackedY;
-          }
-
-          if (hasActivePath) {
-            ctx.stroke();
-            hasActivePath = false;
-          } else {
-            // Rainbow pieces are drawn as independent immediate strokes.
-            // Clear any residual canvas path so later fallback strokes do not repaint
-            // that segment with the plain voice color.
-            ctx.beginPath();
-          }
-          inPhrase = false;
-          segmentIndex += 1;
-        }
-        continue;
-      }
-
-      const x = nodeToX(node.t16);
-      const y = node.semi !== undefined
-        ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-        : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
-      const nodeSemitone = contourNodeToSemitone(node, scaleType);
-
-      if (!inPhrase) {
-        inPhrase = true;
-        lastX = x;
-        lastY = y;
-        lastT16 = node.t16;
-        lastSemitone = nodeSemitone;
-        lastRenderedY = y;
-        continue;
-      }
-
-      const segmentData = segmentStackMap?.get(segmentIndex);
-      const dt = node.t16 - lastT16;
-
-      if (dt > 0) {
-        const isPitchChange = Math.abs(nodeSemitone - lastSemitone) >= 1e-6;
-        const bendWidthT = isPitchChange
-          ? Math.min(40 / Math.max(pxPerT, 0.0001), dt * 0.8)
-          : 0;
-        const holdEndT = isPitchChange ? Math.max(lastT16, node.t16 - bendWidthT) : node.t16;
-
-        const holdPieces = buildContourHoldPieces(lastT16, holdEndT, segmentData?.holdSlices ?? []);
-        const holdRightStackInfo = getRightEdgeHoldStackInfo(holdPieces);
-        for (let pIdx = 0; pIdx < holdPieces.length; pIdx++) {
-          const piece = holdPieces[pIdx];
-          const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
-            ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
-            : null;
-          const segmentOffsetY = stackInfo
-            ? (splitStackedContours ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth) : 0)
-            : 0;
-
-          const pieceStartX = nodeToX(piece.startT);
-          const pieceEndX = nodeToX(piece.endT);
-
-          const isStacked = !!stackInfo && stackInfo.stackSize > 1;
-          const prevPiece = pIdx > 0 ? holdPieces[pIdx - 1] : null;
-          const prevIsStacked = !!prevPiece && prevPiece.stackSize !== null && prevPiece.stackSize > 1;
-          const transitionFromRainbow = !splitStackedContours && !isStacked && prevIsStacked;
-
-          const stackedY = drawHoldPieceWithOffsetEasing(
-            pieceStartX,
-            pieceEndX,
-            lastY,
-            segmentOffsetY,
-            stackInfo,
-            transitionFromRainbow
-          );
-          lastRenderedY = stackedY;
-        }
-
-        if (isPitchChange) {
-          const bendStackInfo = segmentData?.bendStack;
-          const bendStartOffsetY = holdRightStackInfo
-            ? (splitStackedContours ? getContourSegmentStackOffsetY(holdRightStackInfo, stackLineWidth) : 0)
-            : 0;
-          const bendEndOffsetY = bendStackInfo
-            ? (splitStackedContours ? getContourSegmentStackOffsetY(bendStackInfo, stackLineWidth) : 0)
-            : 0;
-
-          const bendStartX = nodeToX(holdEndT);
-          const bendStartY = lastY + bendStartOffsetY;
-          const stackedY = y + bendEndOffsetY;
-
-          const isStackedBend = !!bendStackInfo && bendStackInfo.stackSize > 1;
-          const shouldCollapseBendToRainbow = isStackedBend && !splitStackedContours;
-          const shouldSkipHiddenBend = shouldCollapseBendToRainbow && !!bendStackInfo && bendStackInfo.stackIndex > 0;
-          const shouldDrawRainbowBend = shouldCollapseBendToRainbow && !!bendStackInfo && bendStackInfo.stackIndex === 0;
-
-          if (shouldSkipHiddenBend) {
-            // Non-leading bend voices are hidden while collapsed so one rainbow
-            // bend represents the whole stack.
-            if (hasActivePath) {
-              ctx.stroke();
-              hasActivePath = false;
-            }
-            activeOffsetY = bendEndOffsetY;
-          } else if (shouldDrawRainbowBend) {
-            if (hasActivePath) {
-              ctx.stroke();
-              hasActivePath = false;
-            }
-
-            const prismGradient = createPrismaticContourGradient(
-              ctx,
-              bendStartX,
-              bendStartY,
-              x,
-              stackedY,
-              bendStartX + prismAnimationPhasePx
-            );
-
-            ctx.save();
-            ctx.shadowBlur = rainbowGlowBlurPx;
-            ctx.shadowColor = getPrismaticContourColorAtPhase(bendStartX + prismAnimationPhasePx);
-            ctx.strokeStyle = prismGradient;
-            ctx.beginPath();
-            ctx.moveTo(bendStartX, bendStartY);
-            drawBendPathSegment(bendStartX, bendStartY, x, stackedY);
-            ctx.stroke();
-            ctx.restore();
-
-            activeOffsetY = bendEndOffsetY;
-          } else {
-            const transitionFromRainbowBend =
-              !splitStackedContours &&
-              !!holdRightStackInfo &&
-              holdRightStackInfo.stackSize > 1 &&
-              (!bendStackInfo || bendStackInfo.stackSize <= 1);
-
-            if (transitionFromRainbowBend) {
-              if (hasActivePath) {
-                ctx.stroke();
-                hasActivePath = false;
-              }
-
-              const transition = ctx.createLinearGradient(bendStartX, bendStartY, x, stackedY);
-              const prismAtStart = getPrismaticContourColorAtPhase(bendStartX + prismAnimationPhasePx);
-              const bendDist = Math.max(1, Math.sqrt((x - bendStartX) ** 2 + (stackedY - bendStartY) ** 2));
-              const blendRatio = Math.min(0.5, 40 / bendDist);
-              transition.addColorStop(0, prismAtStart);
-              transition.addColorStop(blendRatio, voiceColor);
-              transition.addColorStop(1, voiceColor);
-
-              ctx.save();
-              ctx.strokeStyle = transition;
-              ctx.beginPath();
-              ctx.moveTo(bendStartX, bendStartY);
-              drawBendPathSegment(bendStartX, bendStartY, x, stackedY);
-              ctx.stroke();
-              ctx.restore();
-
-              activeOffsetY = bendEndOffsetY;
-            } else {
-              const stackedLastY = ensurePathStart(bendStartX, lastY, bendStartOffsetY);
-              drawBendPathSegment(bendStartX, stackedLastY, x, stackedY);
-            }
-          }
-
-          lastRenderedY = stackedY;
-        }
-      }
-
-      lastX = x;
-      lastY = y;
-      lastT16 = node.t16;
-      lastSemitone = nodeSemitone;
-      segmentIndex += 1;
-    }
-
-    if (inPhrase) {
-      // Phrase has no drawable segment yet (single node phrase).
-      // Seed a path so stroke/dash behavior remains identical to old behavior.
-      if (!hasActivePath) {
-        ctx.beginPath();
-        ctx.moveTo(lastX, lastY);
-        hasActivePath = true;
-        lastRenderedY = lastY;
-      }
-
-      // If playback is running and there is no terminating anchor,
-      // show a dashed line indicating the note holds to the end of the loop.
-      if (playbackEngine.getIsPlaying()) {
-        // Extend to the end of this tile (loop end for this tile)
-        const endX = nodeToX(loopLen);
-
-        // IMPORTANT:
-        // We must stroke the contour so far using a solid line BEFORE enabling dashes.
-        // Otherwise the dash pattern applies to the entire path and the whole voice
-        // appears dashed.
-        ctx.stroke();
-
-        // Now draw ONLY the final "hold" extension as a separate dashed segment.
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(lastX, lastRenderedY);
-        ctx.setLineDash([6, 6]);
-        ctx.lineTo(endX, lastRenderedY);
-        ctx.stroke();
-        ctx.restore();
-      } else if (hasActivePath) {
-        ctx.stroke();
-      }
-    }
-
-    ctx.restore();
-  }
-
-  /**
-   * Draw a pitch trace (user recording) with clean, neon glow.
-   * Uses follow-mode world-time coordinates for tiled rendering.
-   */
-  function drawPitchTrace(
-    ctx: CanvasRenderingContext2D,
-    trace: PitchPoint[],
-    _startT16: number,
-    _endT16: number,
-    tempo: number,
-    timeSig: { numerator: number; denominator: number },
-    gridLeft: number,
-    gridTop: number,
-    _gridWidth: number,
-    gridHeight: number,
-    options: {
-      color: string;
-      lineWidth: number;
-      opacity: number;
-      isLive: boolean;
-      effectiveTonicMidi: number;
-      minSemitone: number;
-      maxSemitone: number;
-      // Follow-mode parameters: offset the pitch trace by a tile's world time
-      worldTimeOffset: number;
-      camLeft: number;
-      pxPerT: number;
-      headXOverride?: number;
-    }
-  ) {
-    if (trace.length < 2) return;
-
-    const { color, lineWidth, opacity, isLive, effectiveTonicMidi, minSemitone, maxSemitone,
-      worldTimeOffset, camLeft: optCamLeft, pxPerT: optPxPerT, headXOverride } = options;
-
-    // Helper: convert a local t16 to screen X via world time
-    const traceToX = (localT16: number) =>
-      gridLeft + worldTToScreenX(localT16 + worldTimeOffset, optCamLeft, optPxPerT);
-
-    function getPitchY(frequency: number): number {
-      // Calibrate against the grid: 
-      // 1. Get MIDI pitch of frequency
-      const midi = (A4_MIDI + 12 * Math.log2(frequency / A4_FREQUENCY));
-      // 2. Convert to semitone offset from EFFECTIVE tonic (including transposition)
-      const semitone = midi - effectiveTonicMidi;
-      // 3. Map to Y using the shared semitoneToY logic
-      return semitoneToY(semitone, minSemitone, maxSemitone, gridTop, gridHeight);
-    }
-
-    function drawPath(width: number, alpha: number, blur?: number, composite: GlobalCompositeOperation = 'source-over') {
-      ctx.save();
-      ctx.beginPath();
-      ctx.lineWidth = width;
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = alpha;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.globalCompositeOperation = composite;
-
-      if (blur) {
-        ctx.shadowBlur = blur;
-        ctx.shadowColor = color;
-      }
-
-      let started = false;
-      let lastPointTime = -1;
-
-      // Keep track of the last point we actually drew.
-      // We use this to "extend" the trace line to the playhead when the live head
-      // glow is pinned there (headXOverride). This avoids a visible gap between the
-      // end of the line and the glow tip, at the cost of briefly holding the last
-      // known pitch until the next detected pitch point arrives.
-      let lastDrawnX = 0;
-      let lastDrawnY = 0;
-      let hasLastDrawn = false;
-
-      // Pre-compute once — this value is constant for every point in the trace.
-      const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
-
-      for (const point of trace) {
-        const isGap = !Number.isFinite(point.frequency) || point.frequency <= 0 || (lastPointTime !== -1 && point.time - lastPointTime > 150);
-
-        if (isGap || point.confidence < 0.3) {
-          if (started) {
-            ctx.stroke();
-            ctx.beginPath();
-            started = false;
-          }
-          if (isGap) {
-            lastPointTime = point.time;
-            continue;
-          }
-        }
-
-        const t16 = point.time / sixteenthMs;
-        const x = traceToX(t16);
-        const y = getPitchY(point.frequency);
-
-        if (!started) {
-          ctx.moveTo(x, y);
-          started = true;
-        } else {
-          ctx.lineTo(x, y);
-        }
-
-        lastDrawnX = x;
-        lastDrawnY = y;
-        hasLastDrawn = true;
-        lastPointTime = point.time;
-      }
-
-      if (started) {
-        // If this is the live trace and the head is pinned to the playhead X,
-        // extend the final segment so the line stays attached to the head glow.
-        if (headXOverride !== undefined && hasLastDrawn && headXOverride > lastDrawnX) {
-          ctx.lineTo(headXOverride, lastDrawnY);
-        }
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    // Pass 1: The Glow Pass (Same method as contour lines)
-    // Forced to equivalent of intensity 1 (shadowBlur 10)
-    ctx.save();
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = color;
-    drawPath(lineWidth, opacity * 0.8);
-    ctx.restore();
-
-    // Pass 2: The Core Pass (Solid line)
-    drawPath(lineWidth, opacity);
-
-    // Live Head Flair (Pulse only, no particles)
-    if (isLive) {
-      const lastPoint = trace[trace.length - 1];
-      if (lastPoint && Number.isFinite(lastPoint.frequency) && lastPoint.frequency > 0) {
-        const sixteenthMs = sixteenthDurationMs(tempo, timeSig);
-        const t16 = lastPoint.time / sixteenthMs;
-        const x = headXOverride ?? traceToX(t16);
-        const y = getPitchY(lastPoint.frequency);
-
-        ctx.save();
-        // Bright Pulsing Cursor
-        const pulse = Math.sin(Date.now() / 150) * 2 + 8;
-
-        // Glow circle
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, pulse * 2.5);
-        grad.addColorStop(0, '#fff');
-        grad.addColorStop(0.2, color);
-        grad.addColorStop(1, 'transparent');
-
-        ctx.fillStyle = grad;
-        ctx.globalAlpha = 0.8;
-        ctx.beginPath();
-        ctx.arc(x, y, pulse * 2.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Sharp highlight center
-        ctx.fillStyle = '#fff';
-        ctx.globalAlpha = 1;
-        ctx.beginPath();
-        ctx.arc(x, y, 3, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
-      }
-    }
-  }
-
   // Keep the latest draw() in a ref so the RAF loop never needs to restart.
   // Restarting the RAF effect on every state change can leak multiple loops,
   // which shows up as flicker (different stale closures drawing alternating frames).
@@ -4462,19 +3059,21 @@ export function Grid({
         const currentWorldT = followMode.pendingWorldT !== null
           ? followMode.pendingWorldT
           : getCameraCenterWorldT();
-        const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
-        const loopStartX = gridLeftPx + worldTToScreenX(loopStartNow, camLeft, pxPerTVal);
-        const loopEndX = gridLeftPx + worldTToScreenX(loopEndNow, camLeft, pxPerTVal);
+        const { loopStartX, loopEndX } = getLoopBoundaryScreenPositions({
+          loopStartT: loopStartNow,
+          loopEndT: loopEndNow,
+          gridLeftPx,
+          gridWidthPx,
+          pxPerT: pxPerTVal,
+          worldT: currentWorldT,
+        });
 
         // Hit threshold in pixels for grabbing a loop handle
         const handleHitPx = 8;
+        const nearestHandle = getNearestLoopHandle(mouseX, loopStartX, loopEndX, handleHitPx);
 
-        // Check which handle is closer (if both are within threshold, prefer the nearest)
-        const distToStart = Math.abs(mouseX - loopStartX);
-        const distToEnd = Math.abs(mouseX - loopEndX);
-
-        if (distToStart <= handleHitPx || distToEnd <= handleHitPx) {
-          loopHandleDragRef.current = (distToStart <= distToEnd) ? 'start' : 'end';
+        if (nearestHandle) {
+          loopHandleDragRef.current = nearestHandle;
           isHoveringLoopHandleRef.current = true;
           setIsHoveringLoopHandle(true);
           e.preventDefault();
@@ -4805,7 +3404,7 @@ export function Grid({
 
       placingNewNodeRef.current = { voiceId, point: snapped };
     }
-  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, setSelectedVoiceId, getPitchRange, getNodeHitAtMouseEvent, getAnyNodeHitAtMouseEvent, selectNode, addNodeToSelection, toggleNodeInSelection, clearNodeSelection, toggleFocus, focusOnlyVoice, getContourHitAtMouse]);
+  }, [mode, arrangement, selectedVoiceId, getSnappedPointFromMouseEvent, setSelectedVoiceId, getPitchRange, getNodeHitAtMouseEvent, getAnyNodeHitAtMouseEvent, selectNode, toggleNodeInSelection, clearNodeSelection, toggleFocus, focusOnlyVoice, getContourHitAtMouse]);
 
   /**
    * Handle mouse move for dragging nodes (Create mode)
@@ -4841,12 +3440,17 @@ export function Grid({
           ? followMode.pendingWorldT
           : getCameraCenterWorldT();
 
-        const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
-        const loopStartX = gridLeftPx + worldTToScreenX(loopStartNow, camLeft, pxPerTVal);
-        const loopEndX = gridLeftPx + worldTToScreenX(loopEndNow, camLeft, pxPerTVal);
+        const { loopStartX, loopEndX } = getLoopBoundaryScreenPositions({
+          loopStartT: loopStartNow,
+          loopEndT: loopEndNow,
+          gridLeftPx,
+          gridWidthPx,
+          pxPerT: pxPerTVal,
+          worldT: currentWorldT,
+        });
 
         const handleHitPx = 8;
-        const hovering = (Math.abs(mouseX - loopStartX) <= handleHitPx) || (Math.abs(mouseX - loopEndX) <= handleHitPx);
+        const hovering = isMouseNearLoopHandle(mouseX, loopStartX, loopEndX, handleHitPx);
 
         if (hovering !== isHoveringLoopHandleRef.current) {
           isHoveringLoopHandleRef.current = hovering;
@@ -4874,12 +3478,16 @@ export function Grid({
         const currentWorldT = followMode.pendingWorldT !== null
           ? followMode.pendingWorldT
           : getCameraCenterWorldT();
-        const camLeft = cameraLeftWorldT(currentWorldT, gridWidthPx, pxPerTVal);
-
-        // Convert mouse X to time, then snap to nearest 16th note
-        const rawT = screenXToWorldT(mouseX - gridLeftPx, camLeft, pxPerTVal);
         const arrangementLen = arrangement.bars * arrangement.timeSig.numerator * 4;
-        const snappedT = Math.round(Math.max(0, Math.min(arrangementLen, rawT)));
+        // Convert mouse X to time and snap to the nearest 16th note.
+        const snappedT = getSnappedLoopTimeFromMouseX({
+          mouseX,
+          gridLeftPx,
+          gridWidthPx,
+          pxPerT: pxPerTVal,
+          worldT: currentWorldT,
+          arrangementLengthT16: arrangementLen,
+        });
 
         if (loopHandleDragRef.current === 'start') {
           // Don't let start go past end - 1
@@ -4971,23 +3579,20 @@ export function Grid({
     // ── Group drag update ──
     if (groupDragRef.current) {
       const gd = groupDragRef.current;
-      const dxPx = e.clientX - gd.startMouseX;
-      const dyPx = e.clientY - gd.startMouseY;
-
-      // Convert pixel deltas to time (t16) and pitch (semitones).
-      const pxPerTVal = followMode.pxPerT;
-      const newDeltaT16 = Math.round(dxPx / pxPerTVal);
-
-      // For vertical: compute semitones per pixel from the current pitch range.
       const { minSemitone, maxSemitone } = getPitchRange();
       const gridHeightPx = (containerRef.current?.getBoundingClientRect()?.height ?? 600) - GRID_MARGIN.top - GRID_MARGIN.bottom;
-      const semitonesPerPx = (maxSemitone - minSemitone) / gridHeightPx;
-      // Negative dyPx = mouse moved up = higher pitch = positive semitone delta.
-      const newDeltaSemi = Math.round(-dyPx * semitonesPerPx);
-
-      // Only apply incremental delta if it changed.
-      const incrT16 = newDeltaT16 - gd.lastDeltaT16;
-      const incrSemi = newDeltaSemi - gd.lastDeltaSemi;
+      const { newDeltaT16, newDeltaSemi, incrT16, incrSemi } = getGroupDragDelta({
+        startMouseX: gd.startMouseX,
+        startMouseY: gd.startMouseY,
+        currentMouseX: e.clientX,
+        currentMouseY: e.clientY,
+        lastDeltaT16: gd.lastDeltaT16,
+        lastDeltaSemi: gd.lastDeltaSemi,
+        pxPerT: followMode.pxPerT,
+        minSemitone,
+        maxSemitone,
+        gridHeightPx,
+      });
 
       if (incrT16 !== 0 || incrSemi !== 0) {
         if (!hasPushedDragHistoryRef.current) {
@@ -5526,15 +4131,7 @@ export function Grid({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't fire while typing in inputs.
-      const target = e.target as HTMLElement | null;
-      if (target) {
-        const tag = target.tagName;
-        const isEditable = target.isContentEditable
-          || tag === 'INPUT'
-          || tag === 'TEXTAREA'
-          || (target as HTMLInputElement).type === 'text';
-        if (isEditable) return;
-      }
+      if (isEditableKeyboardTarget(e.target)) return;
 
       // Vertical zoom with [ and ] (works in both Play + Create)
       if (e.key === '[') {
