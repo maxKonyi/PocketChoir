@@ -65,6 +65,11 @@ type LyricUiEntry = {
   connectorToNext?: LyricConnector;
 };
 
+type LyricHoldSpan = {
+  startT16: number;
+  endT16: number;
+};
+
 /**
  * Parse one lyric draft into clean text + optional connector metadata.
  *
@@ -131,6 +136,86 @@ function localT16ToNearestWorldT(localT16: number, loopLengthT: number, referenc
   }
 
   return bestWorldT;
+}
+
+/**
+ * True when an anchor (term node) lies between two melody nodes.
+ *
+ * We treat anchor time as a hard lyric-hold break.
+ */
+function hasAnchorBetween(anchorTimes: number[], fromT16: number, toT16: number): boolean {
+  return anchorTimes.some((anchorT16) => anchorT16 > fromT16 && anchorT16 <= toT16);
+}
+
+/**
+ * Build anchor-aware hold spans from lyric connector metadata.
+ *
+ * Hold behavior rules:
+ * - A hold on node N always includes the FULL duration of node N+1.
+ * - Additional hold markers on following nodes continue the same line.
+ * - Anchor points always stop the hold line.
+ */
+function buildLyricHoldSpans(
+  melodyNodeTimes: number[],
+  anchorTimes: number[],
+  lyricByT16: Map<number, LyricUiEntry>,
+  loopLengthT: number
+): LyricHoldSpan[] {
+  const spans: LyricHoldSpan[] = [];
+  if (melodyNodeTimes.length < 2 || loopLengthT <= 0) return spans;
+
+  const boundaryAfterNode = (nodeIndex: number): number => {
+    const nodeT16 = melodyNodeTimes[nodeIndex];
+    const nextMelodyT16 = nodeIndex < melodyNodeTimes.length - 1
+      ? melodyNodeTimes[nodeIndex + 1]
+      : loopLengthT;
+
+    let boundary = nextMelodyT16;
+    for (const anchorT16 of anchorTimes) {
+      if (anchorT16 > nodeT16 && anchorT16 < boundary) {
+        boundary = anchorT16;
+        break;
+      }
+    }
+    return boundary;
+  };
+
+  for (let i = 0; i < melodyNodeTimes.length - 1; i++) {
+    const startT16 = melodyNodeTimes[i];
+    const entry = lyricByT16.get(startT16);
+    if (entry?.connectorToNext !== 'hold') continue;
+
+    // Do not start a duplicate span in the middle of an already-continuing hold.
+    if (i > 0) {
+      const prevT16 = melodyNodeTimes[i - 1];
+      const prevEntry = lyricByT16.get(prevT16);
+      if (prevEntry?.connectorToNext === 'hold' && !hasAnchorBetween(anchorTimes, prevT16, startT16)) {
+        continue;
+      }
+    }
+
+    // Base rule: include the full duration of the following melody node.
+    let endT16 = boundaryAfterNode(i + 1);
+
+    // Continue extending while subsequent nodes explicitly request hold continuation.
+    let cursor = i + 1;
+    while (cursor < melodyNodeTimes.length - 1) {
+      const cursorEntry = lyricByT16.get(melodyNodeTimes[cursor]);
+      if (cursorEntry?.connectorToNext !== 'hold') break;
+
+      const candidateEndT16 = boundaryAfterNode(cursor + 1);
+      if (candidateEndT16 <= endT16) break;
+
+      endT16 = candidateEndT16;
+      cursor += 1;
+    }
+
+    if (endT16 > startT16) {
+      spans.push({ startT16, endT16 });
+    }
+  }
+
+  return spans;
 }
 
 /**
@@ -1258,6 +1343,18 @@ export function Grid({
     return new Set<number>(voice1MelodyNodes.map((node) => node.t16));
   }, [voice1MelodyNodes]);
 
+  const voice1AnchorTimes = useMemo(() => {
+    const voice1 = arrangement?.voices[0];
+    if (!voice1) return [] as number[];
+
+    const anchorTimes = voice1.nodes
+      .filter((node) => node.term)
+      .map((node) => Math.round(node.t16))
+      .sort((a, b) => a - b);
+
+    return [...new Set(anchorTimes)];
+  }, [arrangement]);
+
   // Fast lookup of "this node has a next melody node".
   const voice1NextNodeT16ByT16 = useMemo(() => {
     const byTime = new Map<number, number>();
@@ -1293,6 +1390,17 @@ export function Grid({
 
     return byTime;
   }, [arrangement?.lyrics?.entries, voice1LyricNodeTimes, voice1NextNodeT16ByT16]);
+
+  const lyricHoldSpans = useMemo(() => {
+    if (!arrangement) return [] as LyricHoldSpan[];
+    const loopLengthT = arrangement.bars * arrangement.timeSig.numerator * 4;
+    return buildLyricHoldSpans(
+      voice1MelodyNodes.map((node) => node.t16),
+      voice1AnchorTimes,
+      lyricEntryByT16,
+      loopLengthT
+    );
+  }, [arrangement, voice1MelodyNodes, voice1AnchorTimes, lyricEntryByT16]);
 
   // ── Memoized vertical grid lines ──
   // Only recompute when the arrangement's bar count or time signature changes.
@@ -1393,15 +1501,22 @@ export function Grid({
       const pxPerTVal = followMode.pxPerT;
 
       if (laneEl && trackEl && pxPerTVal > 0) {
-        const laneWidth = laneEl.getBoundingClientRect().width;
-        if (laneWidth > 0) {
-          const loopLengthT = arrangement.bars * arrangement.timeSig.numerator * 4;
+        const measuredLaneWidth = laneEl.getBoundingClientRect().width;
+        const viewportWidth = followMode.viewportWidthPx > 0 ? followMode.viewportWidthPx : measuredLaneWidth;
+
+        if (viewportWidth > 0) {
           const currentWorldT = followMode.pendingWorldT !== null
             ? followMode.pendingWorldT
             : getCameraCenterWorldT();
-          const camLeft = cameraLeftWorldT(currentWorldT, laneWidth, pxPerTVal);
-          const worldTileOriginT = localT16ToNearestWorldT(0, loopLengthT, currentWorldT);
-          const translateX = worldTToScreenX(worldTileOriginT, camLeft, pxPerTVal);
+          const camLeft = cameraLeftWorldT(currentWorldT, viewportWidth, pxPerTVal);
+
+          // Match the exact camera snapping logic used by canvas rendering so
+          // chip centers stay perfectly aligned with node centers.
+          const dpr = window.devicePixelRatio || 1;
+          const camLeftSnapped = display.snapCameraToPixels
+            ? (Math.round(camLeft * pxPerTVal * dpr) / dpr) / pxPerTVal
+            : camLeft;
+          const translateX = worldTToScreenX(0, camLeftSnapped, pxPerTVal);
 
           trackEl.style.transform = `translateX(${translateX}px)`;
         }
@@ -1416,8 +1531,8 @@ export function Grid({
     mode,
     display.showLyricsTrack,
     arrangement?.lyrics?.enabled,
-    arrangement?.bars,
-    arrangement?.timeSig.numerator,
+    display.snapCameraToPixels,
+    followMode.viewportWidthPx,
     followMode.pxPerT,
     followMode.pendingWorldT,
   ]);
@@ -3068,11 +3183,13 @@ export function Grid({
       ctx.stroke();
 
       // Draw connector lines first so text sits cleanly on top.
+      // Dash connectors stay adjacent. Hold connectors are rendered from
+      // precomputed spans so they can cross multiple nodes and stop at anchors.
       for (let i = 0; i < voice1MelodyNodes.length - 1; i++) {
         const fromNode = voice1MelodyNodes[i];
         const toNode = voice1MelodyNodes[i + 1];
         const connector = lyricEntryByT16.get(fromNode.t16)?.connectorToNext;
-        if (!connector) continue;
+        if (connector !== 'dash') continue;
 
         const fromWorldT = localT16ToNearestWorldT(fromNode.t16, loopLengthT, worldT);
         const toWorldT = localT16ToNearestWorldT(toNode.t16, loopLengthT, fromWorldT + (toNode.t16 - fromNode.t16));
@@ -3086,27 +3203,40 @@ export function Grid({
 
         ctx.save();
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-        ctx.lineWidth = connector === 'hold' ? 1.7 : 1.4;
+        ctx.lineWidth = 1.4;
         ctx.lineCap = 'round';
         ctx.beginPath();
+        const mid = (left + right) / 2;
+        const dashLength = Math.min(16, Math.max(7, (right - left) * 0.35));
+        ctx.moveTo(mid - dashLength / 2, lyricBaselineY + 0.5);
+        ctx.lineTo(mid + dashLength / 2, lyricBaselineY + 0.5);
 
-        if (connector === 'dash') {
-          const mid = (left + right) / 2;
-          const dashLength = Math.min(16, Math.max(7, (right - left) * 0.35));
-          ctx.moveTo(mid - dashLength / 2, lyricBaselineY + 0.5);
-          ctx.lineTo(mid + dashLength / 2, lyricBaselineY + 0.5);
-        } else {
-          const pad = 8;
-          const lineStart = left + pad;
-          const lineEnd = right - pad;
-          if (lineEnd <= lineStart) {
-            ctx.restore();
-            continue;
-          }
-          ctx.moveTo(lineStart, lyricBaselineY + 5.5);
-          ctx.lineTo(lineEnd, lyricBaselineY + 5.5);
-        }
+        ctx.stroke();
+        ctx.restore();
+      }
 
+      for (const span of lyricHoldSpans) {
+        const startWorldT = localT16ToNearestWorldT(span.startT16, loopLengthT, worldT);
+        const endWorldT = localT16ToNearestWorldT(span.endT16, loopLengthT, startWorldT + (span.endT16 - span.startT16));
+        const x1 = wToX(startWorldT);
+        const x2 = wToX(endWorldT);
+
+        if (Math.max(x1, x2) < gridLeft - 36 || Math.min(x1, x2) > gridLeft + gridWidth + 36) continue;
+
+        const left = Math.min(x1, x2);
+        const right = Math.max(x1, x2);
+        const bubbleInset = 22;
+        const lineStart = left + bubbleInset;
+        const lineEnd = right - bubbleInset;
+        if (lineEnd <= lineStart) continue;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.lineWidth = 1.7;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(lineStart, lyricBaselineY + 8);
+        ctx.lineTo(lineEnd, lyricBaselineY + 8);
         ctx.stroke();
         ctx.restore();
       }
@@ -3165,7 +3295,7 @@ export function Grid({
 
       ctx.restore();
     }
-  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, hideChords, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup, voice1MelodyNodes, lyricEntryByT16]);
+  }, [arrangement, voiceStates, livePitchTrace, livePitchTraceVoiceId, display, recordings, armedVoiceId, selectedVoiceId, getPitchRange, hideChords, onlyChords, isRecording, followMode.pxPerT, followMode.pendingWorldT, cssColors, memoizedGridLines, mode, isPlaying, loopEnabled, loopStart, loopEnd, contourStackLookup, voice1MelodyNodes, lyricEntryByT16, lyricHoldSpans]);
 
   /**
    * Draw a voice's contour line (now using semitones).
@@ -5929,49 +6059,26 @@ export function Grid({
 
                       // Render connector lines between this node and the next node.
                       const nextNodeT16 = voice1NextNodeT16ByT16.get(node.t16);
-                      if (connectorToNext && nextNodeT16 !== undefined) {
+                      if (connectorToNext === 'dash' && nextNodeT16 !== undefined) {
                         const x2 = nextNodeT16 * pxPerTVal;
 
                         const left = Math.min(x, x2);
                         const right = Math.max(x, x2);
-                        if (connectorToNext === 'dash') {
-                          const mid = (left + right) / 2;
-                          const dashWidth = Math.min(16, Math.max(7, (right - left) * 0.35));
-                          connectorLines.push(
-                            <div
-                              key={`lyric-connector-dash-${node.t16}`}
-                              className="absolute pointer-events-none bg-white/85"
-                              style={{
-                                left: mid - dashWidth / 2,
-                                width: dashWidth,
-                                top: '50%',
-                                height: 1,
-                                transform: 'translateY(0.5px)',
-                              }}
-                            />
-                          );
-                        } else {
-                          // Keep the hold line outside both lyric bubbles.
-                          const bubbleInset = 22;
-                          const lineStart = left + bubbleInset;
-                          const lineEnd = right - bubbleInset;
-                          const lineWidth = Math.max(0, lineEnd - lineStart);
-                          if (lineWidth > 0) {
-                            connectorLines.push(
-                              <div
-                                key={`lyric-connector-hold-${node.t16}`}
-                                className="absolute pointer-events-none rounded-full bg-white/85"
-                                style={{
-                                  left: lineStart,
-                                  width: lineWidth,
-                                  top: '50%',
-                                  height: 2,
-                                  transform: 'translateY(10px)',
-                                }}
-                              />
-                            );
-                          }
-                        }
+                        const mid = (left + right) / 2;
+                        const dashWidth = Math.min(16, Math.max(7, (right - left) * 0.35));
+                        connectorLines.push(
+                          <div
+                            key={`lyric-connector-dash-${node.t16}`}
+                            className="absolute pointer-events-none bg-white/85"
+                            style={{
+                              left: mid - dashWidth / 2,
+                              width: dashWidth,
+                              top: '50%',
+                              height: 1,
+                              transform: 'translateY(0.5px)',
+                            }}
+                          />
+                        );
                       }
 
                       const isEditingToken = editingLyricT16 === node.t16;
@@ -6082,6 +6189,32 @@ export function Grid({
                             </button>
                           )}
                         </div>
+                      );
+                    }
+
+                    for (const span of lyricHoldSpans) {
+                      const left = Math.min(span.startT16, span.endT16) * pxPerTVal;
+                      const right = Math.max(span.startT16, span.endT16) * pxPerTVal;
+
+                      // Keep the hold line outside both lyric bubbles.
+                      const bubbleInset = 22;
+                      const lineStart = left + bubbleInset;
+                      const lineEnd = right - bubbleInset;
+                      const lineWidth = Math.max(0, lineEnd - lineStart);
+                      if (lineWidth <= 0) continue;
+
+                      connectorLines.push(
+                        <div
+                          key={`lyric-hold-span-${span.startT16}-${span.endT16}`}
+                          className="absolute pointer-events-none rounded-full bg-white/85"
+                          style={{
+                            left: lineStart,
+                            width: lineWidth,
+                            top: '50%',
+                            height: 2,
+                            transform: 'translateY(10px)',
+                          }}
+                        />
                       );
                     }
 
