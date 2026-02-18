@@ -405,6 +405,7 @@ export function Grid({
     startMouseY: number;    // Initial mouse clientY
     lastDeltaT16: number;   // Accumulated time delta applied so far
     lastDeltaSemi: number;  // Accumulated pitch delta applied so far
+    isDragging: boolean;    // True once we have actually moved nodes in this gesture
   } | null>(null);
 
   // ── Smart Cam state ──
@@ -467,6 +468,45 @@ export function Grid({
   // Re-centering back to playhead is handled on explicit actions:
   // - Play start in smart/follow modes
   // - Restart action (camera follow reset trigger)
+
+  /**
+   * Re-apply the Smart-Cam loop framing behavior on demand.
+   *
+   * This is the exact same flow used when loop is first enabled in Smart mode:
+   * 1) zoom to fit full loop (+ padding),
+   * 2) center camera on loop,
+   * 3) clear free-look so state returns to STATIC_LOOP.
+   */
+  const showLoopInSmartCam = useCallback(() => {
+    const state = useAppStore.getState();
+    const curPb = state.playback;
+    const loopDuration = curPb.loopEnd - curPb.loopStart;
+
+    if (loopDuration <= 0) return;
+
+    // Compute target horizontal zoom so the full loop fits with side padding.
+    const rect = containerRef.current?.getBoundingClientRect();
+    const gridW = rect
+      ? rect.width - GRID_MARGIN.left - GRID_MARGIN.right
+      : state.followMode.viewportWidthPx;
+
+    if (gridW > 0) {
+      const paddedDuration = loopDuration * (1 + 2 * LOOP_ZOOM_PADDING);
+      const targetPxPerT = gridW / paddedDuration;
+      state.setPxPerT(targetPxPerT);
+    }
+
+    // Center camera on the loop midpoint.
+    const loopCenter = (curPb.loopStart + curPb.loopEnd) / 2;
+    setCameraCenterWorldT(loopCenter);
+
+    // Exit free-look and explicitly mark static-loop state.
+    setFreeLook(false);
+    setFreeLookReact(false);
+    smartCamStateRef.current = 'STATIC_LOOP';
+    smartCamIsStaticRef.current = true;
+    setSmartCamIsStatic(true);
+  }, [setSmartCamIsStatic]);
 
   // If the mouse is released outside the canvas, stop any active pan drag.
   // Without this, the grid can get "stuck" in panning mode.
@@ -573,40 +613,7 @@ export function Grid({
     const cameraMode = useAppStore.getState().followMode.cameraMode;
 
     if (loopEnabled && cameraMode === 'smart') {
-      // Auto-zoom to fit the loop in the viewport.
-      const curPb = useAppStore.getState().playback;
-      // Seek the playhead to the loop start.
-      // - If we were playing already, playback continues from the loop start.
-      // - If we were paused, we remain paused but the playhead moves.
-      playbackEngine.seekWorld(curPb.loopStart);
-      setPosition(curPb.loopStart);
-      // Keep visual playhead in sync immediately (prevents a one-frame mismatch).
-      visualWorldTRef.current = curPb.loopStart;
-
-      const loopDuration = curPb.loopEnd - curPb.loopStart;
-      if (loopDuration > 0) {
-        const rect = containerRef.current?.getBoundingClientRect();
-        const gridW = rect
-          ? rect.width - GRID_MARGIN.left - GRID_MARGIN.right
-          : useAppStore.getState().followMode.viewportWidthPx;
-
-        if (gridW > 0) {
-          // Calculate pxPerT so the loop fills the viewport with padding.
-          const paddedDuration = loopDuration * (1 + 2 * LOOP_ZOOM_PADDING);
-          const targetPxPerT = gridW / paddedDuration;
-          setPxPerT(targetPxPerT);
-
-          // Center camera on the loop.
-          const loopCenter = (curPb.loopStart + curPb.loopEnd) / 2;
-          setCameraCenterWorldT(loopCenter);
-        }
-      }
-      // Clear free-look so evaluator returns STATIC_LOOP.
-      setFreeLook(false);
-      setFreeLookReact(false);
-      smartCamStateRef.current = 'STATIC_LOOP';
-      smartCamIsStaticRef.current = true;
-      setSmartCamIsStatic(true);
+      showLoopInSmartCam();
     } else {
       // Loop disabled (or not in smart mode): clear free-look and let the
       // evaluator return to FOLLOW_CENTER on the next frame.
@@ -621,7 +628,7 @@ export function Grid({
         setSmartCamIsStatic(false);
       }
     }
-  }, [mode, loopEnabled]);
+  }, [mode, loopEnabled, showLoopInSmartCam]);
 
   // When the user toggles the camera mode via the transport bar, apply
   // side effects so the mode change takes effect visually:
@@ -2078,10 +2085,54 @@ export function Grid({
   // Show recenter only when it is actually needed.
   // In static smart-cam states (e.g., STATIC_LOOP), being in a static state
   // alone is not enough — if we're already centered, the pill should hide.
-  const cameraDeltaT = Math.abs(getCameraCenterWorldT() - playbackEngine.getWorldPositionT16());
+  const cameraCenterWorldT = getCameraCenterWorldT();
+  const playheadWorldT = playbackEngine.getWorldPositionT16();
+  const cameraDeltaT = Math.abs(cameraCenterWorldT - playheadWorldT);
   const centerToleranceT = followMode.pxPerT > 0 ? (6 / followMode.pxPerT) : 0.25;
   const isCenteredOnPlayhead = cameraDeltaT <= centerToleranceT;
-  const shouldShowRecenter = freeLookReact || (smartCamIsStatic && !isCenteredOnPlayhead);
+
+  // Special case requested by UX:
+  // In Smart Cam + Loop mode, this pill should represent "show loop framing"
+  // (not "center playhead"). So visibility is based on whether the loop frame
+  // (zoom + center) is currently active.
+  const isSmartLoopContext = (followMode.cameraMode === 'smart') && loopEnabled;
+  let isShowingLoopFrame = false;
+  if (isSmartLoopContext) {
+    const pb = useAppStore.getState().playback;
+    const loopDuration = pb.loopEnd - pb.loopStart;
+    if (loopDuration > 0) {
+      const loopCenter = (pb.loopStart + pb.loopEnd) / 2;
+      const isCenteredOnLoop = Math.abs(cameraCenterWorldT - loopCenter) <= centerToleranceT;
+
+      const rect = containerRef.current?.getBoundingClientRect();
+      const gridW = rect
+        ? rect.width - GRID_MARGIN.left - GRID_MARGIN.right
+        : useAppStore.getState().followMode.viewportWidthPx;
+
+      if (gridW > 0) {
+        const paddedDuration = loopDuration * (1 + 2 * LOOP_ZOOM_PADDING);
+        const targetPxPerT = gridW / paddedDuration;
+        // Small tolerance avoids tiny float drift from keeping the pill visible.
+        const zoomDeltaRatio = targetPxPerT > 0
+          ? Math.abs(followMode.pxPerT - targetPxPerT) / targetPxPerT
+          : 0;
+        const isZoomAtLoopFit = zoomDeltaRatio <= 0.03;
+        isShowingLoopFrame = isCenteredOnLoop && isZoomAtLoopFit;
+      } else {
+        isShowingLoopFrame = isCenteredOnLoop;
+      }
+    }
+  }
+
+  const shouldShowRecenter = isSmartLoopContext
+    ? (freeLookReact || !isShowingLoopFrame)
+    : (freeLookReact || (smartCamIsStatic && !isCenteredOnPlayhead));
+
+  const recenterPillLabel = isSmartLoopContext ? 'Show loop' : 'Recenter';
+  const recenterPillTitle = isSmartLoopContext
+    ? 'Show the full loop in view'
+    : 'Re-center camera on the playhead';
+  const handleRecenterPill = isSmartLoopContext ? showLoopInSmartCam : jumpToPlayhead;
 
   return (
     <div
@@ -2095,7 +2146,7 @@ export function Grid({
           ? createPortal(
             <button
               type="button"
-              onClick={jumpToPlayhead}
+              onClick={handleRecenterPill}
               className="absolute z-40 pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full
                            bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
                            shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
@@ -2104,20 +2155,20 @@ export function Grid({
                 left: 'calc(50% + 15px)',
                 transform: 'translateX(-50%)',
               }}
-              title="Re-center camera on the playhead"
+              title={recenterPillTitle}
             >
               {/* Simple arrow-to-center icon using SVG */}
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M7 13V1M7 13L3 9M7 13l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              Recenter
+              {recenterPillLabel}
             </button>,
             gridOverlayRoot,
           )
           : (
             <button
               type="button"
-              onClick={jumpToPlayhead}
+              onClick={handleRecenterPill}
               className="absolute z-40 pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full
                            bg-sky-500/80 hover:bg-sky-400/90 text-white text-xs font-semibold
                            shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
@@ -2126,13 +2177,13 @@ export function Grid({
                 left: 'calc(50% + 15px)',
                 transform: 'translateX(-50%)',
               }}
-              title="Re-center camera on the playhead"
+              title={recenterPillTitle}
             >
               {/* Simple arrow-to-center icon using SVG */}
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M7 13V1M7 13L3 9M7 13l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              Recenter
+              {recenterPillLabel}
             </button>
           )
       )}
@@ -2220,13 +2271,15 @@ export function Grid({
           ? (
             loopEnabled && (loopHandleDragRef.current || isHoveringLoopHandle)
               ? 'cursor-ew-resize'
-              : (dragState?.isDragging
+              : ((dragState?.isDragging || !!groupDragRef.current?.isDragging)
                 ? 'cursor-grabbing'
-                : (isShiftHeld
-                  ? (isHoveringSelectedNode ? 'cursor-grab' : 'cursor-default')
+                : (isHoveringSelectedNode
+                  ? 'cursor-grab'
                   : (isHoveringNode
-                    ? 'cursor-grab'
-                    : (selectedNodeKeys.size > 1 ? 'cursor-default' : 'cursor-crosshair'))))
+                    ? 'cursor-pointer'
+                    : (isShiftHeld
+                      ? 'cursor-default'
+                      : (selectedNodeKeys.size > 1 ? 'cursor-default' : 'cursor-crosshair')))))
           )
           : (
             followMode.isDraggingTimeline

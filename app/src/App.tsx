@@ -47,10 +47,8 @@ function App() {
   const autoTranspositionNotice = useAppStore((state) => state.autoTranspositionNotice);
   const mode = useAppStore((state) => state.mode);
   const showMinimap = useAppStore((state) => state.display.showMinimap);
-  const showChordTrack = useAppStore((state) => state.display.showChordTrack);
   const setPlaying = useAppStore((state) => state.setPlaying);
   const voiceStates = useAppStore((state) => state.voiceStates);
-  const disableChordTrack = useAppStore((state) => state.disableChordTrack);
   const undo = useAppStore((state) => state.undo);
   const redo = useAppStore((state) => state.redo);
   const canUndo = useAppStore((state) => state.canUndo);
@@ -281,12 +279,13 @@ function App() {
 
         // If the user pressed Play (not starting a recording), seek to the
         // correct start position:
-        // - Loop ON  → start from the loop start point
-        // - Loop OFF → start from the very beginning (bar 1)
+        // - Loop ON  → always start from the loop start point
+        // - Loop OFF → resume from the current paused position
         if (playJustStarted && !recordingJustStarted) {
-          playbackEngine.resetLoopCount();
-          const seekTarget = pbLoopEnabled ? pbLoopStart : 0;
-          playbackEngine.seek(seekTarget);
+          if (pbLoopEnabled) {
+            playbackEngine.resetLoopCount();
+            playbackEngine.seek(pbLoopStart);
+          }
         }
 
         playbackEngine.play(countInBars).then(() => {
@@ -391,7 +390,10 @@ function App() {
   }, [globalReverb]);
 
   /**
-   * Keyboard controls (Space for play/pause/stop recording).
+   * Keyboard controls:
+   * - Space: play/pause (or stop recording/count-in)
+   * - Shift+Space: play from beginning
+   * - R: restart transport (same behavior as Restart button)
    */
   const { startRecording, stopRecording } = useRecording();
 
@@ -407,6 +409,28 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.code === 'KeyR') {
+        e.preventDefault();
+        blurIfButtonFocused();
+
+        // Match the Restart transport button behavior exactly.
+        playbackEngine.seek(0);
+        useAppStore.getState().triggerCameraFollowReset();
+        return;
+      }
+
+      if (e.code === 'Space' && e.shiftKey) {
+        e.preventDefault();
+        blurIfButtonFocused();
+
+        // "Play from beginning" should seek first, then ensure playback is on.
+        playbackEngine.resetLoopCount();
+        playbackEngine.seek(0);
+        useAppStore.getState().setPosition(0);
+        setPlaying(true);
         return;
       }
 
@@ -673,24 +697,10 @@ function App() {
             className="absolute inset-0 z-40 pointer-events-none"
           />
 
-          {/* Chord Track disable button rendered ABOVE the right-edge fade mask. */}
-          {mode === 'create' && showChordTrack && arrangement?.chords && arrangement.chords.length > 0 && (
-            <button
-              type="button"
-              className="absolute pointer-events-auto w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-[var(--text-muted)] hover:text-red-300 hover:bg-red-500/10 hover:border-red-500/20 transition-colors"
-              style={{
-                right: '2.25rem',
-                top: showMinimap ? '9.25rem' : '6.25rem',
-              }}
-              title="Disable Chord Track"
-              onClick={(e) => {
-                e.stopPropagation();
-                disableChordTrack();
-              }}
-            >
-              🗑
-            </button>
-          )}
+          {/*
+            Chord-track disable button is rendered inside GridChordLaneEditor.
+            Keep only one source of truth so duplicate trash icons cannot appear.
+          */}
         </div>
       </div>
 

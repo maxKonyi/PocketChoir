@@ -59,6 +59,7 @@ type GroupDragState = {
   startMouseY: number;
   lastDeltaT16: number;
   lastDeltaSemi: number;
+  isDragging: boolean;
 };
 
 type GridMargins = {
@@ -520,15 +521,25 @@ export function useGridInteractions({
       const currentSelection = useAppStore.getState().createView.selectedNodeKeys;
       const isAlreadySelected = currentSelection.has(hitKey);
 
-      // Handle selection modifiers:
+      // Handle selection modifiers.
+      // IMPORTANT: We also update hover cursor state immediately so the cursor
+      // doesn't lag until the next mousemove event.
       if (e.shiftKey) {
-        // Shift+click now toggles selection membership (add/remove).
+        // Shift+click toggles selection membership (add/remove).
         toggleNodeInSelection(hitKey);
+
+        // We can't reliably know the next selection set without reading the store.
+        // So read it back immediately and update hover-selected flag.
+        const nextSelection = useAppStore.getState().createView.selectedNodeKeys;
+        setIsHoveringSelectedNode(nextSelection.has(hitKey));
       } else if (!isAlreadySelected) {
         // Plain click on unselected node: select only this one.
         selectNode(hitKey);
+        setIsHoveringSelectedNode(true);
+      } else {
+        // Plain click on an already-selected node.
+        setIsHoveringSelectedNode(true);
       }
-      // If plain click on already-selected node: keep selection (for group drag).
 
       // Start audition for clicked regular notes only.
       // Anchors are purely timing controls and should not audition.
@@ -578,6 +589,7 @@ export function useGridInteractions({
           startMouseY: e.clientY,
           lastDeltaT16: 0,
           lastDeltaSemi: 0,
+          isDragging: false,
         };
         placingNewNodeRef.current = null;
         return;
@@ -885,6 +897,7 @@ export function useGridInteractions({
       });
 
       if (incrT16 !== 0 || incrSemi !== 0) {
+        gd.isDragging = true;
         if (!hasPushedDragHistoryRef.current) {
           pushHistoryCheckpoint();
           hasPushedDragHistoryRef.current = true;
