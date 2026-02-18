@@ -1,4 +1,5 @@
 import type { MutableRefObject, RefObject, ReactNode } from 'react';
+import { Trash2 } from 'lucide-react';
 import type { Arrangement, LyricConnector } from '../../types';
 import {
   type LyricHoldSpan,
@@ -124,14 +125,15 @@ export function GridLyricLaneEditor({
 
               <button
                 type="button"
-                className="absolute right-2 top-1/2 -translate-y-1/2 h-6 px-2 rounded-md border border-red-400/25 bg-red-500/10 text-[10px] font-semibold text-red-200 hover:bg-red-500/16"
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6 rounded-md border border-red-400/25 bg-red-500/10 text-red-200 hover:bg-red-500/16 flex items-center justify-center"
                 onClick={(e) => {
                   e.stopPropagation();
                   disableLyricsTrack();
                 }}
                 title="Disable lyrics track"
+                aria-label="Disable lyrics track"
               >
-                Disable
+                <Trash2 size={14} />
               </button>
 
               {(() => {

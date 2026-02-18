@@ -1,4 +1,5 @@
 import type { MutableRefObject, RefObject, ReactNode } from 'react';
+import { Trash2 } from 'lucide-react';
 import type { Arrangement } from '../../types';
 import {
   cameraLeftWorldT,
@@ -8,6 +9,8 @@ import {
 } from '../../utils/followCamera';
 import { getCameraCenterWorldT } from '../../utils/cameraState';
 import { isChordDiatonic } from './gridDataUtils';
+
+// Note: RefObject is kept for chordLaneRef; MutableRefObject for camera-track and drag refs.
 
 /**
  * Small ref-state object used while a user drags a chord boundary handle.
@@ -29,8 +32,10 @@ type GridChordLaneEditorProps = {
   gridMarginLeft: number;
   gridMarginRight: number;
   gridMarginTop: number;
-  containerRef: RefObject<HTMLDivElement | null>;
   chordLaneRef: RefObject<HTMLDivElement | null>;
+  // Inner div that receives translateX every RAF frame for smooth camera tracking.
+  // Grid.tsx drives this via a requestAnimationFrame loop, same as the lyric lane.
+  chordLaneCameraTrackRef: MutableRefObject<HTMLDivElement | null>;
   chordBoundaryDragRef: MutableRefObject<ChordBoundaryDragState | null>;
   followModePxPerT: number;
   followModePendingWorldT: number | null;
@@ -45,6 +50,7 @@ type GridChordLaneEditorProps = {
   enableChordTrack: () => void;
   splitChordAt: (t16: number) => void;
   deleteChord: (index: number) => void;
+  disableChordTrack: () => void;
   commitChordNameEdit: () => void;
 };
 
@@ -61,8 +67,8 @@ export function GridChordLaneEditor({
   gridMarginLeft,
   gridMarginRight,
   gridMarginTop,
-  containerRef,
   chordLaneRef,
+  chordLaneCameraTrackRef,
   chordBoundaryDragRef,
   followModePxPerT,
   followModePendingWorldT,
@@ -77,6 +83,7 @@ export function GridChordLaneEditor({
   enableChordTrack,
   splitChordAt,
   deleteChord,
+  disableChordTrack,
   commitChordNameEdit,
 }: GridChordLaneEditorProps) {
   const chords = arrangement.chords ?? [];
@@ -178,6 +185,8 @@ export function GridChordLaneEditor({
           e.stopPropagation();
         }}
       >
+        {/* ── Static UI: enable button or disable (trash) button ── */}
+        {/* These live OUTSIDE the overflow-hidden chord lane so they are never clipped. */}
         <div
           className="absolute"
           style={{
@@ -185,12 +194,16 @@ export function GridChordLaneEditor({
             right: 0,
             top: 12,
             height: 24,
+            // Pointer events only on the button areas, not the whole bar
+            pointerEvents: 'none',
           }}
         >
           {chords.length === 0 ? (
+            // No chords yet: show the "Enable" button spanning the full width
             <button
               type="button"
               className="w-full h-full rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs font-semibold"
+              style={{ pointerEvents: 'auto' }}
               onClick={(e) => {
                 e.stopPropagation();
                 enableChordTrack();
@@ -199,55 +212,70 @@ export function GridChordLaneEditor({
               Enable Chord Track
             </button>
           ) : (
-            <>
-              {/* Hover split marker */}
-              {hoverSplitT16 !== null && hoverSplitScreenX !== null && (
-                <div
-                  className="absolute top-0 h-full"
-                  style={{
-                    left: hoverSplitScreenX,
-                    transform: 'translateX(-50%)',
-                    pointerEvents: 'none',
-                  }}
-                >
-                  <div className="absolute left-1/2 top-0 -translate-x-1/2 w-px h-full bg-white/25" />
-                  <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full border border-white/20 bg-white/10 text-[var(--text-primary)] text-[12px] font-black flex items-center justify-center cursor-pointer">
-                    +
-                  </div>
-                </div>
-              )}
+            // Chords exist: show a small trash icon button on the right to disable the track.
+            // Positioned outside overflow-hidden so it is never clipped by the scrolling lane.
+            <button
+              type="button"
+              className="absolute right-0 top-1/2 -translate-y-1/2 h-6 w-6 rounded-md border border-red-400/25 bg-red-500/10 text-red-200 hover:bg-red-500/16 z-10 flex items-center justify-center"
+              style={{ pointerEvents: 'auto' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                disableChordTrack();
+              }}
+              title="Disable chord track"
+              aria-label="Disable chord track"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
 
-              {/* Chord blocks (synced to grid camera + zoom) */}
+        {/* ── Scrolling chord blocks (camera-tracked via RAF translateX) ── */}
+        {chords.length > 0 && (
+          <div
+            className="absolute overflow-hidden"
+            style={{
+              left: 0,
+              // Leave room on the right for the Disable button
+              right: 60,
+              top: 12,
+              height: 24,
+            }}
+          >
+            {/* Hover split marker — positioned in screen space so it doesn't scroll */}
+            {hoverSplitT16 !== null && hoverSplitScreenX !== null && (
+              <div
+                className="absolute top-0 h-full"
+                style={{
+                  left: hoverSplitScreenX,
+                  transform: 'translateX(-50%)',
+                  pointerEvents: 'none',
+                }}
+              >
+                <div className="absolute left-1/2 top-0 -translate-x-1/2 w-px h-full bg-white/25" />
+                <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full border border-white/20 bg-white/10 text-[var(--text-primary)] text-[12px] font-black flex items-center justify-center cursor-pointer">
+                  +
+                </div>
+              </div>
+            )}
+
+            {/* Camera-tracked inner div: Grid.tsx applies translateX every RAF frame */}
+            <div
+              ref={chordLaneCameraTrackRef}
+              className="absolute inset-y-0 left-0 will-change-transform"
+            >
               {(() => {
                 const pxPerTVal = followModePxPerT;
-
-                // Width of the chord lane's visible area (same as the grid drawing width).
-                const laneWidth = (() => {
-                  const laneRect = chordLaneRef.current?.getBoundingClientRect();
-                  if (laneRect) return laneRect.width;
-                  const containerRect = containerRef.current?.getBoundingClientRect();
-                  if (!containerRect) return 0;
-                  return containerRect.width - gridMarginLeft - gridMarginRight;
-                })();
-
-                const worldT = followModePendingWorldT !== null
-                  ? followModePendingWorldT
-                  : getCameraCenterWorldT();
-
-                const camLeft = cameraLeftWorldT(worldT, laneWidth, pxPerTVal);
-
-                // DAW-style: no tiling — draw tile 0 only
                 const blocks: ReactNode[] = [];
 
                 for (let idx = 0; idx < chords.length; idx++) {
                   const chord = chords[idx];
-                  const drawWorldT = chord.t16;
 
-                  const leftPx = worldTToScreenX(drawWorldT, camLeft, pxPerTVal);
+                  // Position chord blocks by t16 * pxPerT (world-space offset from t=0).
+                  // The parent div receives translateX from the RAF loop in Grid.tsx,
+                  // so these positions stay in sync with the canvas grid exactly.
+                  const leftPx = chord.t16 * pxPerTVal;
                   const widthPx = Math.max(1, chord.duration16 * pxPerTVal);
-
-                  // Cull blocks far outside the lane to reduce DOM work.
-                  if (leftPx > laneWidth + 200 || leftPx + widthPx < -200) continue;
 
                   const isEditing = editingChordIndex === idx;
                   const isDiatonicChord = isChordDiatonic(chord, arrangement);
@@ -331,9 +359,9 @@ export function GridChordLaneEditor({
 
                 return blocks;
               })()}
-            </>
-          )}
-        </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

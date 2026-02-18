@@ -386,6 +386,11 @@ export function useGridRenderer({
     // The chord-only overlay layer must remain clean so it doesn't cover contours
     // or bypass the vertical (top/bottom) fade.
     if (!onlyChords) {
+      // Apply the same gridOpacity that controls the horizontal pitch lines,
+      // so the Display Settings slider affects ALL grid lines uniformly.
+      ctx.save();
+      ctx.globalAlpha = display.gridOpacity;
+
       // Uses the memoized array (only recomputed when bars/timeSig change).
       const gridLines = memoizedGridLines;
 
@@ -464,6 +469,10 @@ export function useGridRenderer({
           ctx.fillText(`${bar + 1}`, bx, gridTop - 10);
         }
       }
+
+      // Restore after vertical grid lines so subsequent passes (chords, contours,
+      // playhead, etc.) are not affected by display.gridOpacity.
+      ctx.restore();
     }
 
     // Draw chord track (tiled across visible tiles)

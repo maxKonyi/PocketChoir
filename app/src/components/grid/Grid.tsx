@@ -49,7 +49,6 @@ import {
 import {
   getCameraCenterWorldT,
   setCameraCenterWorldT,
-  isFreeLook,
   setFreeLook,
 } from '../../utils/cameraState';
 import { useGridRenderer } from './useGridRenderer';
@@ -552,13 +551,8 @@ export function Grid({
       return;
     }
 
-    // If this play-start came from a user panned FREE_LOOK state,
-    // promote back to explicit FOLLOW mode.
-    if (isFreeLook()) {
-      setCameraMode('follow');
-    }
-
-    // Otherwise: clear free-look and snap to playhead for strict follow.
+    // Clear free-look and snap to playhead so Smart mode resumes following.
+    // We do NOT promote to 'follow' mode — Smart mode handles follow itself.
     const worldT = playbackEngine.getWorldPositionT16();
     setCameraCenterWorldT(worldT);
     setFreeLook(false);
@@ -686,6 +680,7 @@ export function Grid({
 
   // Chord-track editor actions (Create mode)
   const enableChordTrack = useAppStore((state) => state.enableChordTrack);
+  const disableChordTrack = useAppStore((state) => state.disableChordTrack);
   const setChordName = useAppStore((state) => state.setChordName);
   const splitChordAt = useAppStore((state) => state.splitChordAt);
   const resizeChordBoundary = useAppStore((state) => state.resizeChordBoundary);
@@ -706,6 +701,10 @@ export function Grid({
 
   // DOM ref for the chord lane overlay (used for boundary-drag hit testing).
   const chordLaneRef = useRef<HTMLDivElement | null>(null);
+  // DOM ref for the inner camera-tracking div inside the chord lane.
+  // We apply translateX every RAF frame so chord blocks follow the camera
+  // exactly like the lyric lane does, without waiting for a React re-render.
+  const chordLaneCameraTrackRef = useRef<HTMLDivElement | null>(null);
 
   // DOM ref for the lyrics lane overlay (used for node-aligned lyric editing).
   const lyricLaneRef = useRef<HTMLDivElement | null>(null);
@@ -906,6 +905,59 @@ export function Grid({
     setEditingLyricT16(null);
     setEditingLyricText('');
   }, [editingLyricT16, hiddenLyricNodeTimes]);
+
+  // Keep the DOM-based Create-mode chord lane continuously synced to the camera.
+  // Uses the same RAF approach as the lyric lane: camera position lives in a
+  // mutable module ref, so we must poll it every frame rather than relying on
+  // React re-renders.
+  useEffect(() => {
+    if (mode !== 'create') return;
+    if (!display.showChordTrack) return;
+    if (!(arrangement?.chords && arrangement.chords.length > 0)) return;
+
+    let rafId = 0;
+
+    const updateChordTrackTransform = () => {
+      const laneEl = chordLaneRef.current;
+      const trackEl = chordLaneCameraTrackRef.current;
+      const pxPerTVal = followMode.pxPerT;
+
+      if (laneEl && trackEl && pxPerTVal > 0) {
+        const measuredLaneWidth = laneEl.getBoundingClientRect().width;
+        const viewportWidth = followMode.viewportWidthPx > 0 ? followMode.viewportWidthPx : measuredLaneWidth;
+
+        if (viewportWidth > 0) {
+          const currentWorldT = followMode.pendingWorldT !== null
+            ? followMode.pendingWorldT
+            : getCameraCenterWorldT();
+          const camLeft = cameraLeftWorldT(currentWorldT, viewportWidth, pxPerTVal);
+
+          // Match the exact camera snapping logic used by canvas rendering so
+          // chord block edges stay pixel-aligned with the grid lines.
+          const dpr = window.devicePixelRatio || 1;
+          const camLeftSnapped = display.snapCameraToPixels
+            ? (Math.round(camLeft * pxPerTVal * dpr) / dpr) / pxPerTVal
+            : camLeft;
+          const translateX = worldTToScreenX(0, camLeftSnapped, pxPerTVal);
+
+          trackEl.style.transform = `translateX(${translateX}px)`;
+        }
+      }
+
+      rafId = window.requestAnimationFrame(updateChordTrackTransform);
+    };
+
+    rafId = window.requestAnimationFrame(updateChordTrackTransform);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [
+    mode,
+    display.showChordTrack,
+    arrangement?.chords,
+    display.snapCameraToPixels,
+    followMode.viewportWidthPx,
+    followMode.pxPerT,
+    followMode.pendingWorldT,
+  ]);
 
   // Keep the DOM-based Create-mode lyric lane continuously synced to the camera.
   // We update this with RAF because camera position lives in a mutable module ref,
@@ -2000,8 +2052,9 @@ export function Grid({
   }, [mode, arrangement, setSharedCameraAndMaybeSeek, adjustPlayPitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId, clearAllFocus, clearNodeSelection, deleteSelectedNodes, copySelectedNodes, cutSelectedNodes, pasteNodes, duplicateSelectedNodes, setNodeSelection, selectedVoiceId]);
 
   /**
-   * Jump to Playhead: snap the camera to the playhead and force FOLLOW mode.
-   * This is the explicit "re-center and follow" action.
+   * Jump to Playhead: snap the camera to the playhead and resume following.
+   * Stays in Smart mode if the user is already in Smart mode — only switches
+   * to Follow if the user was in Static mode (where Smart cam is disabled).
    */
   const jumpToPlayhead = useCallback(() => {
     const playheadWorldT = playbackEngine.getWorldPositionT16();
@@ -2010,10 +2063,13 @@ export function Grid({
     // Clear free-look so the evaluator doesn't return FREE_LOOK.
     setFreeLook(false);
     setFreeLookReact(false);
-    // Recenter should always return to FOLLOW behavior.
-    setCameraMode('follow');
+    // Only switch to Follow if the user is in Static mode (which has no auto-follow).
+    // Smart mode already has follow logic — just clearing free-look is enough.
+    const currentCameraMode = useAppStore.getState().followMode.cameraMode;
+    if (currentCameraMode === 'static') {
+      setCameraMode('smart');
+    }
     // Reset prevState so evaluator runs a fresh check with no stickiness.
-    // After snapping, camera center = playhead and follow mode is active.
     smartCamStateRef.current = null;
     smartCamIsStaticRef.current = false;
     setSmartCamIsStatic(false);
@@ -2099,8 +2155,8 @@ export function Grid({
           gridMarginLeft={GRID_MARGIN.left}
           gridMarginRight={GRID_MARGIN.right}
           gridMarginTop={GRID_MARGIN.top}
-          containerRef={containerRef}
           chordLaneRef={chordLaneRef}
+          chordLaneCameraTrackRef={chordLaneCameraTrackRef}
           chordBoundaryDragRef={chordBoundaryDragRef}
           followModePxPerT={followMode.pxPerT}
           followModePendingWorldT={followMode.pendingWorldT}
@@ -2115,6 +2171,7 @@ export function Grid({
           enableChordTrack={enableChordTrack}
           splitChordAt={splitChordAt}
           deleteChord={deleteChord}
+          disableChordTrack={disableChordTrack}
           commitChordNameEdit={commitChordNameEdit}
         />
       )}
