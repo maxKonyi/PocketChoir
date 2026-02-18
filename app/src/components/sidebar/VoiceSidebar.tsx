@@ -288,7 +288,7 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
         <div className="relative flex items-center justify-center text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-[0.25em]">
           <div className="flex items-center gap-1.25">
             <Layers size={20} />
-            <span>Tracks</span>
+            <span>Parts</span>
           </div>
 
           {isCreateMode && (

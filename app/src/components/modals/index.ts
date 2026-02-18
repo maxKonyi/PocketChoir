@@ -4,3 +4,4 @@ export { MicSetupModal } from './MicSetupModal';
 export { DisplaySettingsModal } from './DisplaySettingsModal';
 export { CreateArrangementModal } from './CreateArrangementModal';
 export { MixerModal } from './MixerModal';
+export { HelpModal } from './HelpModal';

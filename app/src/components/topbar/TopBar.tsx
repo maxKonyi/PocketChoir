@@ -6,7 +6,7 @@
    ============================================================ */
 
 import { useEffect, useRef, useState } from 'react';
-import { Library, Mic, Eye, Palette, Download, Save, Check, AlertCircle } from 'lucide-react';
+import { Library, Mic, Eye, Palette, Download, Save, Check, AlertCircle, CircleHelp } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { applyTheme, type ThemeName } from '../../utils/colors';
 import { AudioService } from '../../services/AudioService';
@@ -40,6 +40,7 @@ export function TopBar() {
   const setLibraryOpen = useAppStore((state) => state.setLibraryOpen);
   const setMicSetupOpen = useAppStore((state) => state.setMicSetupOpen);
   const setDisplaySettingsOpen = useAppStore((state) => state.setDisplaySettingsOpen);
+  const setHelpOpen = useAppStore((state) => state.setHelpOpen);
   const setMode = useAppStore((state) => state.setMode);
   const setTheme = useAppStore((state) => state.setTheme);
   const setCreateModalOpen = useAppStore((state) => state.setCreateModalOpen);
@@ -294,6 +295,22 @@ export function TopBar() {
           title="Display Settings"
         >
           <Eye size={16} />
+        </button>
+
+        {/* Help */}
+        <button
+          onClick={() => setHelpOpen(true)}
+          aria-label="Open Help"
+          className="
+            p-2.5 rounded-xl
+            text-[var(--text-secondary)]
+            hover:bg-white/10 hover:text-[var(--text-primary)]
+            hover:shadow-[0_0_15px_-3px_rgba(255,255,255,0.1)]
+            transition-all duration-200 cursor-pointer
+          "
+          title="Help"
+        >
+          <CircleHelp size={16} />
         </button>
 
         {/* Subtle divider */}

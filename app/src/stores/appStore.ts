@@ -476,6 +476,7 @@ interface AppState {
   isDisplaySettingsOpen: boolean;
   isSaveLoadOpen: boolean;
   isCreateModalOpen: boolean;
+  isHelpOpen: boolean;
 
   // History (undo/redo)
   history: ArrangementSnapshot[];
@@ -684,6 +685,7 @@ interface AppActions {
   setDisplaySettingsOpen: (open: boolean) => void;
   setSaveLoadOpen: (open: boolean) => void;
   setCreateModalOpen: (open: boolean) => void;
+  setHelpOpen: (open: boolean) => void;
   setCreateModalMode: (mode: 'create' | 'edit') => void;
   setEditingLibraryItemId: (itemId: string | null) => void;
 
@@ -813,6 +815,7 @@ const initialState: AppState = {
   isDisplaySettingsOpen: false,
   isSaveLoadOpen: false,
   isCreateModalOpen: false,
+  isHelpOpen: false,
   history: [],
   future: [],
   canUndo: false,
@@ -2746,6 +2749,7 @@ export const useAppStore = create<AppState & AppActions>()(
       setDisplaySettingsOpen: (open) => set({ isDisplaySettingsOpen: open }),
       setSaveLoadOpen: (open) => set({ isSaveLoadOpen: open }),
       setCreateModalOpen: (open) => set({ isCreateModalOpen: open }),
+      setHelpOpen: (open) => set({ isHelpOpen: open }),
       setCreateModalMode: (mode) => set({ createModalMode: mode }),
       setEditingLibraryItemId: (itemId) => set({ editingLibraryItemId: itemId }),
 

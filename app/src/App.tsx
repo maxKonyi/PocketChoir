@@ -11,7 +11,7 @@ import { VoiceSidebar } from './components/sidebar';
 import { TransportBar } from './components/transport';
 import { Grid } from './components/grid/Grid';
 import { Minimap } from './components/grid/Minimap';
-import { LibraryModal, MixerModal, MicSetupModal, DisplaySettingsModal, CreateArrangementModal } from './components/modals';
+import { LibraryModal, MixerModal, MicSetupModal, DisplaySettingsModal, CreateArrangementModal, HelpModal } from './components/modals';
 import { BackgroundVideo } from './components/ui/BackgroundVideo';
 import { DevControls } from './components/dev/DevControls';
 import { useAppStore } from './stores/appStore';
@@ -59,7 +59,8 @@ function App() {
     state.isMicSetupOpen ||
     state.isDisplaySettingsOpen ||
     state.isSaveLoadOpen ||
-    state.isCreateModalOpen
+    state.isCreateModalOpen ||
+    state.isHelpOpen
   ));
 
   const microphoneState = useAppStore((state) => state.microphoneState);
@@ -716,6 +717,7 @@ function App() {
       <MicSetupModal />
       <DisplaySettingsModal />
       <CreateArrangementModal />
+      <HelpModal />
 
       {/* Auto-transposition message (shows after picking an arrangement or closing mic setup) */}
       {autoTranspositionNotice && (
