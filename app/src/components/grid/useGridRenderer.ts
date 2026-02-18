@@ -29,6 +29,7 @@ import {
   localT16ToNearestWorldT,
   semitoneToY,
 } from './gridDataUtils';
+import type { useUnisonContourDialKit } from './UnisonContourDialKit';
 
 type GridMode = 'play' | 'create';
 type GridLabelFormat = 'degree' | 'solfege' | 'noteName';
@@ -158,6 +159,7 @@ type UseGridRendererParams = {
   memoizedGridLines: GridLine[];
   hoverPreviewRef: MutableRefObject<HoverPreviewState | null>;
   marqueeRef: MutableRefObject<MarqueeState | null>;
+  unisonDialKitParams?: ReturnType<typeof useUnisonContourDialKit>;
 };
 
 /**
@@ -203,7 +205,10 @@ export function useGridRenderer({
   memoizedGridLines,
   hoverPreviewRef,
   marqueeRef,
+  unisonDialKitParams,
 }: UseGridRendererParams): () => void {
+  // Use passed DialKit parameters (from App.tsx) instead of calling hook here
+  // This ensures only ONE DialKit panel is created at the root level
   return useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -732,14 +737,14 @@ export function useGridRenderer({
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
           }
 
           // Main line
           ctx.shadowBlur = 0;
           ctx.strokeStyle = voiceColor;
           ctx.lineWidth = contourLineWidth;
-          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize);
+          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
           ctx.restore();
         }
       }
@@ -789,7 +794,7 @@ export function useGridRenderer({
             const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 
             maskCtx.lineWidth = contourLineWidth;
-            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, '#ffffff', display.noteSize);
+            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, '#ffffff', display.noteSize, unisonDialKitParams);
           }
         }
         maskCtx.restore();
