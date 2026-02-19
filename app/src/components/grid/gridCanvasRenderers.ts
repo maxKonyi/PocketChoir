@@ -139,7 +139,11 @@ export function drawVoiceContour(
       }
 
       const transition = ctx.createLinearGradient(pieceStartX, targetY, pieceEndX, targetY);
-      const prismAtStart = getPrismaticContourColorAtPhase(pieceStartX + prismAnimationPhasePx);
+      // IMPORTANT: Use the same phase/color model as the rainbow segment itself.
+      // If DialKit is active, this keeps the boundary color continuous when prismCyclePx changes.
+      const prismAtStart = unisonDialKitParams && unisonDialKitParams.enablePrismaticGradient
+        ? getDialKitPrismaticContourColorAtPhase(pieceStartX + prismAnimationPhasePx, unisonDialKitParams)
+        : getPrismaticContourColorAtPhase(pieceStartX + prismAnimationPhasePx);
       const dist = Math.max(1, pieceEndX - pieceStartX);
       const blendRatio = Math.min(0.5, 40 / dist);
       transition.addColorStop(0, prismAtStart);
@@ -466,7 +470,11 @@ export function drawVoiceContour(
             }
 
             const transition = ctx.createLinearGradient(bendStartX, bendStartY, x, stackedY);
-            const prismAtStart = getPrismaticContourColorAtPhase(bendStartX + prismAnimationPhasePx);
+            // IMPORTANT: Use the same phase/color model as the rainbow bend segment.
+            // This avoids a color jump at the bend boundary when DialKit cycle differs from legacy 400px.
+            const prismAtStart = unisonDialKitParams && unisonDialKitParams.enablePrismaticGradient
+              ? getDialKitPrismaticContourColorAtPhase(bendStartX + prismAnimationPhasePx, unisonDialKitParams)
+              : getPrismaticContourColorAtPhase(bendStartX + prismAnimationPhasePx);
             const bendDist = Math.max(1, Math.sqrt((x - bendStartX) ** 2 + (stackedY - bendStartY) ** 2));
             const blendRatio = Math.min(0.5, 40 / bendDist);
             transition.addColorStop(0, prismAtStart);
