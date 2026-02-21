@@ -58,6 +58,8 @@ export function CreateArrangementModal() {
 
   // Form state
   const [title, setTitle] = useState('New Arrangement');
+  const [description, setDescription] = useState('');
+  const [difficulty, setDifficulty] = useState(1);
   const [tempoText, setTempoText] = useState('80');
   const [tonic, setTonic] = useState('C');
   const [scale, setScale] = useState<ScaleType>('major');
@@ -76,6 +78,8 @@ export function CreateArrangementModal() {
 
     if (isEditing && arrangement) {
       setTitle(arrangement.title);
+      setDescription(arrangement.description || '');
+      setDifficulty(arrangement.difficulty || 1);
       setTempoText(String(arrangement.tempo));
       setTonic(arrangement.tonic);
       setScale(arrangement.scale);
@@ -91,6 +95,8 @@ export function CreateArrangementModal() {
 
     // Defaults for creating a new arrangement
     setTitle('New Arrangement');
+    setDescription('');
+    setDifficulty(1);
     setTempoText('80');
     setTonic('C');
     setScale('major');
@@ -118,10 +124,10 @@ export function CreateArrangementModal() {
    */
   const handleAddVoice = () => {
     if (voices.length >= 6) return; // Max 6 voices
-    
+
     const newId = `v${voices.length + 1}`;
     const newColor = VOICE_COLORS[voices.length % VOICE_COLORS.length];
-    
+
     setVoices([
       ...voices,
       { id: newId, name: `Voice ${voices.length + 1}`, color: newColor },
@@ -151,18 +157,18 @@ export function CreateArrangementModal() {
     const id = `arr_custom_${Date.now()}`;
 
     const tempo = parseTempo(tempoText, 80);
-    
+
     // Create empty arrangement with specified parameters
     const arrangement: Arrangement = {
       id,
       title,
-      description: 'Custom arrangement',
+      description,
       tempo,
       timeSig: { numerator: timeSigNum, denominator: timeSigDen },
       bars,
       tonic,
       scale,
-      difficulty: 1,
+      difficulty,
       tags: ['custom'],
       voices: voices.map((v) => ({
         id: v.id,
@@ -187,6 +193,8 @@ export function CreateArrangementModal() {
 
     updateArrangementParams({
       title,
+      description,
+      difficulty,
       tempo,
       tonic,
       scale,
@@ -218,7 +226,7 @@ export function CreateArrangementModal() {
       aria-label="Create Arrangement"
     >
       {/* Backdrop */}
-      <div 
+      <div
         className="absolute inset-0 bg-black/40 backdrop-blur-md"
         onClick={handleCancel}
       />
@@ -265,6 +273,49 @@ export function CreateArrangementModal() {
                 focus:outline-none focus:border-[var(--accent-primary)]
               "
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            {/* Description */}
+            <div>
+              <label className="block text-sm text-[var(--text-secondary)] mb-1">
+                Description
+              </label>
+              <input
+                type="text"
+                value={description}
+                maxLength={60}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Optional description"
+                className="
+                  w-full px-3 py-2 rounded-lg
+                  bg-[var(--button-bg)] text-[var(--text-primary)]
+                  border border-[var(--border-color)]
+                  focus:outline-none focus:border-[var(--accent-primary)]
+                "
+              />
+            </div>
+
+            {/* Difficulty */}
+            <div>
+              <label className="block text-sm text-[var(--text-secondary)] mb-1">
+                Difficulty
+              </label>
+              <select
+                value={difficulty}
+                onChange={(e) => setDifficulty(parseInt(e.target.value, 10))}
+                className="
+                  w-full px-3 py-2 rounded-lg
+                  bg-[var(--button-bg)] text-[var(--text-primary)]
+                  border border-[var(--border-color)]
+                  cursor-pointer
+                "
+              >
+                {[1, 2, 3, 4, 5].map((level) => (
+                  <option key={level} value={level}>{level} - {['Novice', 'Beginner', 'Intermediate', 'Advanced', 'Expert'][level - 1]}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Tempo and Key row */}
@@ -403,19 +454,19 @@ export function CreateArrangementModal() {
                   Add Voice
                 </button>
               </div>
-              
+
               <div className="space-y-2">
                 {voices.map((voice) => (
-                  <div 
+                  <div
                     key={voice.id}
                     className="flex items-center gap-2 p-2 rounded-lg bg-white/5"
                   >
                     {/* Color indicator */}
-                    <div 
+                    <div
                       className="w-4 h-4 rounded-full"
                       style={{ backgroundColor: voice.color }}
                     />
-                    
+
                     {/* Name input */}
                     <input
                       type="text"
@@ -428,7 +479,7 @@ export function CreateArrangementModal() {
                         focus:outline-none focus:border-[var(--border-color)]
                       "
                     />
-                    
+
                     {/* Delete button */}
                     <button
                       onClick={() => handleRemoveVoice(voice.id)}

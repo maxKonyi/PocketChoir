@@ -318,44 +318,34 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
         {/* Global Toggles: VOICE (vocals) and GUIDES (synths) */}
         <div className="flex gap-2 px-1 pb-1">
           {/* VOICE toggle — mutes/unmutes all vocal tracks */}
-          <button
-            onClick={() => {
-              // Logic: If any vocal is unmuted, mute all. If all muted, unmute all.
-              const anyUnmuted = voiceStates.some(v => !v.vocalMuted);
-              voiceStates.forEach(v => setVoiceVocalMuted(v.voiceId, anyUnmuted));
-            }}
-            aria-label="Toggle all vocals"
-            className={`
-               flex-1 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all cursor-pointer
-               border border-white/5 shadow-sm
-               ${voiceStates.every(v => v.vocalMuted)
-                ? 'bg-red-500/20 text-red-200 border-red-500/30 hover:bg-red-500/30'
-                : 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary-light)] border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/30'
-              }
-             `}
-          >
-            Voice
-          </button>
+          <div className="flex-1 flex flex-col items-center gap-0.5">
+            <span className="text-[11px] font-regular tracking-widest uppercase text-[var(--text-secondary)]">Voice</span>
+            <button
+              onClick={() => {
+                const anyUnmuted = voiceStates.some(v => !v.vocalMuted);
+                voiceStates.forEach(v => setVoiceVocalMuted(v.voiceId, anyUnmuted));
+              }}
+              className={`w-9 h-3.5 rounded-full flex items-center px-1 transition-colors cursor-pointer border border-white/10 shadow-inner ${!voiceStates.every(v => v.vocalMuted) ? 'bg-[var(--accent-primary)]' : 'bg-white/10'}`}
+              aria-label="Toggle all vocals"
+            >
+              <div className={`w-2 h-2 rounded-full bg-white transition-all duration-200 shadow-sm ${!voiceStates.every(v => v.vocalMuted) ? 'translate-x-[18px]' : 'translate-x-0'}`} />
+            </button>
+          </div>
 
           {/* GUIDES toggle — mutes/unmutes all synth tracks */}
-          <button
-            onClick={() => {
-              // Logic: If any synth is unmuted, mute all. If all muted, unmute all.
-              const anyUnmuted = voiceStates.some(v => !v.synthMuted);
-              voiceStates.forEach(v => setVoiceSynthMuted(v.voiceId, anyUnmuted));
-            }}
-            aria-label="Toggle all guides"
-            className={`
-               flex-1 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all cursor-pointer
-               border border-white/5 shadow-sm
-               ${voiceStates.every(v => v.synthMuted)
-                ? 'bg-red-500/20 text-red-200 border-red-500/30 hover:bg-red-500/30'
-                : 'bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary-light)] border-[var(--accent-secondary)]/30 hover:bg-[var(--accent-secondary)]/30'
-              }
-             `}
-          >
-            Guides
-          </button>
+          <div className="flex-1 flex flex-col items-center gap-0.5">
+            <span className="text-[11px] font-regular tracking-widest uppercase text-[var(--text-secondary)]">Guides</span>
+            <button
+              onClick={() => {
+                const anyUnmuted = voiceStates.some(v => !v.synthMuted);
+                voiceStates.forEach(v => setVoiceSynthMuted(v.voiceId, anyUnmuted));
+              }}
+              className={`w-9 h-3.5 rounded-full flex items-center px-1 transition-colors cursor-pointer border border-white/10 shadow-inner ${!voiceStates.every(v => v.synthMuted) ? 'bg-[var(--accent-secondary)]' : 'bg-white/10'}`}
+              aria-label="Toggle all guides"
+            >
+              <div className={`w-2 h-2 rounded-full bg-white transition-all duration-200 shadow-sm ${!voiceStates.every(v => v.synthMuted) ? 'translate-x-[18px]' : 'translate-x-0'}`} />
+            </button>
+          </div>
         </div>
 
         {/* Voice controls — one two-row card per track */}

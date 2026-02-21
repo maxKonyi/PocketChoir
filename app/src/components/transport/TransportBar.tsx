@@ -7,30 +7,13 @@
 
 import { useMemo, useRef, useState } from 'react';
 
-import { ChevronDown, ChevronUp, Maximize2, Pause, Play, Repeat, SkipBack, ZoomIn, ZoomOut } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pause, Play, Repeat, SkipBack } from 'lucide-react';
 
 import { useAppStore } from '../../stores/appStore';
 import { playbackEngine } from '../../services/PlaybackEngine';
 import { transposeTonic } from '../../utils/music';
-import type { CameraMode } from '../../utils/smartCam';
 
-/* ------------------------------------------------------------
-   Helper: Format position as Bar:Beat
-   ------------------------------------------------------------ */
 
-function formatPosition(t16: number, timeSig: { numerator: number; denominator: number } = { numerator: 4, denominator: 4 }): string {
-  const beatsPerBar = timeSig.numerator;
-  // Calculate how many 16th notes fit in one beat based on the denominator.
-  // e.g. denominator=4 (quarter note beat) → 16/4 = 4 sixteenths per beat
-  // e.g. denominator=8 (eighth note beat)  → 16/8 = 2 sixteenths per beat
-  const sixteenthsPerBeat = 16 / timeSig.denominator;
-  const sixteenthsPerBar = beatsPerBar * sixteenthsPerBeat;
-
-  const bar = Math.floor(t16 / sixteenthsPerBar) + 1;
-  const beatInBar = Math.floor((t16 % sixteenthsPerBar) / sixteenthsPerBeat) + 1;
-
-  return `${bar}:${beatInBar}`;
-}
 
 /* ------------------------------------------------------------
    Component
@@ -41,24 +24,14 @@ export function TransportBar() {
   // Subscribe to individual playback fields instead of the whole playback object.
   // setPosition() fires ~30fps; subscribing to the whole object would re-render
   // this component 30fps for fields it doesn't display (e.g. loopEnd, loopStart).
-  const pbPosition = useAppStore((state) => state.playback.position);
   const pbIsPlaying = useAppStore((state) => state.playback.isPlaying);
   const pbLoopEnabled = useAppStore((state) => state.playback.loopEnabled);
   const pbMetronomeEnabled = useAppStore((state) => state.playback.metronomeEnabled);
   const arrangement = useAppStore((state) => state.arrangement);
   const transposition = useAppStore((state) => state.transposition);
-  const viewportWidthPx = useAppStore((state) => state.followMode.viewportWidthPx);
-  const zoomLevel = useAppStore((state) => state.display.zoomLevel);
-
-  // actions
   const setPlaying = useAppStore((state) => state.setPlaying);
   const setLoopEnabled = useAppStore((state) => state.setLoopEnabled);
   const setMetronomeEnabled = useAppStore((state) => state.setMetronomeEnabled);
-  const setHorizontalZoom = useAppStore((state) => state.setHorizontalZoom);
-  const setPxPerT = useAppStore((state) => state.setPxPerT);
-  const setMinPxPerT = useAppStore((state) => state.setMinPxPerT);
-  const setZoomLevel = useAppStore((state) => state.setZoomLevel);
-  const resetCreateView = useAppStore((state) => state.resetCreateView);
   const setTransposition = useAppStore((state) => state.setTransposition);
   const updateArrangementParams = useAppStore((state) => state.updateArrangementParams);
   const cameraMode = useAppStore((state) => state.followMode.cameraMode);
@@ -106,20 +79,6 @@ export function TransportBar() {
     setTransposition(next);
   };
 
-  const handleResetView = () => {
-    if (!arrangement) return;
-    const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
-    if (loopLenT <= 0) return;
-
-    const gridW = Math.max(0, viewportWidthPx);
-    if (gridW > 0) {
-      setMinPxPerT(gridW / (loopLenT * 2));
-      setPxPerT(gridW / loopLenT);
-    }
-
-    setZoomLevel(1);
-    resetCreateView();
-  };
 
   /**
    * Handle play/pause toggle.
@@ -154,131 +113,120 @@ export function TransportBar() {
     ">
 
       {/* LEFT SECTION: Key, Tempo, Time */}
-      <div className="flex items-center justify-between gap-2 z-10 w-[260px] shrink-0">
+      <div className="flex items-center justify-start gap-4 z-10 flex-1 min-w-0">
 
         <div className="flex items-center gap-2">
 
-        {/* Key Display - fixed-width pill + arrows outside on the bar */}
-        {arrangement && (
-          <div className="flex items-center gap-0.5">
-            {/* Key label in its own pill */}
-            <div className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5 w-[46px]">
-              <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">Key</span>
-              <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center w-full">{effectiveTonic ?? arrangement.tonic}</span>
-            </div>
+          {/* Key Display - fixed-width pill + arrows outside on the bar */}
+          {arrangement && (
+            <div className="flex items-center gap-0.5">
+              {/* Key label in its own pill */}
+              <div className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5 w-[46px]">
+                <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">Key</span>
+                <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center w-full">{effectiveTonic ?? arrangement.tonic}</span>
+              </div>
 
-            {/* Transpose arrows - directly on the transport bar, outside the pill */}
-            <div className="flex flex-col justify-center">
-              <button
-                onClick={() => commitTransposeDelta(1)}
-                aria-label="Transpose Up"
-                className="
+              {/* Transpose arrows - directly on the transport bar, outside the pill */}
+              <div className="flex flex-col justify-center">
+                <button
+                  onClick={() => commitTransposeDelta(1)}
+                  aria-label="Transpose Up"
+                  className="
                   w-5 h-5 flex items-center justify-center
                   text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/8 rounded
                   transition-all duration-150 cursor-pointer
                 "
-                title="Transpose Up (Semitone)"
-              >
-                <ChevronUp size={14} />
-              </button>
-              <button
-                onClick={() => commitTransposeDelta(-1)}
-                aria-label="Transpose Down"
-                className="
+                  title="Transpose Up (Semitone)"
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  onClick={() => commitTransposeDelta(-1)}
+                  aria-label="Transpose Down"
+                  className="
                   w-5 h-5 flex items-center justify-center
                   text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/8 rounded
                   transition-all duration-150 cursor-pointer
                 "
-                title="Transpose Down (Semitone)"
-              >
-                <ChevronDown size={14} />
-              </button>
+                  title="Transpose Down (Semitone)"
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Tempo Display - fixed-width pill, supports up to 999 BPM without resizing */}
-        {arrangement && (
-          <div
-            className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5 select-none w-[52px] cursor-ns-resize"
-            onDoubleClick={() => {
-              setIsEditingBpm(true);
-              setBpmDraft(String(bpmValue ?? Math.round(arrangement.tempo)));
-            }}
-            onPointerDown={(e) => {
-              if (isEditingBpm) return;
-              const startTempo = bpmValue ?? Math.round(arrangement.tempo);
-              bpmDragRef.current = {
-                isDragging: true,
-                startClientY: e.clientY,
-                startTempo,
-              };
-              (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-            }}
-            onPointerMove={(e) => {
-              const drag = bpmDragRef.current;
-              if (!drag?.isDragging) return;
-              const dy = e.clientY - drag.startClientY;
+          {/* Tempo Display - fixed-width pill, supports up to 999 BPM without resizing */}
+          {arrangement && (
+            <div
+              className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5 select-none w-[52px] cursor-ns-resize"
+              onDoubleClick={() => {
+                setIsEditingBpm(true);
+                setBpmDraft(String(bpmValue ?? Math.round(arrangement.tempo)));
+              }}
+              onPointerDown={(e) => {
+                if (isEditingBpm) return;
+                const startTempo = bpmValue ?? Math.round(arrangement.tempo);
+                bpmDragRef.current = {
+                  isDragging: true,
+                  startClientY: e.clientY,
+                  startTempo,
+                };
+                (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+              }}
+              onPointerMove={(e) => {
+                const drag = bpmDragRef.current;
+                if (!drag?.isDragging) return;
+                const dy = e.clientY - drag.startClientY;
 
-              const sensitivityPxPerBpm = 6;
-              const delta = -dy / sensitivityPxPerBpm;
-              const nextTempo = drag.startTempo + delta;
-              commitTempo(nextTempo);
-            }}
-            onPointerUp={() => {
-              bpmDragRef.current = null;
-            }}
-            title="Drag up/down to change BPM • Double-click to type"
-          >
-            <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">BPM</span>
-            {isEditingBpm ? (
-              <input
-                autoFocus
-                value={bpmDraft}
-                onChange={(e) => setBpmDraft(e.target.value)}
-                onBlur={() => {
-                  const parsed = Number(bpmDraft);
-                  if (Number.isFinite(parsed)) {
-                    commitTempo(parsed);
-                  }
-                  setIsEditingBpm(false);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                const sensitivityPxPerBpm = 6;
+                const delta = -dy / sensitivityPxPerBpm;
+                const nextTempo = drag.startTempo + delta;
+                commitTempo(nextTempo);
+              }}
+              onPointerUp={() => {
+                bpmDragRef.current = null;
+              }}
+              title="Drag up/down to change BPM • Double-click to type"
+            >
+              <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">BPM</span>
+              {isEditingBpm ? (
+                <input
+                  autoFocus
+                  value={bpmDraft}
+                  onChange={(e) => setBpmDraft(e.target.value)}
+                  onBlur={() => {
                     const parsed = Number(bpmDraft);
                     if (Number.isFinite(parsed)) {
                       commitTempo(parsed);
                     }
                     setIsEditingBpm(false);
-                  }
-                  if (e.key === 'Escape') {
-                    setIsEditingBpm(false);
-                  }
-                }}
-                className="
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const parsed = Number(bpmDraft);
+                      if (Number.isFinite(parsed)) {
+                        commitTempo(parsed);
+                      }
+                      setIsEditingBpm(false);
+                    }
+                    if (e.key === 'Escape') {
+                      setIsEditingBpm(false);
+                    }
+                  }}
+                  className="
                   text-sm font-bold text-[var(--text-primary)] tabular-nums text-center
                   w-full bg-transparent outline-none
                 "
-                inputMode="numeric"
-              />
-            ) : (
-              <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center w-full">{bpmValue}</span>
-            )}
-          </div>
-        )}
+                  inputMode="numeric"
+                />
+              ) : (
+                <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center w-full">{bpmValue}</span>
+              )}
+            </div>
+          )}
 
-        <div className="w-px h-8 bg-white/8" />
-
-        {/* Position Display - larger, more prominent */}
-        <div className="
-          text-2xl font-mono font-bold text-[var(--text-primary)] tabular-nums
-          min-w-[70px] text-center
-          drop-shadow-[0_0_8px_rgba(255,255,255,0.15)]
-        ">
-          {arrangement ? formatPosition(pbPosition, arrangement.timeSig) : '--:--'}
-        </div>
-
-        <div className="w-px h-8 bg-white/8" />
+          <div className="w-px h-8 bg-white/8 ml-2" />
         </div>
 
         {/* Restart Button - pinned to the inside edge (closer to Play) */}
@@ -329,8 +277,8 @@ export function TransportBar() {
         </div>
       </div>
 
-      {/* RIGHT SECTION: Loop, Metronome, Zoom Controls */}
-      <div className="flex items-center justify-between gap-2 z-10 w-[260px] shrink-0">
+      {/* RIGHT SECTION: Loop, Metronome, Camera */}
+      <div className="flex items-center justify-end gap-5 z-10 flex-1 min-w-0">
 
         <div className="flex items-center gap-2">
           {/* Loop Button */}
@@ -376,119 +324,70 @@ export function TransportBar() {
               strokeLinejoin="round"
               className={pbMetronomeEnabled ? 'animate-pulse' : ''}
             >
-              <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
               <path d="M14.153 8.188l-.72 -3.236a2.493 2.493 0 0 0 -4.867 0l-3.025 13.614a2 2 0 0 0 1.952 2.434h7.014a2 2 0 0 0 1.952 -2.434l-.524 -2.357m-4.935 1.791l9 -13" />
               <path d="M19 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
             </svg>
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
           <div className="w-px h-6 bg-white/8" />
 
           {/* Camera mode toggle: Smart / Follow / Static */}
-          <div className="flex items-center bg-white/5 rounded-full p-0.5 border border-white/8">
-            {(['smart', 'follow', 'static'] as CameraMode[]).map((m) => (
+          <div className="flex flex-col bg-white/5 rounded-[12px] p-1 border border-white/8 w-[112px] gap-1 text-center">
+            <button
+              onClick={() => setCameraMode('smart')}
+              className={`
+                w-full py-1 rounded-t-[8px] rounded-b-[2px] bg-transparent text-[9px] font-bold uppercase tracking-wider
+                transition-all duration-150 cursor-pointer
+                ${cameraMode === 'smart'
+                  ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
+                  : 'text-[var(--text-muted)] hover:text-white hover:bg-white/10'
+                }
+              `}
+              title="Camera: Smart"
+            >
+              Smart
+            </button>
+            <div className="flex gap-1">
               <button
-                key={m}
-                onClick={() => setCameraMode(m)}
+                onClick={() => setCameraMode('follow')}
                 className={`
-                  px-2 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider
+                  flex-1 py-1 rounded-bl-[8px] rounded-tl-[2px] rounded-br-[2px] rounded-tr-[2px] bg-transparent text-[9px] font-bold uppercase tracking-wider
                   transition-all duration-150 cursor-pointer
-                  ${cameraMode === m
+                  ${cameraMode === 'follow'
                     ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
-                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/8'
+                    : cameraMode === 'smart'
+                      ? 'text-[var(--text-disabled)] opacity-60'
+                      : 'text-[var(--text-muted)] hover:text-white hover:bg-white/10'
                   }
                 `}
-                title={`Camera: ${m.charAt(0).toUpperCase() + m.slice(1)}`}
+                title="Camera: Follow"
               >
-                {m === 'smart' ? 'Smart' : m === 'follow' ? 'Follow' : 'Static'}
+                Follow
               </button>
-            ))}
-          </div>
-
-          <div className="w-px h-6 bg-white/8" />
-
-          {/* Zoom control group: horizontal pair | vertical pair | fit-to-view */}
-          <div className="flex items-center gap-0.5 bg-white/5 rounded-full p-0.5 border border-white/8">
-
-          {/* Horizontal zoom pair - laid out side by side */}
-          <button
-            onClick={() => setHorizontalZoom('out')}
-            aria-label="Horizontal Zoom Out"
-            className="
-              w-8 h-8 rounded-full flex items-center justify-center
-              text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
-              transition-all duration-200 cursor-pointer
-            "
-            title="Horizontal Zoom Out"
-          >
-            <ZoomOut size={15} />
-          </button>
-          <button
-            onClick={() => setHorizontalZoom('in')}
-            aria-label="Horizontal Zoom In"
-            className="
-              w-8 h-8 rounded-full flex items-center justify-center
-              text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
-              transition-all duration-200 cursor-pointer
-            "
-            title="Horizontal Zoom In"
-          >
-            <ZoomIn size={15} />
-          </button>
-
-          <div className="w-px h-5 bg-white/8" />
-
-          {/* Vertical zoom pair - stacked on top of each other */}
-          <div className="flex flex-col items-center gap-0">
-            <button
-              onClick={() => setZoomLevel(Math.max(0.25, Math.min(6, zoomLevel * 1.12)))}
-              aria-label="Vertical Zoom In"
-              className="
-                w-8 h-4 flex items-center justify-center
-                text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
-                transition-all duration-200 cursor-pointer rounded-t-full
-              "
-              title="Vertical Zoom In"
-            >
-              <ZoomIn size={12} />
-            </button>
-            <button
-              onClick={() => setZoomLevel(Math.max(0.25, Math.min(6, zoomLevel / 1.12)))}
-              aria-label="Vertical Zoom Out"
-              className="
-                w-8 h-4 flex items-center justify-center
-                text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
-                transition-all duration-200 cursor-pointer rounded-b-full
-              "
-              title="Vertical Zoom Out"
-            >
-              <ZoomOut size={12} />
-            </button>
-          </div>
-
-          <div className="w-px h-5 bg-white/8" />
-
-          {/* Fit to view / reset zoom button */}
-          <button
-            onClick={handleResetView}
-            disabled={!arrangement}
-            aria-label="Fit to View"
-            className="
-              w-8 h-8 rounded-full flex items-center justify-center
-              text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10
-              transition-all duration-200 disabled:opacity-20 cursor-pointer
-            "
-            title="Fit to View"
-          >
-            <Maximize2 size={14} />
-          </button>
+              <button
+                onClick={() => setCameraMode('static')}
+                className={`
+                  flex-1 py-1 rounded-br-[8px] rounded-tr-[2px] rounded-bl-[2px] rounded-tl-[2px] bg-transparent text-[9px] font-bold uppercase tracking-wider
+                  transition-all duration-150 cursor-pointer
+                  ${cameraMode === 'static'
+                    ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
+                    : cameraMode === 'smart'
+                      ? 'text-[var(--text-disabled)] opacity-60'
+                      : 'text-[var(--text-muted)] hover:text-white hover:bg-white/10'
+                  }
+                `}
+                title="Camera: Static"
+              >
+                Static
+              </button>
+            </div>
           </div>
         </div>
 
       </div>
-
     </div>
   );
 }

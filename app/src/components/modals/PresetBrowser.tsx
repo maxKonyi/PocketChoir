@@ -33,9 +33,8 @@ function DifficultyDots({ level }: { level: number }) {
       {[1, 2, 3, 4, 5].map((i) => (
         <div
           key={i}
-          className={`w-1.5 h-1.5 rounded-full transition-colors ${
-            i <= level ? 'bg-[var(--accent-primary)]' : 'bg-[var(--button-bg)]'
-          }`}
+          className={`w-1.5 h-1.5 rounded-full transition-colors ${i <= level ? 'bg-[var(--accent-primary)]' : 'bg-[var(--button-bg)]'
+            }`}
         />
       ))}
     </div>
@@ -43,14 +42,14 @@ function DifficultyDots({ level }: { level: number }) {
 }
 
 /* -- Voice Color Strip: tiny colored bars showing the voices -- */
-function VoiceColorStrip({ voices }: { voices: Arrangement['voices'] }) {
+function VoiceColorStrip({ voices, overrides }: { voices: Arrangement['voices'], overrides?: Record<string, string> }) {
   return (
     <div className="flex gap-0.5">
       {voices.map((v) => (
         <div
           key={v.id}
           className="w-5 h-1 rounded-full"
-          style={{ backgroundColor: v.color }}
+          style={{ backgroundColor: (overrides && overrides[v.id]) ? overrides[v.id] : v.color }}
           title={v.name}
         />
       ))}
@@ -75,8 +74,8 @@ interface ArrangementRowProps {
 
 function ArrangementRow({
   arrangement, isSelected, onSelect, accentColor,
-  onFavorite, onDelete, onEdit, isFavorite,
-}: ArrangementRowProps) {
+  onFavorite, onDelete, onEdit, isFavorite, overrides
+}: ArrangementRowProps & { overrides?: Record<string, string> }) {
   return (
     <div
       className={`
@@ -125,7 +124,7 @@ function ArrangementRow({
         <span className="text-[10px] text-[var(--text-disabled)]">{arrangement.voices.length}v</span>
         <span className="text-[10px] text-[var(--text-disabled)]">{arrangement.bars}b</span>
         <span className="text-[10px] text-[var(--text-disabled)]">{arrangement.tempo}bpm</span>
-        <VoiceColorStrip voices={arrangement.voices} />
+        <VoiceColorStrip voices={arrangement.voices} overrides={overrides} />
       </div>
 
       {/* Action buttons (My Library items only) — show on hover */}
@@ -176,7 +175,7 @@ interface StageCardProps {
   onSelect: (arrangement: Arrangement) => void;
 }
 
-function StageCard({ stage, isExpanded, onToggle, currentArrangementId, onSelect }: StageCardProps) {
+function StageCard({ stage, isExpanded, onToggle, currentArrangementId, onSelect, overrides }: StageCardProps & { overrides?: Record<string, string> }) {
   return (
     <div className="rounded-[var(--radius-md)] border border-[var(--border-color)] overflow-hidden transition-all duration-200">
       {/* Stage header — always visible, clickable to expand */}
@@ -228,6 +227,7 @@ function StageCard({ stage, isExpanded, onToggle, currentArrangementId, onSelect
               isSelected={currentArrangementId === arr.id}
               onSelect={() => onSelect(arr)}
               accentColor={stage.color}
+              overrides={overrides}
             />
           ))}
         </div>
@@ -245,7 +245,7 @@ interface GuidedPathTabProps {
   onSelect: (arrangement: Arrangement) => void;
 }
 
-function GuidedPathTab({ currentArrangementId, onSelect }: GuidedPathTabProps) {
+function GuidedPathTab({ currentArrangementId, onSelect, overrides }: GuidedPathTabProps & { overrides?: Record<string, string> }) {
   const [expandedStage, setExpandedStage] = useState<string | null>(guidedPath[0]?.id ?? null);
 
   return (
@@ -263,6 +263,7 @@ function GuidedPathTab({ currentArrangementId, onSelect }: GuidedPathTabProps) {
           onToggle={() => setExpandedStage(expandedStage === stage.id ? null : stage.id)}
           currentArrangementId={currentArrangementId}
           onSelect={onSelect}
+          overrides={overrides}
         />
       ))}
 
@@ -281,6 +282,7 @@ function GuidedPathTab({ currentArrangementId, onSelect }: GuidedPathTabProps) {
                 arrangement={arr}
                 isSelected={currentArrangementId === arr.id}
                 onSelect={() => onSelect(arr)}
+                overrides={overrides}
               />
             ))}
           </div>
@@ -301,7 +303,7 @@ interface MyLibraryTabProps {
   currentArrangement: Arrangement | null;
 }
 
-function MyLibraryTab({ currentArrangementId, onSelect, onEdit, currentArrangement }: MyLibraryTabProps) {
+function MyLibraryTab({ currentArrangementId, onSelect, onEdit, currentArrangement, overrides }: MyLibraryTabProps & { overrides?: Record<string, string> }) {
   /* ---- State ---- */
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [folders, setFolders] = useState<LibraryFolder[]>([]);
@@ -528,18 +530,16 @@ function MyLibraryTab({ currentArrangementId, onSelect, onEdit, currentArrangeme
           {/* All */}
           <button
             onClick={() => setActiveFolderId(null)}
-            className={`w-full text-left text-xs px-2 py-1.5 rounded-[var(--radius-sm)] truncate transition-colors cursor-pointer ${
-              activeFolderId === null ? 'bg-[var(--accent-primary)]/15 text-[var(--accent-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
-            }`}
+            className={`w-full text-left text-xs px-2 py-1.5 rounded-[var(--radius-sm)] truncate transition-colors cursor-pointer ${activeFolderId === null ? 'bg-[var(--accent-primary)]/15 text-[var(--accent-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
+              }`}
           >
             All ({items.length})
           </button>
           {/* Favorites */}
           <button
             onClick={() => setActiveFolderId('__favorites__')}
-            className={`w-full text-left text-xs px-2 py-1.5 rounded-[var(--radius-sm)] truncate flex items-center gap-1.5 transition-colors cursor-pointer ${
-              activeFolderId === '__favorites__' ? 'bg-[var(--accent-primary)]/15 text-[var(--accent-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
-            }`}
+            className={`w-full text-left text-xs px-2 py-1.5 rounded-[var(--radius-sm)] truncate flex items-center gap-1.5 transition-colors cursor-pointer ${activeFolderId === '__favorites__' ? 'bg-[var(--accent-primary)]/15 text-[var(--accent-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
+              }`}
           >
             <Heart size={11} /> Favorites
           </button>
@@ -548,9 +548,8 @@ function MyLibraryTab({ currentArrangementId, onSelect, onEdit, currentArrangeme
             <div key={f.id} className="group flex items-center">
               <button
                 onClick={() => setActiveFolderId(f.id)}
-                className={`flex-1 text-left text-xs px-2 py-1.5 rounded-[var(--radius-sm)] truncate transition-colors cursor-pointer ${
-                  activeFolderId === f.id ? 'bg-[var(--accent-primary)]/15 text-[var(--accent-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
-                }`}
+                className={`flex-1 text-left text-xs px-2 py-1.5 rounded-[var(--radius-sm)] truncate transition-colors cursor-pointer ${activeFolderId === f.id ? 'bg-[var(--accent-primary)]/15 text-[var(--accent-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
+                  }`}
               >
                 {f.name}
               </button>
@@ -588,6 +587,7 @@ function MyLibraryTab({ currentArrangementId, onSelect, onEdit, currentArrangeme
                   isFavorite={item.isFavorite}
                   onFavorite={() => handleToggleFavorite(item.id)}
                   onDelete={() => handleDelete(item.id)}
+                  overrides={overrides}
                 />
               ))}
             </div>
@@ -611,6 +611,7 @@ export function LibraryModal() {
   const setMode = useAppStore((s) => s.setMode);
   const setCreateModalMode = useAppStore((s) => s.setCreateModalMode);
   const setEditingLibraryItemId = useAppStore((s) => s.setEditingLibraryItemId);
+  const voiceColorOverrides = useAppStore((s) => s.voiceColorOverrides);
 
   /* ---- Local state ---- */
   const [activeTab, setActiveTab] = useState<LibraryTab>('guided');
@@ -666,11 +667,10 @@ export function LibraryModal() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all duration-150 cursor-pointer ${
-                  activeTab === tab.id
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all duration-150 cursor-pointer ${activeTab === tab.id
                     ? 'bg-[var(--accent-primary)] text-white shadow-[0_0_10px_var(--accent-primary-glow)]'
                     : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                }`}
+                  }`}
               >
                 {tab.icon}
                 {tab.label}
@@ -691,6 +691,7 @@ export function LibraryModal() {
               <GuidedPathTab
                 currentArrangementId={currentArrangement?.id}
                 onSelect={handleSelect}
+                overrides={voiceColorOverrides}
               />
             </div>
           ) : (
@@ -699,6 +700,7 @@ export function LibraryModal() {
               onSelect={handleSelect}
               onEdit={handleEdit}
               currentArrangement={currentArrangement}
+              overrides={voiceColorOverrides}
             />
           )}
         </div>

@@ -174,18 +174,10 @@ export function Minimap({ arrangement, className = '' }: MinimapProps) {
     };
 
     // ── Draw contour previews for each voice ──
-    // Solo/mute check
-    const anySoloActive = voiceStates.some(v => v.synthSolo || v.vocalSolo);
-
     for (let voiceIndex = 0; voiceIndex < arrangement.voices.length; voiceIndex++) {
       const voice = arrangement.voices[voiceIndex];
-      const voiceState = voiceStates.find(v => v.voiceId === voice.id);
-      const isMuted = (voiceState?.synthMuted ?? false) || (anySoloActive && !(voiceState?.synthSolo ?? false));
-
       // Get voice color (full opacity, no reduction per spec)
-      const voiceColor = isMuted
-        ? 'rgba(100, 100, 100, 0.3)'
-        : (voice.color || `var(--voice-${voiceIndex + 1}, #ff6b9d)`);
+      const voiceColor = voice.color || `var(--voice-${voiceIndex + 1}, #ff6b9d)`;
 
       ctx.strokeStyle = voiceColor;
       ctx.lineWidth = 1.5;

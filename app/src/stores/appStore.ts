@@ -140,6 +140,8 @@ interface CreateViewState {
  */
 export type ArrangementParamsUpdate = {
   title: string;
+  description?: string;
+  difficulty?: number;
   tempo: number;
   tonic: string;
   scale: Arrangement['scale'];
@@ -2028,6 +2030,8 @@ export const useAppStore = create<AppState & AppActions>()(
         let nextArrangement: Arrangement = {
           ...prev,
           title: update.title,
+          description: update.description !== undefined ? update.description : prev.description,
+          difficulty: update.difficulty !== undefined ? update.difficulty : prev.difficulty,
           tempo: nextTempo,
           tonic: update.tonic,
           scale: update.scale,

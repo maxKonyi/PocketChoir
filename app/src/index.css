@@ -165,10 +165,14 @@
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow:
-    0 12px 40px 0 rgba(0, 0, 0, 0.45),          /* depth shadow */
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),   /* inner top highlight */
-    inset 0 -1px 0 0 rgba(255, 255, 255, 0.03),  /* inner bottom subtle edge */
-    0 0 80px -20px rgba(var(--accent-rgb, 139, 92, 246), 0.06); /* ambient accent glow */
+    0 12px 40px 0 rgba(0, 0, 0, 0.45),
+    /* depth shadow */
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
+    /* inner top highlight */
+    inset 0 -1px 0 0 rgba(255, 255, 255, 0.03),
+    /* inner bottom subtle edge */
+    0 0 80px -20px rgba(var(--accent-rgb, 139, 92, 246), 0.06);
+  /* ambient accent glow */
 }
 
 .glass-pane-contained {
@@ -176,15 +180,12 @@
 }
 
 .glass-pane::before {
-  /* -- Liquid gradient overlay: diagonal light refraction effect -- */
+  /* -- Liquid glass effect: subtle micro-noise or shimmer could go here, but removing gradient -- */
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, transparent 40%),
-    linear-gradient(225deg, rgba(255, 255, 255, 0.04) 0%, transparent 30%),
-    radial-gradient(ellipse at 20% 50%, rgba(255, 255, 255, 0.06) 0%, transparent 60%);
+  background: transparent;
   pointer-events: none;
 }
 
@@ -197,14 +198,12 @@
   right: 0;
   height: 1px;
   border-radius: inherit;
-  background: linear-gradient(
-    to right,
-    transparent 5%,
-    rgba(255, 255, 255, 0.15) 20%,
-    rgba(255, 255, 255, 0.35) 50%,
-    rgba(255, 255, 255, 0.15) 80%,
-    transparent 95%
-  );
+  background: linear-gradient(to right,
+      transparent 5%,
+      rgba(255, 255, 255, 0.15) 20%,
+      rgba(255, 255, 255, 0.35) 50%,
+      rgba(255, 255, 255, 0.15) 80%,
+      transparent 95%);
   pointer-events: none;
 }
 
@@ -230,11 +229,7 @@
   /* -- Sidebar glass: heavy blur for deep frosted look -- */
   backdrop-filter: blur(60px) saturate(180%) brightness(1.05);
   -webkit-backdrop-filter: blur(60px) saturate(180%) brightness(1.05);
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.08) 0%,
-    rgba(255, 255, 255, 0.04) 100%
-  );
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .glass-low {
@@ -247,22 +242,14 @@
   /* -- Medium glass: balanced blur for top bar and transport -- */
   backdrop-filter: blur(20px) saturate(160%) brightness(1.04);
   -webkit-backdrop-filter: blur(20px) saturate(160%) brightness(1.04);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.06) 0%,
-    rgba(255, 255, 255, 0.03) 100%
-  );
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .glass-high {
   /* -- Heavy glass: strong blur for modals and overlays -- */
   backdrop-filter: blur(40px) saturate(190%) brightness(1.06);
   -webkit-backdrop-filter: blur(40px) saturate(190%) brightness(1.06);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.10) 0%,
-    rgba(255, 255, 255, 0.05) 100%
-  );
+  background: rgba(255, 255, 255, 0.06);
 }
 
 
@@ -281,12 +268,15 @@
     transform: translateX(-120%) rotate(45deg);
     opacity: 0;
   }
+
   10% {
     opacity: 1;
   }
+
   90% {
     opacity: 1;
   }
+
   100% {
     transform: translateX(120%) rotate(45deg);
     opacity: 0;
@@ -298,9 +288,12 @@
    Animated border glow that travels around glass panels
    ============================================================ */
 @keyframes edgeGlow {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 0.3;
   }
+
   50% {
     opacity: 0.7;
   }
@@ -344,10 +337,12 @@
     transform: scale(2.5);
     opacity: 0;
   }
+
   60% {
     transform: scale(0.95);
     opacity: 1;
   }
+
   100% {
     transform: scale(1);
     opacity: 1;
@@ -363,6 +358,7 @@
     transform: translateY(20px);
     opacity: 0;
   }
+
   100% {
     transform: translateY(0);
     opacity: 1;
@@ -374,9 +370,12 @@
    Gentle up-and-down hover for decorative elements
    ============================================================ */
 @keyframes subtleFloat {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-4px);
   }
@@ -527,7 +526,7 @@
   --grid-line-bar: rgba(0, 0, 0, 0.15);
   --grid-line-beat: rgba(0, 0, 0, 0.08);
   --grid-line-subdivision: rgba(0, 0, 0, 0.04);
-  --grid-pitch-line-tonic: rgba(0,  0, 0, 0.22);
+  --grid-pitch-line-tonic: rgba(0, 0, 0, 0.22);
   --grid-pitch-line: rgba(0, 0, 0, 0.05);
   --playhead-color: #1e293b;
   --playhead-glow: rgba(0, 0, 0, 0.2);
