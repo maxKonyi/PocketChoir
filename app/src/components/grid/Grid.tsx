@@ -36,12 +36,8 @@ import {
   getContourHitAtMouseVoiceId,
   isEditableKeyboardTarget,
 } from './gridInteractionUtils';
-import {
-  cameraLeftWorldT,
-  worldTToScreenX,
-  screenXToWorldT,
-  resolveToCanonical,
-} from '../../utils/followCamera';
+import { cameraLeftWorldT, resolveToCanonical, screenXToWorldT, worldTToScreenX } from '../../utils/followCamera';
+import { quantizeT16 } from '../../utils/timing';
 import {
   type SmartCamState,
   LOOP_ZOOM_PADDING,
@@ -382,6 +378,7 @@ export function Grid({
   const pasteNodes = useAppStore((state) => state.pasteNodes);
   const duplicateSelectedNodes = useAppStore((state) => state.duplicateSelectedNodes);
   const moveSelectedNodes = useAppStore((state) => state.moveSelectedNodes);
+  const setGridDivision = useAppStore((state) => state.setGridDivision);
 
   // Lookup used to vertically stack contour segments that are exactly overlapping.
   // Recomputed when arrangement content/order OR horizontal zoom changes.
@@ -1180,7 +1177,8 @@ export function Grid({
     const clickWorldT = screenXToWorldT(screenX, camLeft, pxPerTVal);
     const { tLocal } = resolveToCanonical(clickWorldT, totalT16);
 
-    return Math.max(0, Math.min(totalT16, Math.round(tLocal)));
+    const quantized = quantizeT16(tLocal, useAppStore.getState().createView.gridDivision);
+    return Math.max(0, Math.min(totalT16, quantized));
   }, [arrangement, followMode.pxPerT, followMode.pendingWorldT]);
 
   /**
@@ -1502,7 +1500,8 @@ export function Grid({
     // In Create interactions we do NOT wrap time around the loop length.
     // Wrapping causes drags near the right side to jump backward instead of
     // continuing forward. Clamp keeps dragging direction intuitive.
-    const t16 = Math.max(0, Math.min(totalT16, Math.round(clickWorldT)));
+    const rawT16 = Math.max(0, Math.min(totalT16, clickWorldT));
+    const t16 = quantizeT16(rawT16, useAppStore.getState().createView.gridDivision);
 
     const relativeY = (clampedY - gridTop) / gridHeight;
     const rawSemitone = maxSemitone - relativeY * (maxSemitone - minSemitone);
@@ -1910,6 +1909,13 @@ export function Grid({
 
   // Keyboard navigation + hotkeys
   useEffect(() => {
+    // App mounts a second Grid for chord/lyric overlay (onlyChords=true).
+    // That overlay should not register global hotkeys, otherwise key presses
+    // are handled twice (toggle on + toggle off in the same keydown).
+    if (onlyChords) {
+      return;
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't fire while typing in inputs.
       if (isEditableKeyboardTarget(e.target)) return;
@@ -1945,6 +1951,14 @@ export function Grid({
         clearAllFocus();
         // In Create mode, also clear node selection.
         if (mode === 'create') clearNodeSelection();
+        return;
+      }
+
+      // Toggle grid division (16th vs triplet) with 't'
+      if (e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        const currentDivision = useAppStore.getState().createView.gridDivision;
+        setGridDivision(currentDivision === '16th' ? 'triplet' : '16th');
         return;
       }
 
@@ -2059,7 +2073,7 @@ export function Grid({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [mode, arrangement, setSharedCameraAndMaybeSeek, adjustPlayPitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId, clearAllFocus, clearNodeSelection, deleteSelectedNodes, copySelectedNodes, cutSelectedNodes, pasteNodes, duplicateSelectedNodes, setNodeSelection, selectedVoiceId]);
+  }, [onlyChords, mode, arrangement, setSharedCameraAndMaybeSeek, adjustPlayPitchPanSemitones, setHorizontalZoom, display.zoomLevel, setZoomLevel, setSelectedVoiceId, clearAllFocus, clearNodeSelection, deleteSelectedNodes, copySelectedNodes, cutSelectedNodes, pasteNodes, duplicateSelectedNodes, setNodeSelection, selectedVoiceId, setGridDivision]);
 
   /**
    * Jump to Playhead: snap the camera to the playhead and resume following.
@@ -2214,6 +2228,7 @@ export function Grid({
           chordBoundaryDragRef={chordBoundaryDragRef}
           followModePxPerT={followMode.pxPerT}
           followModePendingWorldT={followMode.pendingWorldT}
+          gridDivision={useAppStore.getState().createView.gridDivision}
           editingChordIndex={editingChordIndex}
           setEditingChordIndex={setEditingChordIndex}
           editingChordName={editingChordName}

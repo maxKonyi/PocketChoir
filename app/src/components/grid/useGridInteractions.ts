@@ -774,6 +774,7 @@ export function useGridInteractions({
           ? followMode.pendingWorldT
           : getCameraCenterWorldT();
         const arrangementLen = arrangement.bars * arrangement.timeSig.numerator * 4;
+        const gridDivision = useAppStore.getState().createView.gridDivision;
         // Convert mouse X to time and snap to the nearest 16th note.
         const snappedT = getSnappedLoopTimeFromMouseX({
           mouseX,
@@ -782,6 +783,7 @@ export function useGridInteractions({
           pxPerT: pxPerTVal,
           worldT: currentWorldT,
           arrangementLengthT16: arrangementLen,
+          gridDivision,
         });
 
         if (loopHandleDragRef.current === 'start') {

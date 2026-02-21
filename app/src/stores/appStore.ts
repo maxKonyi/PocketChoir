@@ -27,6 +27,7 @@ import type { ThemeName } from '../utils/colors';
 import { getArrangementFrequencyRange, noteNameToFrequency, suggestTranspositionToFitRange, degreeToSemitoneOffset } from '../utils/music';
 import { DEFAULT_VOICE_COLORS, normalizeHexColor } from '../utils/colors';
 import type { CameraMode } from '../utils/smartCam';
+import { quantizeT16, isT16Equal, type GridDivision } from '../utils/timing';
 
 /* ------------------------------------------------------------
    State Types
@@ -126,6 +127,7 @@ interface ClipboardNode {
 interface CreateViewState {
   cameraWorldT: number;          // Camera center position in world-time (16th notes, monotonic)
   pitchPanSemitones: number;     // Vertical pan offset (semitones relative to the arrangement anchor)
+  gridDivision: GridDivision;    // Current grid quantization division
 
   // ── Selection state ──
   selectedNodeKeys: Set<NodeKey>;   // Currently selected node keys ("voiceId:t16")
@@ -340,11 +342,18 @@ const normalizeLyricsTrack = (
 
   for (const entry of lyrics?.entries ?? []) {
     if (!Number.isFinite(entry.t16)) continue;
-    const t16 = Math.round(entry.t16);
-    if (!validTimes.has(t16)) continue;
+
+    let matchedT16: number | undefined;
+    for (const valid of validTimes) {
+      if (isT16Equal(valid, entry.t16)) {
+        matchedT16 = valid;
+        break;
+      }
+    }
+    if (matchedT16 === undefined) continue;
 
     const payload = normalizeLyricPayload(entry.text, entry.connectorToNext);
-    const connectorToNext = hasNextNodeByT16.has(t16)
+    const connectorToNext = hasNextNodeByT16.has(matchedT16)
       ? payload.connectorToNext
       : undefined;
 
@@ -354,7 +363,7 @@ const normalizeLyricsTrack = (
     };
 
     if (!hasLyricPayloadContent(normalizedPayload)) continue;
-    merged.set(t16, normalizedPayload);
+    merged.set(matchedT16, normalizedPayload);
   }
 
   const entries: LyricEntry[] = [...merged.entries()]
@@ -669,8 +678,9 @@ interface AppActions {
   // Play-mode vertical pan (separate from Create mode)
   setPlayPitchPanSemitones: (semitones: number) => void;
   adjustPlayPitchPanSemitones: (deltaSemitones: number) => void;
+  setGridDivision: (division: GridDivision) => void;
 
-  // Create-mode navigation
+  // Create mode - navigation
   setCreateCameraWorldT: (worldT: number) => void;
   adjustCreateCameraWorldT: (deltaWorldT: number) => void;
   setCreatePitchPanSemitones: (semitones: number) => void;
@@ -789,6 +799,7 @@ const initialFollowModeState: FollowModeState = {
 const initialCreateViewState: CreateViewState = {
   cameraWorldT: 0,
   pitchPanSemitones: 0,
+  gridDivision: '16th',
   selectedNodeKeys: new Set(),
   clipboard: [],
 };
@@ -1881,10 +1892,10 @@ export const useAppStore = create<AppState & AppActions>()(
 
         const voice1Nodes = getVoice1MelodyNodes(state.arrangement);
         const validTimes = new Set(voice1Nodes.map((node) => node.t16));
-        const snappedT16 = Math.round(t16);
+        const snappedT16 = quantizeT16(t16, state.createView.gridDivision);
         if (!validTimes.has(snappedT16)) return state;
 
-        const existingEntry = lyrics.entries.find((entry) => entry.t16 === snappedT16);
+        const existingEntry = lyrics.entries.find((entry) => isT16Equal(entry.t16, snappedT16));
         const existingPayload = normalizeLyricPayload(existingEntry?.text, existingEntry?.connectorToNext);
         const normalizedInput = normalizeLyricPayload(text, undefined);
 
@@ -1894,7 +1905,7 @@ export const useAppStore = create<AppState & AppActions>()(
           ? normalizeLyricConnector(options?.connectorToNext)
           : normalizedInput.connectorToNext;
 
-        const nodeIndex = voice1Nodes.findIndex((node) => node.t16 === snappedT16);
+        const nodeIndex = voice1Nodes.findIndex((node) => isT16Equal(node.t16, snappedT16));
         const hasNextNode = nodeIndex >= 0 && nodeIndex < voice1Nodes.length - 1;
 
         const nextPayload: LyricPayload = {
@@ -2076,7 +2087,7 @@ export const useAppStore = create<AppState & AppActions>()(
         if (!historyUpdate) return state;
 
         const totalT16 = state.arrangement.bars * state.arrangement.timeSig.numerator * 4;
-        const snappedT16 = Math.round(t16);
+        const snappedT16 = quantizeT16(t16, state.createView.gridDivision);
 
         // Minimum length of any chord segment (in 16ths).
         const minDur16 = 1;
@@ -2180,7 +2191,7 @@ export const useAppStore = create<AppState & AppActions>()(
         const leftStart = left.t16;
         const rightEnd = right.t16 + right.duration16;
 
-        const snappedBoundary = Math.round(newBoundaryT16);
+        const snappedBoundary = quantizeT16(newBoundaryT16, state.createView.gridDivision);
         const minDur16 = 1;
 
         if (snappedBoundary <= leftStart) {
@@ -2719,6 +2730,10 @@ export const useAppStore = create<AppState & AppActions>()(
         const clamped = Math.max(-72, Math.min(72, next));
         return { createView: { ...state.createView, pitchPanSemitones: clamped } };
       }),
+
+      setGridDivision: (division) => set((state) => ({
+        createView: { ...state.createView, gridDivision: division }
+      })),
 
       resetCreateView: () => set({ createView: initialCreateViewState }),
 

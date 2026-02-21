@@ -9,6 +9,7 @@ import {
 } from '../../utils/followCamera';
 import { getCameraCenterWorldT } from '../../utils/cameraState';
 import { isChordDiatonic } from './gridDataUtils';
+import { quantizeT16, type GridDivision } from '../../utils/timing';
 
 // Note: RefObject is kept for chordLaneRef; MutableRefObject for camera-track and drag refs.
 
@@ -39,6 +40,7 @@ type GridChordLaneEditorProps = {
   chordBoundaryDragRef: MutableRefObject<ChordBoundaryDragState | null>;
   followModePxPerT: number;
   followModePendingWorldT: number | null;
+  gridDivision: GridDivision;
   editingChordIndex: number | null;
   setEditingChordIndex: (index: number | null) => void;
   editingChordName: string;
@@ -72,6 +74,7 @@ export function GridChordLaneEditor({
   chordBoundaryDragRef,
   followModePxPerT,
   followModePendingWorldT,
+  gridDivision,
   editingChordIndex,
   setEditingChordIndex,
   editingChordName,
@@ -172,7 +175,7 @@ export function GridChordLaneEditor({
           const screenX = e.clientX - rect.left;
           const hoverWorldT = screenXToWorldT(screenX, camLeft, pxPerTVal);
           const { tLocal, k } = resolveToCanonical(hoverWorldT, totalT16);
-          const snappedT16 = Math.max(0, Math.min(totalT16, Math.round(tLocal)));
+          const snappedT16 = Math.max(0, Math.min(totalT16, quantizeT16(tLocal, gridDivision)));
 
           // Keep marker on the same repeated-tile instance the mouse is over.
           const snappedWorldT = k * totalT16 + snappedT16;

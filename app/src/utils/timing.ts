@@ -8,6 +8,36 @@
 
 import type { TimeSignature } from '../types';
 
+export type GridDivision = '16th' | 'triplet';
+
+/**
+ * Snap a raw t16 value to the nearest grid division.
+ * @param rawT16 - Raw time in 16th notes
+ * @param division - The grid division to snap to
+ * @returns Quantized time in 16th notes
+ */
+export function quantizeT16(rawT16: number, division: GridDivision): number {
+  if (division === '16th') {
+    return Math.round(rawT16);
+  } else if (division === 'triplet') {
+    // 1 beat = 4 sixteenths. Triplets divide a beat into 3.
+    // 1 triplet = 4/3 sixteenths.
+    const triplets = rawT16 / (4 / 3);
+    const snappedTriplets = Math.round(triplets);
+    const snappedT16 = snappedTriplets * (4 / 3);
+    // Round to 4 decimal places to avoid float precision issues in keys
+    return Number(snappedT16.toFixed(4));
+  }
+  return Math.round(rawT16);
+}
+
+/**
+ * Check if two t16 values are effectively equal (handling float precision)
+ */
+export function isT16Equal(t1: number, t2: number): boolean {
+  return Math.abs(t1 - t2) < 0.001;
+}
+
 /**
  * Calculate how many 16th notes are in one bar.
  * @param timeSig - Time signature

@@ -1,5 +1,6 @@
 import type { Arrangement } from '../../types';
 import { cameraLeftWorldT, screenXToWorldT, worldTToScreenX } from '../../utils/followCamera';
+import { quantizeT16, type GridDivision } from '../../utils/timing';
 import { degreeToY, semitoneToY } from './gridDataUtils';
 import {
   type ContourStackLookup,
@@ -105,6 +106,7 @@ type SnappedLoopTimeParams = {
   pxPerT: number;
   worldT: number;
   arrangementLengthT16: number;
+  gridDivision?: GridDivision; // Optional for backward compatibility, but we'll pass it
 };
 
 /**
@@ -118,11 +120,14 @@ export function getSnappedLoopTimeFromMouseX(params: SnappedLoopTimeParams): num
     pxPerT,
     worldT,
     arrangementLengthT16,
+    gridDivision = '16th',
   } = params;
 
   const camLeft = cameraLeftWorldT(worldT, gridWidthPx, pxPerT);
   const rawT = screenXToWorldT(mouseX - gridLeftPx, camLeft, pxPerT);
-  return Math.round(Math.max(0, Math.min(arrangementLengthT16, rawT)));
+  const quantized = quantizeT16(rawT, gridDivision);
+  
+  return Math.max(0, Math.min(arrangementLengthT16, quantized));
 }
 
 type GroupDragDeltaParams = {
@@ -136,6 +141,7 @@ type GroupDragDeltaParams = {
   minSemitone: number;
   maxSemitone: number;
   gridHeightPx: number;
+  gridDivision?: GridDivision;
 };
 
 /**
@@ -161,12 +167,15 @@ export function getGroupDragDelta(params: GroupDragDeltaParams): {
     minSemitone,
     maxSemitone,
     gridHeightPx,
+    gridDivision = '16th',
   } = params;
 
   const dxPx = currentMouseX - startMouseX;
   const dyPx = currentMouseY - startMouseY;
 
-  const newDeltaT16 = Math.round(dxPx / pxPerT);
+  // Convert pixel delta to raw t16 delta, then quantize based on grid division
+  const rawDeltaT16 = dxPx / pxPerT;
+  const newDeltaT16 = quantizeT16(rawDeltaT16, gridDivision);
   const safeGridHeight = Math.max(1, gridHeightPx);
   const semitonesPerPx = (maxSemitone - minSemitone) / safeGridHeight;
   // Negative dy = mouse moved up = higher pitch = positive semitone delta.

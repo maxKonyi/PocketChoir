@@ -34,6 +34,7 @@ export function TopBar() {
   const arrangement = useAppStore((state) => state.arrangement);
   const mode = useAppStore((state) => state.mode);
   const theme = useAppStore((state) => state.theme);
+  const gridDivision = useAppStore((state) => state.createView.gridDivision);
   const editingLibraryItemId = useAppStore((state) => state.editingLibraryItemId);
 
   // Get actions from store
@@ -176,6 +177,17 @@ export function TopBar() {
         ">
           ♫ Harmony
         </span>
+        
+        {/* Grid Division Indicator (Create mode only) */}
+        {mode === 'create' && (
+          <div className="
+            flex items-center gap-1.5 ml-2 px-2.5 py-1
+            bg-white/5 rounded-lg border border-white/5
+            text-[var(--text-secondary)] text-[10px] font-bold uppercase tracking-wider
+          " title="Grid Division (Press 'T' to toggle)">
+            {gridDivision === '16th' ? '1/16' : '1/8T'}
+          </div>
+        )}
       </div>
 
       {/* Center - Library / Arrangement selector */}
