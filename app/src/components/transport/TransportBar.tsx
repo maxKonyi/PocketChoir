@@ -121,8 +121,8 @@ export function TransportBar() {
           {arrangement && (
             <div className="flex items-center gap-0.5">
               {/* Key label in its own pill */}
-              <div className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5 w-[46px]">
-                <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">Key</span>
+              <div className="flex flex-col items-center leading-none px-2.5 py-1 rounded-xl bg-white/5 w-[46px]">
+                <span className="text-[10px] text-[var(--text-dim)] font-semibold tracking-wide">Key</span>
                 <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center w-full">{effectiveTonic ?? arrangement.tonic}</span>
               </div>
 
@@ -159,7 +159,7 @@ export function TransportBar() {
           {/* Tempo Display - fixed-width pill, supports up to 999 BPM without resizing */}
           {arrangement && (
             <div
-              className="flex flex-col items-center leading-none px-2.5 py-1 rounded-lg bg-white/5 select-none w-[52px] cursor-ns-resize"
+              className="flex flex-col items-center leading-none px-2.5 py-1 rounded-xl bg-white/5 select-none w-[52px] cursor-ns-resize"
               onDoubleClick={() => {
                 setIsEditingBpm(true);
                 setBpmDraft(String(bpmValue ?? Math.round(arrangement.tempo)));
@@ -189,7 +189,7 @@ export function TransportBar() {
               }}
               title="Drag up/down to change BPM • Double-click to type"
             >
-              <span className="text-[9px] text-[var(--text-dim)] uppercase font-bold tracking-[0.15em]">BPM</span>
+              <span className="text-[10px] text-[var(--text-dim)] font-semibold tracking-wide">BPM</span>
               {isEditingBpm ? (
                 <input
                   autoFocus
@@ -335,11 +335,11 @@ export function TransportBar() {
           <div className="w-px h-6 bg-white/8" />
 
           {/* Camera mode toggle: Smart / Follow / Static */}
-          <div className="flex flex-col bg-white/5 rounded-[12px] p-1 border border-white/8 w-[112px] gap-1 text-center">
+          <div className="flex flex-col bg-white/5 rounded-[20px] p-1 border border-white/8 w-[112px] gap-1 text-center">
             <button
               onClick={() => setCameraMode('smart')}
               className={`
-                w-full py-1 rounded-t-[8px] rounded-b-[2px] bg-transparent text-[9px] font-bold uppercase tracking-wider
+                w-full py-1 rounded-t-2xl rounded-b-sm bg-transparent text-[10px] font-semibold tracking-wide
                 transition-all duration-150 cursor-pointer
                 ${cameraMode === 'smart'
                   ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
@@ -350,11 +350,12 @@ export function TransportBar() {
             >
               Smart
             </button>
+            <div className="h-px bg-white/10 mx-1" />
             <div className="flex gap-1">
               <button
                 onClick={() => setCameraMode('follow')}
                 className={`
-                  flex-1 py-1 rounded-bl-[8px] rounded-tl-[2px] rounded-br-[2px] rounded-tr-[2px] bg-transparent text-[9px] font-bold uppercase tracking-wider
+                  flex-1 py-1 rounded-bl-2xl rounded-tl-sm rounded-br-sm rounded-tr-sm bg-transparent text-[10px] font-semibold tracking-wide
                   transition-all duration-150 cursor-pointer
                   ${cameraMode === 'follow'
                     ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
@@ -370,7 +371,7 @@ export function TransportBar() {
               <button
                 onClick={() => setCameraMode('static')}
                 className={`
-                  flex-1 py-1 rounded-br-[8px] rounded-tr-[2px] rounded-bl-[2px] rounded-tl-[2px] bg-transparent text-[9px] font-bold uppercase tracking-wider
+                  flex-1 py-1 rounded-br-2xl rounded-tr-sm rounded-bl-sm rounded-tl-sm bg-transparent text-[10px] font-semibold tracking-wide
                   transition-all duration-150 cursor-pointer
                   ${cameraMode === 'static'
                     ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'

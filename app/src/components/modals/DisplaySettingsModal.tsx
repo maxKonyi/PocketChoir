@@ -209,7 +209,7 @@ export function DisplaySettingsModal() {
                     key={format}
                     onClick={() => setDisplaySettings({ labelFormat: format })}
                     className={`
-                      flex-1 px-3 py-2 rounded-lg text-sm transition-colors
+                      flex-1 px-3 py-2 rounded-xl text-sm transition-colors
                       ${display.labelFormat === format
                         ? 'bg-[var(--accent-primary)] text-white'
                         : 'bg-[var(--button-bg)] text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'

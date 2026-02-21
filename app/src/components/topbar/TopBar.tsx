@@ -162,7 +162,7 @@ export function TopBar() {
     <header className="
       absolute top-4 left-[calc(11rem+50px)] right-[calc(2rem+20px)]
       h-14 px-6
-      glass-pane glass-med rounded-2xl
+      glass-pane glass-med rounded-full
       flex items-center justify-between
       z-30 shadow-2xl shimmer
     ">
@@ -175,15 +175,15 @@ export function TopBar() {
           bg-clip-text text-transparent
           drop-shadow-[0_0_12px_var(--accent-primary-glow)]
         ">
-          ♫ Harmony
+          ♫ Pocket Choir
         </span>
-        
+
         {/* Grid Division Indicator (Create mode only) */}
         {mode === 'create' && (
           <div className="
             flex items-center gap-1.5 ml-2 px-2.5 py-1
-            bg-white/5 rounded-lg border border-white/5
-            text-[var(--text-secondary)] text-[10px] font-bold uppercase tracking-wider
+            bg-white/5 rounded-xl border border-white/10
+            text-[var(--text-secondary)] text-xs font-semibold
           " title="Grid Division (Press 'T' to toggle)">
             {gridDivision === '16th' ? '1/16' : '1/8T'}
           </div>
@@ -208,7 +208,7 @@ export function TopBar() {
           className="
             flex items-center gap-2.5 px-5 py-2
             bg-[var(--button-bg)] text-[var(--text-primary)]
-            rounded-full text-sm font-medium
+            rounded-full text-base font-medium
             hover:bg-[var(--button-bg-hover)] transition-all duration-200
             border border-[var(--border-color)] hover:border-[var(--border-color-strong)]
             shadow-sm hover:shadow-[0_0_20px_-5px_var(--accent-primary-glow)]
@@ -234,7 +234,7 @@ export function TopBar() {
               bg-[var(--button-bg)] text-[var(--text-primary)]
               hover:bg-[var(--button-bg-hover)]
               transition-all duration-200
-              flex items-center gap-1.5 text-xs font-semibold
+              flex items-center gap-1.5 text-sm font-medium
               disabled:opacity-60 disabled:cursor-not-allowed
             "
             title={
@@ -330,8 +330,8 @@ export function TopBar() {
 
         {/* Theme selector */}
         <div className="
-          flex items-center gap-1.5 px-2.5 py-1.5
-          bg-white/5 rounded-xl border border-white/5
+          flex items-center gap-1.5 px-3 py-1.5
+          bg-white/5 rounded-full border border-white/10
           hover:bg-white/8 transition-all duration-200
         ">
           <Palette size={13} className="text-[var(--accent-primary)] opacity-70" />
@@ -339,7 +339,7 @@ export function TopBar() {
             value={theme}
             onChange={(e) => handleThemeChange(e.target.value as ThemeName)}
             className="
-              bg-transparent text-[var(--text-secondary)] text-xs font-medium
+              bg-transparent text-[var(--text-secondary)] text-sm font-medium
               cursor-pointer outline-none
             "
             title="Change Theme"
@@ -359,7 +359,7 @@ export function TopBar() {
             onClick={handleExportArrangement}
             aria-label="Export Arrangement"
             className="
-              p-2.5 rounded-xl
+              p-2.5 rounded-full
               bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary-light)]
               border border-[var(--accent-secondary)]/20
               hover:bg-[var(--accent-secondary)]/30 hover:border-[var(--accent-secondary)]/40
@@ -376,12 +376,12 @@ export function TopBar() {
         <div className="w-px h-5 bg-white/10 mx-1" />
 
         {/* Mode toggle - pill style */}
-        <div className="flex items-center gap-0.5 bg-white/5 rounded-xl p-1 border border-white/5">
+        <div className="flex items-center gap-0.5 bg-white/5 rounded-full p-1 border border-white/10">
           <button
             onClick={() => setMode('play')}
             aria-label="Play Mode"
             className={`
-              px-3.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all duration-200 cursor-pointer
+              px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 cursor-pointer
               ${mode === 'play'
                 ? 'bg-[var(--accent-primary)] text-white shadow-[0_0_15px_-3px_var(--accent-primary-glow)]'
                 : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/5'
@@ -398,7 +398,7 @@ export function TopBar() {
             }}
             aria-label="Create Mode"
             className={`
-              px-3.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all duration-200 cursor-pointer
+              px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 cursor-pointer
               ${mode === 'create'
                 ? 'bg-[var(--accent-primary)] text-white shadow-[0_0_15px_-3px_var(--accent-primary-glow)]'
                 : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/5'

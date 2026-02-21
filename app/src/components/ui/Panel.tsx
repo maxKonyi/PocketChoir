@@ -23,8 +23,8 @@ interface PanelProps extends HTMLAttributes<HTMLDivElement> {
    ------------------------------------------------------------ */
 
 const baseStyles = `
-  rounded-[var(--radius-lg)]
-  border border-[var(--border-color)]
+  rounded-[var(--radius-xl)]
+  border border-[var(--border-color-strong)]
 `;
 
 const variantStyles: Record<PanelVariant, string> = {

@@ -72,10 +72,10 @@ const variantStyles: Record<ButtonVariant, string> = {
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
-  sm: 'h-7 px-2 text-xs rounded-[var(--radius-sm)]',
-  md: 'h-9 px-4 text-sm rounded-[var(--radius-md)]',
-  lg: 'h-11 px-6 text-base rounded-[var(--radius-lg)]',
-  icon: 'h-9 w-9 rounded-[var(--radius-md)]',
+  sm: 'h-7 px-3 text-xs rounded-full',
+  md: 'h-9 px-5 text-sm rounded-full',
+  lg: 'h-11 px-7 text-base rounded-full',
+  icon: 'h-9 w-9 rounded-full',
 };
 
 const activeStyles = `
@@ -88,15 +88,15 @@ const activeStyles = `
    ------------------------------------------------------------ */
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ 
-    className = '', 
-    variant = 'default', 
-    size = 'md', 
+  ({
+    className = '',
+    variant = 'default',
+    size = 'md',
     active = false,
     loading = false,
     disabled,
-    children, 
-    ...props 
+    children,
+    ...props
   }, ref) => {
     return (
       <button

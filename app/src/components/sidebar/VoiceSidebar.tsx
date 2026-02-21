@@ -79,7 +79,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
 
   return (
     <div
-      className="flex flex-row gap-0 rounded-lg bg-white/5 border border-white/5 transition-opacity duration-200 overflow-visible"
+      className="flex flex-row gap-0 rounded-2xl bg-white/5 border border-white/10 transition-opacity duration-200 overflow-hidden relative"
       style={{ opacity: isDimmed ? 0.45 : 1 }}
     >
       {/* Clickable color bar opens a simple picker for beginners. */}
@@ -88,7 +88,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
         onChange={(nextColor) => setVoiceColor(voiceId, nextColor)}
         label={voiceName}
         containerClassName="shrink-0"
-        triggerClassName="w-2 h-12 rounded-l-lg border-r border-white/10 cursor-pointer"
+        triggerClassName="w-2.5 h-full rounded-l-[7px] border-r border-white/10 cursor-pointer -ml-[1px]"
         panelClassName="ml-1"
       />
 
@@ -139,7 +139,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
             />
           ) : (
             <span
-              className="text-[11px] font-regular uppercase tracking-wider truncate text-[var(--text-primary)] overflow-hidden text-ellipsis whitespace-nowrap"
+              className="text-sm font-medium truncate text-[var(--text-primary)] overflow-hidden text-ellipsis whitespace-nowrap"
               onDoubleClick={(evt) => {
                 if (mode !== 'create') return;
                 evt.stopPropagation();
@@ -180,8 +180,8 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
               }
             }}
             className={`
-              flex-1 flex items-center justify-center gap-1 px-1 py-0.5
-              rounded-full text-[10px] font-bold uppercase tracking-wider
+              flex-1 flex items-center justify-center gap-1.5 px-2 py-1
+              rounded-full text-xs font-semibold
               transition-all duration-200 cursor-pointer
               ${mode === 'create'
                 ? (isSelectedForEdit
@@ -282,15 +282,15 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
         className="
           flex flex-col gap-2.5 p-3 pb-4 pointer-events-auto
           glass-pane glass-sidebar glass-noise rounded-[2.5rem]
-          shadow-2xl border border-white/10
-          shrink-0 w-[168px]
+          shadow-2xl border border-white/20
+          shrink-0 w-[180px]
         "
       >
 
         {/* Header label styled to match the brighter top-bar theme dropdown */}
-        <div className="relative flex items-center justify-center text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-[0.25em]">
-          <div className="flex items-center gap-1.25">
-            <Layers size={20} />
+        <div className="relative flex items-center justify-center text-base font-semibold text-[var(--text-secondary)]">
+          <div className="flex items-center gap-1.5">
+            <Layers size={18} />
             <span>Parts</span>
           </div>
 
@@ -318,8 +318,8 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
         {/* Global Toggles: VOICE (vocals) and GUIDES (synths) */}
         <div className="flex gap-2 px-1 pb-1">
           {/* VOICE toggle — mutes/unmutes all vocal tracks */}
-          <div className="flex-1 flex flex-col items-center gap-0.5">
-            <span className="text-[11px] font-regular tracking-widest uppercase text-[var(--text-secondary)]">Voice</span>
+          <div className="flex-1 flex flex-col items-center gap-1">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">Voice</span>
             <button
               onClick={() => {
                 const anyUnmuted = voiceStates.some(v => !v.vocalMuted);
@@ -333,8 +333,8 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
           </div>
 
           {/* GUIDES toggle — mutes/unmutes all synth tracks */}
-          <div className="flex-1 flex flex-col items-center gap-0.5">
-            <span className="text-[11px] font-regular tracking-widest uppercase text-[var(--text-secondary)]">Guides</span>
+          <div className="flex-1 flex flex-col items-center gap-1">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">Synth</span>
             <button
               onClick={() => {
                 const anyUnmuted = voiceStates.some(v => !v.synthMuted);
@@ -370,12 +370,12 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
             onClick={() => setShowClearAllConfirm(true)}
             aria-label="Clear all recordings"
             className="
-              px-3 py-1.5
-              text-[9px] font-bold uppercase tracking-widest
+              px-3 py-2
+              text-xs font-semibold
               text-[var(--text-muted)] hover:text-[var(--text-primary)]
               bg-white/5 hover:bg-white/10
               hover:shadow-[0_0_10px_-3px_rgba(255,255,255,0.08)]
-              rounded-full
+              rounded-full border border-white/5
               transition-all duration-200 cursor-pointer
               shrink-0
             "
@@ -386,21 +386,21 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
           {/* Mixer button — opens the mixer modal */}
           <button
             onClick={() => setMixerOpen(true)}
-            aria-label="Open Mixer"
+            aria-label="Open Levels"
             className="
-              flex items-center justify-center gap-1.5 px-3 py-1.5
-              text-[9px] font-bold uppercase tracking-widest
+              flex items-center justify-center gap-2 px-3 py-2
+              text-xs font-semibold
               text-[var(--text-secondary)] hover:text-[var(--text-primary)]
               bg-white/5 hover:bg-white/10
               hover:shadow-[0_0_10px_-3px_rgba(255,255,255,0.08)]
-              rounded-full
+              rounded-full border border-white/10
               transition-all duration-200 cursor-pointer
               shrink-0
             "
-            title="Open Mixer"
+            title="Open Levels"
           >
-            <Sliders size={11} />
-            <span>Mixer</span>
+            <Sliders size={14} />
+            <span>Levels</span>
           </button>
         </div>
       </div>

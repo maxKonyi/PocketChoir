@@ -618,17 +618,17 @@ export function useGridRenderer({
           const tileOffset = k * loopLengthT;
           drawPitchTrace(ctx, recording.pitchTrace, startT16, endT16,
             arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
-              color: voiceColor,
-              lineWidth: 10,
-              opacity: isVocalMuted ? 0.2 : 0.4,
-              isLive: false,
-              effectiveTonicMidi,
-              minSemitone,
-              maxSemitone,
-              worldTimeOffset: tileOffset,
-              camLeft: camLeftSnapped,
-              pxPerT,
-            });
+            color: voiceColor,
+            lineWidth: 10,
+            opacity: isVocalMuted ? 0.2 : 0.4,
+            isLive: false,
+            effectiveTonicMidi,
+            minSemitone,
+            maxSemitone,
+            worldTimeOffset: tileOffset,
+            camLeft: camLeftSnapped,
+            pxPerT,
+          });
         }
       }
 
@@ -664,18 +664,18 @@ export function useGridRenderer({
           const tileOffset = k * loopLengthT;
           drawPitchTrace(ctx, livePitchTrace, startT16, endT16,
             arrangement.tempo, arrangement.timeSig, gridLeft, gridTop, gridWidth, gridHeight, {
-              color: traceColor,
-              lineWidth: 10,
-              opacity: 0.8,
-              isLive: k === playheadTile,
-              effectiveTonicMidi,
-              minSemitone,
-              maxSemitone,
-              worldTimeOffset: tileOffset,
-              camLeft: camLeftSnapped,
-              pxPerT,
-              headXOverride: k === playheadTile ? playheadX : undefined,
-            });
+            color: traceColor,
+            lineWidth: 10,
+            opacity: 0.8,
+            isLive: k === playheadTile,
+            effectiveTonicMidi,
+            minSemitone,
+            maxSemitone,
+            worldTimeOffset: tileOffset,
+            camLeft: camLeftSnapped,
+            pxPerT,
+            headXOverride: k === playheadTile ? playheadX : undefined,
+          });
         }
       }
 
@@ -1377,12 +1377,11 @@ export function useGridRenderer({
       const verticalEdgeClearPx = 10;
 
       ctx.save();
-      ctx.globalCompositeOperation = 'destination-in';
 
-      // Side fades (left/right): applied to BOTH layers so chord + lyric lanes
-      // also fade smoothly at the horizontal edges.
-      // Anchor horizontal fade to the visible grid bounds so it can fully fade
-      // out exactly at the left/right edges of the grid area.
+      // 1. Horizontal Side Fades
+      // Applied specifically to the grid area. Since destination-in keeps only the overlap,
+      // this technically "erases" the labels area (to the left of gridLeft).
+      ctx.globalCompositeOperation = 'destination-in';
       const sideRatio = Math.min(0.49, sideFadePx / Math.max(1, gridWidth));
       const sideEdgePadRatio = Math.min(0.25, sideEdgeClearPx / Math.max(1, gridWidth));
       const sideSolidStart = Math.max(sideEdgePadRatio, sideRatio);
@@ -1395,15 +1394,38 @@ export function useGridRenderer({
       sideGradient.addColorStop(1 - sideEdgePadRatio, 'rgba(0, 0, 0, 0)');
       sideGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = sideGradient;
-      // Limit horizontal fade to the grid's X band so left-side pitch labels
-      // (drawn outside the grid area) stay fully readable.
       ctx.fillRect(gridLeft, 0, gridWidth, height);
 
-      // Vertical fades (top/bottom): applied only to the main grid layer.
-      // The chord/lyric overlay should keep full vertical readability.
+      // 2. Clear Compositing & Draw Pitch Labels
+      // We draw these AFTER the side fades have cleared the side margin, so labels remain opaque.
+      ctx.globalCompositeOperation = 'source-over';
       if (!onlyChords) {
-        // Anchor vertical fade to the visible grid bounds so top/bottom fade reaches
-        // full transparency before the grid area ends.
+        for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
+          const noteInScale = ((semi % 12) + 12) % 12;
+          const scalePattern = SCALE_PATTERNS[arrangement.scale] || SCALE_PATTERNS.major;
+          const isDiatonic = scalePattern.includes(noteInScale);
+          if (!isDiatonic) continue;
+
+          if (semi < minSemitone + 1 || semi > maxSemitone - 1) continue;
+
+          const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
+          const label = semitoneToLabel(semi);
+
+          ctx.save();
+          ctx.globalAlpha = display.gridOpacity;
+          ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.98)' : 'rgba(255,255,255,0.78)';
+          ctx.font = 'bold 11px system-ui';
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, gridLeft - 8, y);
+          ctx.restore();
+        }
+      }
+
+      // 3. Vertical Top/Bottom Fades
+      // Applied to the whole width, so both labels and grid fade out at edges.
+      if (!onlyChords) {
+        ctx.globalCompositeOperation = 'destination-in';
         const verticalRatio = Math.min(0.49, verticalFadePx / Math.max(1, gridHeight));
         const verticalEdgePadRatio = Math.min(0.25, verticalEdgeClearPx / Math.max(1, gridHeight));
         const verticalSolidStart = Math.max(verticalEdgePadRatio, verticalRatio);
@@ -1420,35 +1442,6 @@ export function useGridRenderer({
       }
 
       ctx.restore();
-    }
-
-    // Pitch labels are drawn AFTER the edge fades.
-    // Reason: the fades use `destination-in` compositing, which would otherwise
-    // erase the labels even though they live in the left margin area.
-    if (!onlyChords) {
-      for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
-        const noteInScale = ((semi % 12) + 12) % 12;
-        const scalePattern = SCALE_PATTERNS[arrangement.scale] || SCALE_PATTERNS.major;
-        const isDiatonic = scalePattern.includes(noteInScale);
-        if (!isDiatonic) continue;
-
-        if (semi < minSemitone + 1 || semi > maxSemitone - 1) continue;
-
-        const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
-        const label = semitoneToLabel(semi);
-
-        ctx.save();
-        // Match label intensity to grid intensity (so the grid opacity control
-        // affects labels the same way it affects grid lines).
-        ctx.globalAlpha = display.gridOpacity;
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.fillStyle = semi % 12 === 0 ? 'rgba(255,255,255,0.98)' : 'rgba(255,255,255,0.78)';
-        ctx.font = 'bold 11px system-ui';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, gridLeft - 15, y);
-        ctx.restore();
-      }
     }
   }, [
     arrangement,
