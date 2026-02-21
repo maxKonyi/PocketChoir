@@ -767,20 +767,20 @@ const initialVocalRange: VocalRange = {
 };
 
 const initialDisplaySettings: DisplaySettings = {
-  showMinimap: true,
+  showMinimap: false,
   showChordTrack: true,
   showLyricsTrack: true,
   showNoteLabels: true,
   labelFormat: 'degree',
   noteSize: 1.0,
-  lineThickness: 1.0,
+  lineThickness: 2.0,
   zoomLevel: 1,
-  glowIntensity: 0,
-  gridOpacity: 0.6,
+  glowIntensity: 0.0,
+  gridOpacity: 0.0,
   snapCameraToPixels: false,
-  backgroundVideo: '/src/data/backgrounds/Forest1.mp4',
-  backgroundBlur: 4,
-  backgroundBrightness: 0.6,
+  backgroundVideo: '/src/data/backgrounds/Tree1(loop).mp4',
+  backgroundBlur: 0,
+  backgroundBrightness: 1.0,
 };
 
 // Default follow-mode state.
