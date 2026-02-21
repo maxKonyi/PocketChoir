@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
 import type { Arrangement, PitchPoint, Recording } from '../../types';
 import { useAppStore } from '../../stores/appStore';
@@ -209,6 +209,16 @@ export function useGridRenderer({
 }: UseGridRendererParams): () => void {
   // Use passed DialKit parameters (from App.tsx) instead of calling hook here
   // This ensures only ONE DialKit panel is created at the root level
+  const lastStopMsRef = useRef<number>(0);
+  const wasPlayingRef = useRef<boolean>(isPlaying);
+
+  useEffect(() => {
+    if (wasPlayingRef.current && !isPlaying) {
+      lastStopMsRef.current = window.performance.now();
+    }
+    wasPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
   return useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -881,7 +891,12 @@ export function useGridRenderer({
 
         // Pass A.6: Playhead pulse illumination — clipped to contour shapes.
         // Uses the contour mask from step 1 to confine the effect to the lines.
-        if (isPlaying) {
+        const FADE_OUT_DURATION = 800; // ms
+        const nowMs = window.performance.now();
+        const timeSinceStop = isPlaying ? 0 : nowMs - lastStopMsRef.current;
+        const fadeFactor = Math.max(0, 1 - timeSinceStop / FADE_OUT_DURATION);
+
+        if (isPlaying || fadeFactor > 0) {
           const playheadScreenX = gridLeft + worldTToScreenX(playheadWorldT, camLeftSnapped, pxPerT);
 
           // Reuse the shadow composite canvas for the energy layer.
@@ -894,14 +909,15 @@ export function useGridRenderer({
           shadowCtx.clip();
 
           // A) Playhead illumination — a comet-tail glow trailing behind the playhead.
-          const glowReach = 80 + 20 * display.lineThickness;
+          const baseGlowReach = 80 + 20 * display.lineThickness;
+          const currentGlowReach = baseGlowReach * (isPlaying ? 1 : Math.max(0, fadeFactor));
           const pulseGrad = shadowCtx.createLinearGradient(
-            playheadScreenX - glowReach, 0,
+            playheadScreenX - currentGlowReach, 0,
             playheadScreenX, 0
           );
           pulseGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
-          pulseGrad.addColorStop(0.65, 'rgba(255, 255, 255, 0.4)');
-          pulseGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
+          pulseGrad.addColorStop(0.65, `rgba(255, 255, 255, ${0.4 * fadeFactor})`);
+          pulseGrad.addColorStop(1, `rgba(255, 255, 255, ${1.0 * fadeFactor})`);
           shadowCtx.fillStyle = pulseGrad;
 
           // Only draw to the left of the playhead for a hard cutoff right at the line
