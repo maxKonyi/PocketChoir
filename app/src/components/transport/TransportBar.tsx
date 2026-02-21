@@ -229,6 +229,37 @@ export function TransportBar() {
           <div className="w-px h-8 bg-white/8 ml-2" />
         </div>
 
+        {/* Metronome Button - between BPM and Restart */}
+        <button
+          onClick={() => setMetronomeEnabled(!pbMetronomeEnabled)}
+          aria-label="Toggle Metronome"
+          className={`
+            w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer
+            ${pbMetronomeEnabled
+              ? 'bg-blue-500/25 text-blue-300 shadow-[0_0_15px_-3px_rgba(59,130,246,0.4)] border border-blue-500/30'
+              : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
+            }
+          `}
+          title="Metronome"
+        >
+          {/* Metronome icon from Tabler Icons (free, high-quality) */}
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={pbMetronomeEnabled ? 'animate-pulse' : ''}
+          >
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M14.153 8.188l-.72 -3.236a2.493 2.493 0 0 0 -4.867 0l-3.025 13.614a2 2 0 0 0 1.952 2.434h7.014a2 2 0 0 0 1.952 -2.434l-.524 -2.357m-4.935 1.791l9 -13" />
+            <path d="M19 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+          </svg>
+        </button>
+
         {/* Restart Button - pinned to the inside edge (closer to Play) */}
         <button
           onClick={handleRestart}
@@ -244,7 +275,6 @@ export function TransportBar() {
         >
           <SkipBack size={20} />
         </button>
-
       </div>
 
       {/* CENTER SECTION: Play Button Only (Perfectly Centered) */}
@@ -298,48 +328,17 @@ export function TransportBar() {
           >
             <Repeat size={20} />
           </button>
-
-          {/* Metronome Button */}
-          <button
-            onClick={() => setMetronomeEnabled(!pbMetronomeEnabled)}
-            aria-label="Toggle Metronome"
-            className={`
-              w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer
-              ${pbMetronomeEnabled
-                ? 'bg-blue-500/25 text-blue-300 shadow-[0_0_15px_-3px_rgba(59,130,246,0.4)] border border-blue-500/30'
-                : 'text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]'
-              }
-            `}
-            title="Metronome"
-          >
-            {/* Metronome icon from Tabler Icons (free, high-quality) */}
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={pbMetronomeEnabled ? 'animate-pulse' : ''}
-            >
-              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-              <path d="M14.153 8.188l-.72 -3.236a2.493 2.493 0 0 0 -4.867 0l-3.025 13.614a2 2 0 0 0 1.952 2.434h7.014a2 2 0 0 0 1.952 -2.434l-.524 -2.357m-4.935 1.791l9 -13" />
-              <path d="M19 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
-            </svg>
-          </button>
         </div>
 
         <div className="flex items-center gap-4">
           <div className="w-px h-6 bg-white/8" />
 
           {/* Camera mode toggle: Smart / Follow / Static */}
-          <div className="flex flex-col bg-white/5 rounded-[20px] p-1 border border-white/8 w-[112px] gap-1 text-center">
+          <div className="flex bg-white/5 rounded-full p-1 border border-white/8 items-center gap-1">
             <button
               onClick={() => setCameraMode('smart')}
               className={`
-                w-full py-1 rounded-t-2xl rounded-b-sm bg-transparent text-[10px] font-semibold tracking-wide
+                px-3 py-1.5 rounded-full text-[11px] font-semibold tracking-wide
                 transition-all duration-150 cursor-pointer
                 ${cameraMode === 'smart'
                   ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
@@ -350,41 +349,38 @@ export function TransportBar() {
             >
               Smart
             </button>
-            <div className="h-px bg-white/10 mx-1" />
-            <div className="flex gap-1">
-              <button
-                onClick={() => setCameraMode('follow')}
-                className={`
-                  flex-1 py-1 rounded-bl-2xl rounded-tl-sm rounded-br-sm rounded-tr-sm bg-transparent text-[10px] font-semibold tracking-wide
-                  transition-all duration-150 cursor-pointer
-                  ${cameraMode === 'follow'
-                    ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
-                    : cameraMode === 'smart'
-                      ? 'text-[var(--text-disabled)] opacity-60'
-                      : 'text-[var(--text-muted)] hover:text-white hover:bg-white/10'
-                  }
-                `}
-                title="Camera: Follow"
-              >
-                Follow
-              </button>
-              <button
-                onClick={() => setCameraMode('static')}
-                className={`
-                  flex-1 py-1 rounded-br-2xl rounded-tr-sm rounded-bl-sm rounded-tl-sm bg-transparent text-[10px] font-semibold tracking-wide
-                  transition-all duration-150 cursor-pointer
-                  ${cameraMode === 'static'
-                    ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
-                    : cameraMode === 'smart'
-                      ? 'text-[var(--text-disabled)] opacity-60'
-                      : 'text-[var(--text-muted)] hover:text-white hover:bg-white/10'
-                  }
-                `}
-                title="Camera: Static"
-              >
-                Static
-              </button>
-            </div>
+            <button
+              onClick={() => setCameraMode('follow')}
+              className={`
+                px-3 py-1.5 rounded-full text-[11px] font-semibold tracking-wide
+                transition-all duration-150 cursor-pointer
+                ${cameraMode === 'follow'
+                  ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
+                  : cameraMode === 'smart'
+                    ? 'text-[var(--text-disabled)] opacity-60'
+                    : 'text-[var(--text-muted)] hover:text-white hover:bg-white/10'
+                }
+              `}
+              title="Camera: Follow"
+            >
+              Follow
+            </button>
+            <button
+              onClick={() => setCameraMode('static')}
+              className={`
+                px-3 py-1.5 rounded-full text-[11px] font-semibold tracking-wide
+                transition-all duration-150 cursor-pointer
+                ${cameraMode === 'static'
+                  ? 'bg-white/15 text-[var(--text-primary)] shadow-sm'
+                  : cameraMode === 'smart'
+                    ? 'text-[var(--text-disabled)] opacity-60'
+                    : 'text-[var(--text-muted)] hover:text-white hover:bg-white/10'
+                }
+              `}
+              title="Camera: Static"
+            >
+              Static
+            </button>
           </div>
         </div>
 
