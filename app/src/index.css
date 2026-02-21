@@ -169,16 +169,18 @@
     inset 0 1px 0 0 rgba(255, 255, 255, 0.08),   /* inner top highlight */
     inset 0 -1px 0 0 rgba(255, 255, 255, 0.03),  /* inner bottom subtle edge */
     0 0 80px -20px rgba(var(--accent-rgb, 139, 92, 246), 0.06); /* ambient accent glow */
-  overflow: hidden;
 }
 
-
+.glass-pane-contained {
+  overflow: hidden;
+}
 
 .glass-pane::before {
   /* -- Liquid gradient overlay: diagonal light refraction effect -- */
   content: "";
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, transparent 40%),
     linear-gradient(225deg, rgba(255, 255, 255, 0.04) 0%, transparent 30%),
@@ -194,6 +196,7 @@
   left: 0;
   right: 0;
   height: 1px;
+  border-radius: inherit;
   background: linear-gradient(
     to right,
     transparent 5%,
@@ -215,6 +218,7 @@
   content: "";
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   opacity: 0.025;
   pointer-events: none;
   mix-blend-mode: overlay;

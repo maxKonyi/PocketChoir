@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { Mic, Trash2, Edit3, Layers, Sliders } from 'lucide-react';
 import { useAppStore, MAX_VOICES } from '../../stores/appStore';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { VoiceColorPicker } from '../ui/VoiceColorPicker';
 
 /* ------------------------------------------------------------
    Voice Control Row Component - Two-row layout per voice
@@ -56,6 +57,7 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
   const clearRecording = useAppStore((state) => state.clearRecording);
   const setSelectedVoiceId = useAppStore((state) => state.setSelectedVoiceId);
   const renameVoice = useAppStore((state) => state.renameVoice);
+  const setVoiceColor = useAppStore((state) => state.setVoiceColor);
   const clearVoiceNodes = useAppStore((state) => state.clearVoiceNodes);
 
   const isArmed = armedVoiceId === voiceId;
@@ -77,16 +79,17 @@ function VoiceControl({ voiceId, voiceName, voiceColor, startRecording, stopReco
 
   return (
     <div
-      className="flex flex-row gap-0 rounded-lg bg-white/5 border border-white/5 transition-opacity duration-200 overflow-hidden"
+      className="flex flex-row gap-0 rounded-lg bg-white/5 border border-white/5 transition-opacity duration-200 overflow-visible"
       style={{ opacity: isDimmed ? 0.45 : 1 }}
     >
-      {/* Tall thin colour bar on the left — like the mixer modal */}
-      <div
-        className="w-2 shrink-0 rounded-l-xl self-stretch"
-        style={{
-          backgroundColor: voiceColor,
-          boxShadow: `0 0 10px ${voiceColor}50`,
-        }}
+      {/* Clickable color bar opens a simple picker for beginners. */}
+      <VoiceColorPicker
+        color={voiceColor}
+        onChange={(nextColor) => setVoiceColor(voiceId, nextColor)}
+        label={voiceName}
+        containerClassName="shrink-0"
+        triggerClassName="w-2 h-12 rounded-l-lg border-r border-white/10 cursor-pointer"
+        panelClassName="ml-1"
       />
 
       {/* Track content to the right of the colour bar */}

@@ -25,7 +25,7 @@ import type {
 } from '../types';
 import type { ThemeName } from '../utils/colors';
 import { getArrangementFrequencyRange, noteNameToFrequency, suggestTranspositionToFitRange, degreeToSemitoneOffset } from '../utils/music';
-import { DEFAULT_VOICE_COLORS } from '../utils/colors';
+import { DEFAULT_VOICE_COLORS, normalizeHexColor } from '../utils/colors';
 import type { CameraMode } from '../utils/smartCam';
 
 /* ------------------------------------------------------------
@@ -437,6 +437,10 @@ interface AppState {
   // Voice states (one per voice in arrangement)
   voiceStates: VoiceState[];
 
+  // User-customized voice colors keyed by voice ID (e.g., v1, v2).
+  // We keep this separate so colors can persist across app reloads.
+  voiceColorOverrides: Record<string, string>;
+
   // Playback state
   playback: PlaybackState;
 
@@ -566,6 +570,7 @@ interface AppActions {
 
   // Create mode - voice management
   renameVoice: (voiceId: string, newName: string) => void;
+  setVoiceColor: (voiceId: string, color: string) => void;
   clearVoiceNodes: (voiceId: string) => void;
   clearAllVoiceNodes: () => void;
 
@@ -795,6 +800,7 @@ const initialState: AppState = {
   transposition: 0,
   autoTranspositionNotice: null,
   voiceStates: [],
+  voiceColorOverrides: {},
   playback: initialPlaybackState,
   globalVolume: 0.8,
   globalReverb: 0.2,
@@ -836,6 +842,7 @@ const STORAGE_KEY = 'harmony-singing-settings';
 // State that should be persisted (user settings only)
 type PersistedState = Pick<AppState,
   | 'voiceStates'      // Mixer: per-voice volume, pan, mute, solo, reverb
+  | 'voiceColorOverrides' // User-picked voice colors from sidebar/mixer color picker
   | 'globalVolume'     // Mixer: global volume
   | 'globalReverb'     // Mixer: global reverb
   | 'microphoneState'  // Mic: device, gain, monitoring, lag compensation
@@ -927,6 +934,8 @@ export const useAppStore = create<AppState & AppActions>()(
 
       // -- Arrangement --
       setArrangement: (arrangement) => {
+        const savedVoiceColorOverrides = get().voiceColorOverrides;
+
         // Clear recordings and armed voice when changing arrangement
         set({
           arrangement,
@@ -966,6 +975,13 @@ export const useAppStore = create<AppState & AppActions>()(
           // lyric entries that point to missing/non-melody nodes.
           arrangement = {
             ...arrangement,
+            voices: arrangement.voices.map((voice) => {
+              // If this voice has a saved custom color, restore it on load.
+              const savedColor = savedVoiceColorOverrides[voice.id];
+              const normalizedSavedColor = savedColor ? normalizeHexColor(savedColor) : null;
+              if (!normalizedSavedColor) return voice;
+              return { ...voice, color: normalizedSavedColor };
+            }),
             ...(normalizedChords !== undefined ? { chords: normalizedChords } : {}),
             lyrics: normalizeLyricsTrack(arrangement.lyrics, arrangement),
           };
@@ -1735,6 +1751,37 @@ export const useAppStore = create<AppState & AppActions>()(
         return {
           ...historyUpdate,
           arrangement: withNormalizedLyricsTrack({ ...state.arrangement, voices: updatedVoices }),
+        };
+      }),
+
+      // Set a voice color from the sidebar/mixer color picker.
+      // We validate and normalize the hex so rendering remains consistent.
+      setVoiceColor: (voiceId, color) => set((state) => {
+        if (!state.arrangement) return state;
+
+        const normalizedColor = normalizeHexColor(color);
+        if (!normalizedColor) return state;
+
+        const targetVoice = state.arrangement.voices.find((voice) => voice.id === voiceId);
+        if (!targetVoice) return state;
+        if (targetVoice.color === normalizedColor && state.voiceColorOverrides[voiceId] === normalizedColor) {
+          return state;
+        }
+
+        const historyUpdate = prepareHistoryUpdate(state);
+        if (!historyUpdate) return state;
+
+        const updatedVoices = state.arrangement.voices.map((voice) =>
+          voice.id === voiceId ? { ...voice, color: normalizedColor } : voice
+        );
+
+        return {
+          ...historyUpdate,
+          arrangement: { ...state.arrangement, voices: updatedVoices },
+          voiceColorOverrides: {
+            ...state.voiceColorOverrides,
+            [voiceId]: normalizedColor,
+          },
         };
       }),
 
@@ -2798,6 +2845,7 @@ export const useAppStore = create<AppState & AppActions>()(
       // Only persist user settings, not transient state
       partialize: (state): PersistedState => ({
         voiceStates: state.voiceStates,
+        voiceColorOverrides: state.voiceColorOverrides,
         globalVolume: state.globalVolume,
         globalReverb: state.globalReverb,
         microphoneState: state.microphoneState,

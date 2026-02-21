@@ -19,6 +19,34 @@ export const DEFAULT_VOICE_COLORS = [
 ];
 
 /**
+ * Normalize a user-entered hex color into full 6-digit lowercase format.
+ * Returns null when the input is not a valid 3- or 6-digit hex color.
+ */
+export function normalizeHexColor(input: string): string | null {
+  const clean = input.trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(clean)) {
+    return null;
+  }
+
+  if (clean.length === 3) {
+    const expanded = clean
+      .split('')
+      .map((char) => `${char}${char}`)
+      .join('');
+    return `#${expanded.toLowerCase()}`;
+  }
+
+  return `#${clean.toLowerCase()}`;
+}
+
+/**
+ * True when the input can be interpreted as a 3- or 6-digit hex color.
+ */
+export function isValidHexColor(input: string): boolean {
+  return normalizeHexColor(input) !== null;
+}
+
+/**
  * Parse a hex color to RGB components.
  * @param hex - Hex color string (e.g., "#ff6b9d" or "ff6b9d")
  * @returns Object with r, g, b values (0-255)

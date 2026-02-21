@@ -1,5 +1,6 @@
 import { X, Volume2, Music2, RotateCw } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+import { VoiceColorPicker } from '../ui/VoiceColorPicker';
 
 /* ------------------------------------------------------------
    Mixer Modal
@@ -32,6 +33,7 @@ export function MixerModal() {
     const setVoiceVocalMuted = useAppStore((state) => state.setVoiceVocalMuted);
     const setVoiceVocalSolo = useAppStore((state) => state.setVoiceVocalSolo);
     const setVoiceVocalPan = useAppStore((state) => state.setVoiceVocalPan);
+    const setVoiceColor = useAppStore((state) => state.setVoiceColor);
 
     if (!isMixerOpen || !arrangement) return null;
 
@@ -137,9 +139,13 @@ export function MixerModal() {
 
                                     {/* Track Info */}
                                     <div className="flex items-center gap-3">
-                                        <div
-                                            className="w-3 h-12 rounded-full shrink-0 shadow-[0_0_10px_inset_rgba(0,0,0,0.5)]"
-                                            style={{ backgroundColor: voice.color }}
+                                        {/* This uses the same picker as the sidebar so behavior stays consistent. */}
+                                        <VoiceColorPicker
+                                            color={voice.color}
+                                            onChange={(nextColor) => setVoiceColor(voice.id, nextColor)}
+                                            label={voice.name}
+                                            containerClassName="shrink-0"
+                                            triggerClassName="w-3 h-12 rounded-full border border-white/20 cursor-pointer shadow-[0_0_10px_inset_rgba(0,0,0,0.5)]"
                                         />
                                         <div>
                                             <div className="text-sm font-bold text-white mb-0.5">{voice.name}</div>
