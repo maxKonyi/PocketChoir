@@ -14,10 +14,10 @@ import {
   getPrismaticContourColorAtPhase,
   getRightEdgeHoldStackInfo,
 } from './gridContourUtils';
-import { 
+import {
   createDialKitPrismaticContourGradient,
   getDialKitPrismaticContourColorAtPhase,
-  type useUnisonContourDialKit 
+  type useUnisonContourDialKit
 } from './UnisonContourDialKit';
 
 /**
@@ -174,25 +174,25 @@ export function drawVoiceContour(
         // Use DialKit parameters if available, otherwise fall back to defaults
         const prismGradient = unisonDialKitParams && unisonDialKitParams.enablePrismaticGradient
           ? createDialKitPrismaticContourGradient(
-              ctx,
-              pieceStartX,
-              targetY,
-              pieceEndX,
-              targetY,
-              pieceStartX + prismAnimationPhasePx,
-              unisonDialKitParams
-            )
+            ctx,
+            pieceStartX,
+            targetY,
+            pieceEndX,
+            targetY,
+            pieceStartX + prismAnimationPhasePx,
+            unisonDialKitParams
+          )
           : createPrismaticContourGradient(
-              ctx,
-              pieceStartX,
-              targetY,
-              pieceEndX,
-              targetY,
-              pieceStartX + prismAnimationPhasePx
-            );
+            ctx,
+            pieceStartX,
+            targetY,
+            pieceEndX,
+            targetY,
+            pieceStartX + prismAnimationPhasePx
+          );
 
         ctx.save();
-        
+
         // Apply DialKit glow settings if available and enabled
         if (unisonDialKitParams && unisonDialKitParams.enableUnisonGlow) {
           ctx.shadowBlur = unisonDialKitParams.unisonGlowBlur * unisonDialKitParams.unisonGlowIntensity;
@@ -206,7 +206,7 @@ export function drawVoiceContour(
           ctx.shadowBlur = 0;
           ctx.shadowColor = 'transparent';
         }
-        
+
         ctx.strokeStyle = prismGradient;
         ctx.beginPath();
         ctx.moveTo(pieceStartX, targetY);
@@ -416,25 +416,25 @@ export function drawVoiceContour(
 
           const prismGradient = unisonDialKitParams && unisonDialKitParams.enablePrismaticGradient
             ? createDialKitPrismaticContourGradient(
-                ctx,
-                bendStartX,
-                bendStartY,
-                x,
-                stackedY,
-                bendStartX + prismAnimationPhasePx,
-                unisonDialKitParams
-              )
+              ctx,
+              bendStartX,
+              bendStartY,
+              x,
+              stackedY,
+              bendStartX + prismAnimationPhasePx,
+              unisonDialKitParams
+            )
             : createPrismaticContourGradient(
-                ctx,
-                bendStartX,
-                bendStartY,
-                x,
-                stackedY,
-                bendStartX + prismAnimationPhasePx
-              );
+              ctx,
+              bendStartX,
+              bendStartY,
+              x,
+              stackedY,
+              bendStartX + prismAnimationPhasePx
+            );
 
           ctx.save();
-          
+
           // Apply DialKit glow settings if available and enabled
           if (unisonDialKitParams && unisonDialKitParams.enableUnisonGlow) {
             ctx.shadowBlur = unisonDialKitParams.unisonGlowBlur * unisonDialKitParams.unisonGlowIntensity;
@@ -447,7 +447,7 @@ export function drawVoiceContour(
             ctx.shadowBlur = 0;
             ctx.shadowColor = 'transparent';
           }
-          
+
           ctx.strokeStyle = prismGradient;
           ctx.beginPath();
           ctx.moveTo(bendStartX, bendStartY);

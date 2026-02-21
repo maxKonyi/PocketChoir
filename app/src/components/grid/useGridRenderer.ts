@@ -702,7 +702,6 @@ export function useGridRenderer({
           voiceRenderOrder.push(...withoutSelected, selectedIdx);
         }
       }
-
       // Pass A: Contour lines only (including glow) — for each visible tile
       // Hovering any contour temporarily expands stacked lines so users can inspect
       // which voices are currently in a unison stack.
@@ -879,6 +878,53 @@ export function useGridRenderer({
         ctx.drawImage(shadowCompositeCanvas, 0, 0);
         ctx.restore();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        // Pass A.6: Playhead pulse illumination — clipped to contour shapes.
+        // Uses the contour mask from step 1 to confine the effect to the lines.
+        if (isPlaying) {
+          const playheadScreenX = gridLeft + worldTToScreenX(playheadWorldT, camLeftSnapped, pxPerT);
+
+          // Reuse the shadow composite canvas for the energy layer.
+          shadowCtx.setTransform(1, 0, 0, 1, 0, 0);
+          shadowCtx.clearRect(0, 0, shadowCompositeCanvas.width, shadowCompositeCanvas.height);
+          shadowCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          shadowCtx.save();
+          shadowCtx.beginPath();
+          shadowCtx.rect(gridLeft, gridTop, gridWidth, gridHeight);
+          shadowCtx.clip();
+
+          // A) Playhead illumination — a comet-tail glow trailing behind the playhead.
+          const glowReach = 80 + 20 * display.lineThickness;
+          const pulseGrad = shadowCtx.createLinearGradient(
+            playheadScreenX - glowReach, 0,
+            playheadScreenX, 0
+          );
+          pulseGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+          pulseGrad.addColorStop(0.65, 'rgba(255, 255, 255, 0.4)');
+          pulseGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
+          shadowCtx.fillStyle = pulseGrad;
+
+          // Only draw to the left of the playhead for a hard cutoff right at the line
+          const drawWidth = Math.max(0, playheadScreenX - gridLeft);
+          shadowCtx.fillRect(gridLeft, gridTop, drawWidth, gridHeight);
+
+          shadowCtx.restore();
+
+          // Clip energy layer to contour shapes only.
+          shadowCtx.save();
+          shadowCtx.setTransform(1, 0, 0, 1, 0, 0);
+          shadowCtx.globalCompositeOperation = 'destination-in';
+          shadowCtx.drawImage(shadowMaskCanvas, 0, 0);
+          shadowCtx.restore();
+
+          // Composite energy onto main canvas with additive (screen) blending.
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.globalCompositeOperation = 'screen';
+          ctx.drawImage(shadowCompositeCanvas, 0, 0);
+          ctx.restore();
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
       }
 
       // Draw playhead above contour lines but below nodes.
