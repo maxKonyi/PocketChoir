@@ -252,10 +252,10 @@ export function DisplaySettingsModal() {
               </span>
             </div>
             <Slider
-              value={(display.lineThickness - 0.5) / 1.5 * 100}
+              value={(display.lineThickness - 0.25) / 3.75 * 100}
               min={0}
               max={100}
-              onChange={(e) => handleSliderChange('lineThickness', 0.5 + Number(e.target.value) / 100 * 1.5)}
+              onChange={(e) => handleSliderChange('lineThickness', 0.25 + (Number(e.target.value) / 100) * 3.75)}
             />
           </div>
 

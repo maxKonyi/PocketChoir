@@ -23,12 +23,14 @@ import { dragPixelsToTimeDelta } from './utils/followCamera';
 import { getCameraCenterWorldT, setCameraCenterWorldT, setFreeLook } from './utils/cameraState';
 import { sixPartStressTest } from './data/arrangements';
 import { useUnisonContourDialKit } from './components/grid/UnisonContourDialKit';
+import { useTubeStyleDialKit } from './components/grid/TubeStyleDialKit';
 
 function App() {
   // Get DialKit parameters ONCE at the root level
   // This ensures only ONE DialKit panel is created for unison contours
   const unisonDialKitParams = useUnisonContourDialKit();
-  
+  const tubeParams = useTubeStyleDialKit();
+
   // Get state and actions from store
   const arrangement = useAppStore((state) => state.arrangement);
   const setArrangement = useAppStore((state) => state.setArrangement);
@@ -684,11 +686,11 @@ function App() {
             Fades are applied inside Grid canvas rendering for consistent visuals.
           */}
           <div className="relative h-full w-full">
-            <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} unisonDialKitParams={unisonDialKitParams} />
+            <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} unisonDialKitParams={unisonDialKitParams} tubeParams={tubeParams} />
 
             {/* Chord/Lyric overlay layer: side fades are handled in this layer's canvas draw pass. */}
             <div className="absolute inset-0 pointer-events-none">
-              <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} unisonDialKitParams={unisonDialKitParams} />
+              <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} unisonDialKitParams={unisonDialKitParams} tubeParams={tubeParams} />
             </div>
           </div>
 

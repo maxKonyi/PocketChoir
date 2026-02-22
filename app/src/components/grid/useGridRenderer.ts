@@ -9,7 +9,7 @@ import {
   semitoneToLetterName,
   semitoneToSolfege,
 } from '../../utils/music';
-import { darkenColor } from '../../utils/colors';
+import { darkenColor, isValidHexColor } from '../../utils/colors';
 import { playbackEngine } from '../../services/PlaybackEngine';
 import {
   cameraLeftWorldT,
@@ -29,7 +29,8 @@ import {
   localT16ToNearestWorldT,
   semitoneToY,
 } from './gridDataUtils';
-import type { useUnisonContourDialKit } from './UnisonContourDialKit';
+import { useUnisonContourDialKit } from './UnisonContourDialKit';
+import { useTubeStyleDialKit } from './TubeStyleDialKit';
 
 type GridMode = 'play' | 'create';
 type GridLabelFormat = 'degree' | 'solfege' | 'noteName';
@@ -160,6 +161,7 @@ type UseGridRendererParams = {
   hoverPreviewRef: MutableRefObject<HoverPreviewState | null>;
   marqueeRef: MutableRefObject<MarqueeState | null>;
   unisonDialKitParams?: ReturnType<typeof useUnisonContourDialKit>;
+  tubeParams?: ReturnType<typeof useTubeStyleDialKit>;
 };
 
 /**
@@ -206,6 +208,7 @@ export function useGridRenderer({
   hoverPreviewRef,
   marqueeRef,
   unisonDialKitParams,
+  tubeParams,
 }: UseGridRendererParams): () => void {
   // Use passed DialKit parameters (from App.tsx) instead of calling hook here
   // This ensures only ONE DialKit panel is created at the root level
@@ -733,7 +736,7 @@ export function useGridRenderer({
 
           // Contour lines get thicker when the mouse hovers over them (play mode only).
           const isHoveredContour = hoveredContourVoiceIdRef.current === voice.id;
-          const baseContourWidth = 3 * display.lineThickness;
+          const baseContourWidth = 6 * display.lineThickness;
           const contourLineWidth = isHoveredContour ? baseContourWidth * 1.67 : baseContourWidth;
           const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 
@@ -749,11 +752,75 @@ export function useGridRenderer({
             drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
           }
 
-          // Main line
+          // Main line - Smooth 3D Tube Rendering logic
           ctx.shadowBlur = 0;
-          ctx.strokeStyle = voiceColor;
-          ctx.lineWidth = contourLineWidth;
-          drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
+
+          if (isSynthMuted) {
+            // Muted state: Flat desaturated line
+            ctx.strokeStyle = voiceColor;
+            ctx.lineWidth = contourLineWidth;
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
+          } else {
+            // Use DialKit parameters if available, otherwise fall back to initial 3-pass defaults
+            const tube = tubeParams || {
+              baseDarkness: 50,
+              bodyWidth: 0.65,
+              highlightWidth: 0.18,
+              highlightOpacity: 0.5,
+              blurAmount: 0,
+              shadowOpacity: 1.0,
+              numSoftPasses: 0
+            };
+
+            // 1) SHADOW LAYER (Depth)
+            const shadowColor = isValidHexColor(baseColor) ? darkenColor(baseColor, tube.baseDarkness) : voiceColor;
+            ctx.strokeStyle = shadowColor;
+            ctx.globalAlpha = tube.shadowOpacity;
+            ctx.lineWidth = contourLineWidth;
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, shadowColor, display.noteSize, unisonDialKitParams);
+            ctx.globalAlpha = 1.0;
+
+            // 2) TRANSITION PASSES (Smoothing)
+            // Draw intermediate width lines to create a soft gradient from shadow to body.
+            const numSoftPasses = Math.floor(tube.numSoftPasses);
+            if (numSoftPasses > 0) {
+              for (let i = 1; i <= numSoftPasses; i++) {
+                const ratio = i / (numSoftPasses + 1);
+                // Linear interpolate width between 100% and tube.bodyWidth
+                const w = contourLineWidth * (1 - (1 - tube.bodyWidth) * ratio);
+                // Linear interpolate color darkness
+                const darkening = tube.baseDarkness * (1 - ratio);
+                const softColor = isValidHexColor(baseColor) ? darkenColor(baseColor, darkening) : voiceColor;
+
+                ctx.strokeStyle = softColor;
+                ctx.lineWidth = w;
+                drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, softColor, display.noteSize, unisonDialKitParams);
+              }
+            }
+
+            // 3) BODY LAYER (Main color)
+            ctx.strokeStyle = voiceColor;
+            ctx.lineWidth = contourLineWidth * tube.bodyWidth;
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
+
+            // 4) HIGHLIGHT LAYER (Gloss)
+            // Multiple thin passes for a soft specular glow
+            const hlColor = `rgba(255, 255, 255, ${tube.highlightOpacity})`;
+            ctx.strokeStyle = hlColor;
+            ctx.lineWidth = contourLineWidth * tube.highlightWidth;
+            if (tube.blurAmount > 0) {
+              ctx.save();
+              ctx.shadowBlur = tube.blurAmount;
+              ctx.shadowColor = 'white';
+            }
+
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, hlColor, display.noteSize, unisonDialKitParams);
+
+            if (tube.blurAmount > 0) {
+              ctx.restore();
+            }
+          }
+
           ctx.restore();
         }
       }
@@ -798,7 +865,7 @@ export function useGridRenderer({
           for (const voiceIndex of voiceRenderOrder) {
             const voice = arrangement.voices[voiceIndex];
             const isHoveredContour = hoveredContourVoiceIdRef.current === voice.id;
-            const baseContourWidth = 3 * display.lineThickness;
+            const baseContourWidth = 6 * display.lineThickness;
             const contourLineWidth = isHoveredContour ? baseContourWidth * 1.67 : baseContourWidth;
             const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 

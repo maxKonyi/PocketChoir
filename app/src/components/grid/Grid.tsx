@@ -63,6 +63,7 @@ interface GridProps {
   hideChords?: boolean;
   onlyChords?: boolean;
   unisonDialKitParams?: ReturnType<typeof import('./UnisonContourDialKit').useUnisonContourDialKit>;
+  tubeParams?: ReturnType<typeof import('./TubeStyleDialKit').useTubeStyleDialKit>;
 }
 
 
@@ -105,7 +106,8 @@ export function Grid({
   className = '',
   hideChords = false,
   onlyChords = false,
-  unisonDialKitParams
+  unisonDialKitParams,
+  tubeParams
 }: GridProps) {
 
   // Canvas ref
@@ -1567,6 +1569,7 @@ export function Grid({
     hoverPreviewRef,
     marqueeRef,
     unisonDialKitParams,
+    tubeParams,
   });
 
   // Keep the latest draw() in a ref so the RAF loop never needs to restart.

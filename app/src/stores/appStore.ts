@@ -65,7 +65,7 @@ interface DisplaySettings {
   showNoteLabels: boolean;      // Show labels on nodes (degree, solfege, or note name)
   labelFormat: 'degree' | 'solfege' | 'noteName';
   noteSize: number;             // 0.5-2.0, scale factor for node circles and their labels
-  lineThickness: number;        // 0.5-2.0, scale factor for contour line stroke width
+  lineThickness: number;        // 0.25-4.0, scale factor for contour line stroke width
   zoomLevel: number;            // 1 = fit all, higher = zoomed in (vertical / pitch zoom)
   glowIntensity: number;        // 0-2, multiplier for glow effects
   gridOpacity: number;          // 0-1, opacity of grid elements
@@ -773,7 +773,7 @@ const initialDisplaySettings: DisplaySettings = {
   showNoteLabels: true,
   labelFormat: 'degree',
   noteSize: 1.0,
-  lineThickness: 2.0,
+  lineThickness: 1.0,
   zoomLevel: 1,
   glowIntensity: 0.0,
   gridOpacity: 0.0,
