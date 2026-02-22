@@ -70,6 +70,7 @@ interface DisplaySettings {
   glowIntensity: number;        // 0-2, multiplier for glow effects
   gridOpacity: number;          // 0-1, opacity of grid elements
   snapCameraToPixels: boolean;  // Snap camera to device pixels (less shimmer, more micro-lurch)
+  contourColorMode: 'voice' | 'scaleDegree'; // Color lines by voice or by scale degree
   backgroundVideo: string;      // Current background video path (or 'none')
   backgroundBlur: number;       // Blur amount in px
   backgroundBrightness: number; // 0-1 brightness
@@ -778,6 +779,7 @@ const initialDisplaySettings: DisplaySettings = {
   glowIntensity: 0.0,
   gridOpacity: 0.0,
   snapCameraToPixels: false,
+  contourColorMode: 'voice',
   backgroundVideo: '/src/data/backgrounds/Tree1(loop).mp4',
   backgroundBlur: 0,
   backgroundBrightness: 1.0,

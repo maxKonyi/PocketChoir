@@ -104,6 +104,34 @@ export function darkenColor(hex: string, percent: number): string {
 }
 
 /**
+ * Scale degree colors based on relationship to tonic.
+ */
+export const SCALE_DEGREE_COLOR_MAP: Record<string, string> = {
+  '1': '#5858ff',   // Tonic (root note) - blue
+  'b2': '#acff59',  // Flat second - light green
+  '2': '#ff59ff',   // Second - magenta
+  'b3': '#59ffac',  // Minor third - turquoise
+  '3': '#ff5959',   // Major third - red
+  '4': '#59acff',   // Fourth - light blue
+  '#4': '#ffff59',  // Sharp fourth/tritone - yellow
+  '5': '#ac59ff',   // Fifth - purple
+  'b6': '#59ff59',  // Minor sixth - green
+  '6': '#ff59ac',   // Major sixth - pink
+  'b7': '#59ffff',  // Minor seventh - cyan
+  '7': '#ffac59',   // Major seventh - orange
+};
+
+/**
+ * Get the color for a specific scale degree label.
+ * Fallback to a neutral gray if not found.
+ */
+export function getScaleDegreeColor(degreeLabel: string): string {
+  // Handle sharp/flat variations if they occur
+  const normalizedLabel = degreeLabel.replace('♭', 'b');
+  return SCALE_DEGREE_COLOR_MAP[normalizedLabel] || '#888888';
+}
+
+/**
  * Available theme names.
  */
 const THEME_NAMES = [

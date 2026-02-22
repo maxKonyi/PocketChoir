@@ -297,6 +297,41 @@ export function DisplaySettingsModal() {
 
           <div className="w-full h-px bg-[var(--border-color)]" />
 
+          {/* Contour Color Mode */}
+          <div className="space-y-3">
+            <span className="text-sm font-medium text-[var(--text-primary)]">
+              Contour Colors
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDisplaySettings({ contourColorMode: 'voice' })}
+                className={`
+                  flex-1 px-3 py-2 rounded-xl text-sm transition-colors
+                  ${display.contourColorMode === 'voice'
+                    ? 'bg-[var(--accent-primary)] text-white'
+                    : 'bg-[var(--button-bg)] text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
+                  }
+                `}
+              >
+                By Voice
+              </button>
+              <button
+                onClick={() => setDisplaySettings({ contourColorMode: 'scaleDegree' })}
+                className={`
+                  flex-1 px-3 py-2 rounded-xl text-sm transition-colors
+                  ${display.contourColorMode === 'scaleDegree'
+                    ? 'bg-[var(--accent-primary)] text-white'
+                    : 'bg-[var(--button-bg)] text-[var(--text-secondary)] hover:bg-[var(--button-bg-hover)]'
+                  }
+                `}
+              >
+                By Scale Degree
+              </button>
+            </div>
+          </div>
+
+          <div className="w-full h-px bg-[var(--border-color)]" />
+
           {/* Background Selection */}
           <div className="space-y-3">
             <span className="text-sm font-medium text-[var(--text-primary)]">

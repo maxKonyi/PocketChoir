@@ -2,7 +2,8 @@ import type { PitchPoint, Voice } from '../../types';
 import { playbackEngine } from '../../services/PlaybackEngine';
 import { worldTToScreenX } from '../../utils/followCamera';
 import { sixteenthDurationMs } from '../../utils/timing';
-import { A4_FREQUENCY, A4_MIDI } from '../../utils/music';
+import { A4_FREQUENCY, A4_MIDI, semitoneToLabel } from '../../utils/music';
+import { getScaleDegreeColor } from '../../utils/colors';
 import { degreeToY, semitoneToY } from './gridDataUtils';
 import {
   type ContourSegmentStackData,
@@ -46,6 +47,7 @@ export function drawVoiceContour(
   segmentStackMap: Map<number, ContourSegmentStackData> | undefined,
   stackLineWidth: number,
   splitStackedContours: boolean,
+  contourColorMode: 'voice' | 'scaleDegree',
   voiceColor: string,
   noteSize: number,
   unisonDialKitParams?: ReturnType<typeof useUnisonContourDialKit>
@@ -73,6 +75,14 @@ export function drawVoiceContour(
   let hasActivePath = false;
   let activeOffsetY = 0;
   let segmentIndex = 0;
+
+  // Helper for the new scale-degree mode:
+  // convert any semitone value to the matching reference color from the user's
+  // Visualizer palette (1, b2, 2 ... 7).
+  const getColorForSemitone = (semi: number): string => {
+    const degreeLabel = semitoneToLabel(semi);
+    return getScaleDegreeColor(degreeLabel);
+  };
 
   // Keep prism colors moving even when camera/playhead is static.
   const PRISM_ANIMATION_SPEED_PX_PER_MS = 0.04;
@@ -273,6 +283,158 @@ export function drawVoiceContour(
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, bendEndX, entryY);
     ctx.lineTo(bendEndX, bendEndY);
   };
+
+  // Optional mode: draw by scale degree color instead of per-voice color.
+  // We draw each hold/bend immediately so every segment can have its own color,
+  // and bends can smoothly gradient between the two pitch colors.
+  if (contourColorMode === 'scaleDegree') {
+    for (let i = 0; i < voice.nodes.length; i++) {
+      const node = voice.nodes[i];
+
+      if (node.term) {
+        if (inPhrase) {
+          const segmentData = segmentStackMap?.get(segmentIndex);
+          const holdPieces = buildContourHoldPieces(lastT16, node.t16, segmentData?.holdSlices ?? []);
+          const holdColor = getColorForSemitone(lastSemitone);
+
+          for (const piece of holdPieces) {
+            const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
+              ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
+              : null;
+            const segmentOffsetY = stackInfo
+              ? (splitStackedContours ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth) : 0)
+              : 0;
+
+            const pieceStartX = nodeToX(piece.startT);
+            const pieceEndX = nodeToX(piece.endT);
+            const yHold = lastY + segmentOffsetY;
+
+            if (pieceEndX > pieceStartX) {
+              ctx.save();
+              ctx.strokeStyle = holdColor;
+              ctx.beginPath();
+              ctx.moveTo(pieceStartX, yHold);
+              ctx.lineTo(pieceEndX, yHold);
+              ctx.stroke();
+              ctx.restore();
+              lastRenderedY = yHold;
+            }
+          }
+
+          inPhrase = false;
+          segmentIndex += 1;
+        }
+        continue;
+      }
+
+      const x = nodeToX(node.t16);
+      const y = node.semi !== undefined
+        ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+        : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, scaleType);
+      const nodeSemitone = contourNodeToSemitone(node, scaleType);
+
+      if (!inPhrase) {
+        inPhrase = true;
+        lastX = x;
+        lastY = y;
+        lastT16 = node.t16;
+        lastSemitone = nodeSemitone;
+        lastRenderedY = y;
+        continue;
+      }
+
+      const segmentData = segmentStackMap?.get(segmentIndex);
+      const dt = node.t16 - lastT16;
+
+      if (dt > 0) {
+        const isPitchChange = Math.abs(nodeSemitone - lastSemitone) >= 1e-6;
+        const bendWidthT = isPitchChange
+          ? Math.min(40 / Math.max(pxPerT, 0.0001), dt * 0.8)
+          : 0;
+        const holdEndT = isPitchChange ? Math.max(lastT16, node.t16 - bendWidthT) : node.t16;
+
+        const holdPieces = buildContourHoldPieces(lastT16, holdEndT, segmentData?.holdSlices ?? []);
+        const holdRightStackInfo = getRightEdgeHoldStackInfo(holdPieces);
+        const holdColor = getColorForSemitone(lastSemitone);
+
+        for (const piece of holdPieces) {
+          const stackInfo = piece.stackIndex !== null && piece.stackSize !== null
+            ? { stackIndex: piece.stackIndex, stackSize: piece.stackSize }
+            : null;
+          const segmentOffsetY = stackInfo
+            ? (splitStackedContours ? getContourSegmentStackOffsetY(stackInfo, stackLineWidth) : 0)
+            : 0;
+
+          const pieceStartX = nodeToX(piece.startT);
+          const pieceEndX = nodeToX(piece.endT);
+          const yHold = lastY + segmentOffsetY;
+
+          if (pieceEndX > pieceStartX) {
+            ctx.save();
+            ctx.strokeStyle = holdColor;
+            ctx.beginPath();
+            ctx.moveTo(pieceStartX, yHold);
+            ctx.lineTo(pieceEndX, yHold);
+            ctx.stroke();
+            ctx.restore();
+            lastRenderedY = yHold;
+          }
+        }
+
+        if (isPitchChange) {
+          const bendStackInfo = segmentData?.bendStack;
+          const bendStartOffsetY = holdRightStackInfo
+            ? (splitStackedContours ? getContourSegmentStackOffsetY(holdRightStackInfo, stackLineWidth) : 0)
+            : 0;
+          const bendEndOffsetY = bendStackInfo
+            ? (splitStackedContours ? getContourSegmentStackOffsetY(bendStackInfo, stackLineWidth) : 0)
+            : 0;
+
+          const bendStartX = nodeToX(holdEndT);
+          const bendStartY = lastY + bendStartOffsetY;
+          const bendEndY = y + bendEndOffsetY;
+
+          const startColor = getColorForSemitone(lastSemitone);
+          const endColor = getColorForSemitone(nodeSemitone);
+          const bendGradient = ctx.createLinearGradient(bendStartX, bendStartY, x, bendEndY);
+          bendGradient.addColorStop(0, startColor);
+          bendGradient.addColorStop(1, endColor);
+
+          ctx.save();
+          ctx.strokeStyle = bendGradient;
+          ctx.beginPath();
+          ctx.moveTo(bendStartX, bendStartY);
+          drawBendPathSegment(bendStartX, bendStartY, x, bendEndY);
+          ctx.stroke();
+          ctx.restore();
+
+          lastRenderedY = bendEndY;
+        }
+      }
+
+      lastX = x;
+      lastY = y;
+      lastT16 = node.t16;
+      lastSemitone = nodeSemitone;
+      segmentIndex += 1;
+    }
+
+    if (inPhrase && playbackEngine.getIsPlaying()) {
+      const endX = nodeToX(loopLen);
+      const holdColor = getColorForSemitone(lastSemitone);
+      ctx.save();
+      ctx.strokeStyle = holdColor;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastRenderedY);
+      ctx.lineTo(endX, lastRenderedY);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.restore();
+    return;
+  }
 
   for (let i = 0; i < voice.nodes.length; i++) {
     const node = voice.nodes[i];

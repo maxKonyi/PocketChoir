@@ -146,6 +146,10 @@ export class PlaybackEngine {
   // Short fade used for transport start/stop/pause to prevent clicks.
   private readonly transportFadeSeconds: number = 0.02;
 
+  // When any solo/focus is active, non-solo voices are dimmed (not muted).
+  // 0.2 means they play at 20% of their normal track volume.
+  private readonly soloDimMultiplier: number = 0.2;
+
   // Used to prevent re-scheduling loop boundary fades multiple times per loop.
   private lastLoopBoundaryFadeLoopCount: number = -1;
 
@@ -590,7 +594,7 @@ export class PlaybackEngine {
     if (!part || part === 'synth') {
       const baseVolume = this.synthVolumes.get(voiceId) ?? 0.5;
       const isAudible = this.isSynthAudible(voiceId);
-      const targetVolume = isAudible ? baseVolume : 0;
+      const targetVolume = isAudible ? baseVolume * this.getSynthSoloDimMultiplier(voiceId) : 0;
 
       const synth = this.synthVoices.get(voiceId);
       if (synth) {
@@ -606,7 +610,7 @@ export class PlaybackEngine {
     if (!part || part === 'vocal') {
       const baseVolume = this.vocalVolumes.get(voiceId) ?? 0.8;
       const isAudible = this.isVocalAudible(voiceId);
-      const targetVolume = isAudible ? baseVolume : 0;
+      const targetVolume = isAudible ? baseVolume * this.getVocalSoloDimMultiplier(voiceId) : 0;
 
       const vocalGain = this.vocalGainNodes.get(voiceId);
       if (vocalGain) {
@@ -658,34 +662,36 @@ export class PlaybackEngine {
    * Check if a synth should be audible (considering synth mute/solo).
    */
   private isSynthAudible(voiceId: string): boolean {
-    // SOLO RULE (global):
-    // If ANY solo is active anywhere (SYN or VOX), then ONLY synth tracks whose
-    // synth-solo button is enabled are audible.
-    // Example: if you solo a VOX track, all SYN tracks mute unless they are also soloed.
-    const anySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
-    if (anySoloActive) {
-      return this.synthSolo.has(voiceId);
-    }
-
-    // Otherwise (no solos active), normal mute rules apply.
+    // Solo/focus no longer hard-mutes other tracks.
+    // Hard audibility is controlled by mute only.
     return !this.synthMuted.has(voiceId);
+  }
+
+  /**
+   * Return a gain multiplier for synth under solo/focus behavior.
+   */
+  private getSynthSoloDimMultiplier(voiceId: string): number {
+    const anySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
+    if (!anySoloActive) return 1;
+    return this.synthSolo.has(voiceId) ? 1 : this.soloDimMultiplier;
   }
 
   /**
    * Check if a recording should be audible (considering vocal mute/solo).
    */
   private isVocalAudible(voiceId: string): boolean {
-    // SOLO RULE (global):
-    // If ANY solo is active anywhere (SYN or VOX), then ONLY vocal tracks whose
-    // vocal-solo button is enabled are audible.
-    // Example: if you solo a SYN track, all VOX tracks mute unless they are also soloed.
-    const anySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
-    if (anySoloActive) {
-      return this.vocalSolo.has(voiceId);
-    }
-
-    // Otherwise (no solos active), normal mute rules apply.
+    // Solo/focus no longer hard-mutes other tracks.
+    // Hard audibility is controlled by mute only.
     return !this.vocalMuted.has(voiceId);
+  }
+
+  /**
+   * Return a gain multiplier for vocals under solo/focus behavior.
+   */
+  private getVocalSoloDimMultiplier(voiceId: string): number {
+    const anySoloActive = this.synthSolo.size > 0 || this.vocalSolo.size > 0;
+    if (!anySoloActive) return 1;
+    return this.vocalSolo.has(voiceId) ? 1 : this.soloDimMultiplier;
   }
 
   /**

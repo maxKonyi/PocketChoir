@@ -9,7 +9,7 @@ import {
   semitoneToLetterName,
   semitoneToSolfege,
 } from '../../utils/music';
-import { darkenColor, isValidHexColor } from '../../utils/colors';
+import { darkenColor, getScaleDegreeColor, isValidHexColor } from '../../utils/colors';
 import { playbackEngine } from '../../services/PlaybackEngine';
 import {
   cameraLeftWorldT,
@@ -53,6 +53,7 @@ type GridDisplayLike = {
   glowIntensity: number;
   gridOpacity: number;
   snapCameraToPixels: boolean;
+  contourColorMode: 'voice' | 'scaleDegree';
 };
 
 type GridCssColors = {
@@ -743,13 +744,45 @@ export function useGridRenderer({
           // Draw contour with glow effect
           ctx.save();
 
+          const isScaleDegreeMode = display.contourColorMode === 'scaleDegree' && !isSynthMuted;
+
+          // In scale-degree mode we draw a single pass so each segment keeps its
+          // own pitch color/gradient from the reference Visualizer behavior.
+          if (isScaleDegreeMode) {
+            ctx.strokeStyle = voiceColor;
+            ctx.lineWidth = contourLineWidth;
+            drawVoiceContour(
+              ctx,
+              voice,
+              minSemitone,
+              maxSemitone,
+              gridTop,
+              gridHeight,
+              arrangement.scale,
+              tileOffset,
+              camLeftSnapped,
+              pxPerT,
+              gridLeft,
+              loopLengthT,
+              voiceSegmentStackMap,
+              baseContourWidth,
+              splitStackedContours,
+              display.contourColorMode,
+              voiceColor,
+              display.noteSize,
+              unisonDialKitParams
+            );
+            ctx.restore();
+            continue;
+          }
+
           // Glow layer - only if not muted
           if (display.glowIntensity > 0 && !isSynthMuted) {
             ctx.shadowColor = glowColor;
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, voiceColor, display.noteSize, unisonDialKitParams);
           }
 
           // Main line - Smooth 3D Tube Rendering logic
@@ -759,7 +792,7 @@ export function useGridRenderer({
             // Muted state: Flat desaturated line
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, voiceColor, display.noteSize, unisonDialKitParams);
           } else {
             // Use DialKit parameters if available, otherwise fall back to initial 3-pass defaults
             const tube = tubeParams || {
@@ -777,7 +810,7 @@ export function useGridRenderer({
             ctx.strokeStyle = shadowColor;
             ctx.globalAlpha = tube.shadowOpacity;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, shadowColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, shadowColor, display.noteSize, unisonDialKitParams);
             ctx.globalAlpha = 1.0;
 
             // 2) TRANSITION PASSES (Smoothing)
@@ -794,14 +827,14 @@ export function useGridRenderer({
 
                 ctx.strokeStyle = softColor;
                 ctx.lineWidth = w;
-                drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, softColor, display.noteSize, unisonDialKitParams);
+                drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, softColor, display.noteSize, unisonDialKitParams);
               }
             }
 
             // 3) BODY LAYER (Main color)
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth * tube.bodyWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, voiceColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, voiceColor, display.noteSize, unisonDialKitParams);
 
             // 4) HIGHLIGHT LAYER (Gloss)
             // Multiple thin passes for a soft specular glow
@@ -814,7 +847,7 @@ export function useGridRenderer({
               ctx.shadowColor = 'white';
             }
 
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, hlColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, hlColor, display.noteSize, unisonDialKitParams);
 
             if (tube.blurAmount > 0) {
               ctx.restore();
@@ -870,7 +903,7 @@ export function useGridRenderer({
             const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 
             maskCtx.lineWidth = contourLineWidth;
-            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, '#ffffff', display.noteSize, unisonDialKitParams);
+            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, 'voice', '#ffffff', display.noteSize, unisonDialKitParams);
           }
         }
         maskCtx.restore();
@@ -1036,11 +1069,8 @@ export function useGridRenderer({
 
           const baseColor = voice.color || cssColors.voiceFallback[voiceIndex] || '#ff6b9d';
           const voiceColor = isSynthMuted ? 'rgba(150, 150, 150, 0.4)' : baseColor;
-
-          const nodeStrokeColor = voiceColor;
-          const nodeFillColor = isSynthMuted
-            ? 'rgba(90, 90, 90, 1)'
-            : (baseColor.startsWith('#') ? darkenColor(baseColor, 35) : baseColor);
+          const isScaleDegreeNodeMode = display.contourColorMode === 'scaleDegree' && !isSynthMuted;
+          let lastPhraseSemitone: number | null = null;
 
           for (const node of voice.nodes) {
             // Convert node local time to world time for this tile
@@ -1054,9 +1084,24 @@ export function useGridRenderer({
               ? semitoneToY(node.semi, minSemitone, maxSemitone, gridTop, gridHeight)
               : degreeToY(node.deg ?? 0, node.octave || 0, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
+            const nodeSemitone = node.semi !== undefined
+              ? node.semi
+              : degreeToSemitoneOffset(node.deg ?? 0, node.octave || 0, arrangement.scale);
+
+            // In scale-degree mode, each node uses the same degree-based color system
+            // as the contour lines. Term anchors inherit the most recent phrase pitch.
+            const degreeColor = isScaleDegreeNodeMode
+              ? getScaleDegreeColor(semitoneToLabel(node.term ? (lastPhraseSemitone ?? nodeSemitone) : nodeSemitone))
+              : voiceColor;
+
+            const nodeStrokeColor = degreeColor;
+            const nodeFillColor = isSynthMuted
+              ? 'rgba(90, 90, 90, 1)'
+              : (degreeColor.startsWith('#') ? darkenColor(degreeColor, 35) : degreeColor);
+
             // Draw node glow - only if not muted
             if (display.glowIntensity > 0 && !isSynthMuted) {
-              ctx.shadowColor = voiceColor;
+              ctx.shadowColor = nodeStrokeColor;
               ctx.shadowBlur = 8 * display.glowIntensity;
             }
 
@@ -1070,19 +1115,22 @@ export function useGridRenderer({
                 ctx.globalAlpha = 0.35;
                 ctx.beginPath();
                 ctx.arc(x, y, anchorRadius * 2.2, 0, Math.PI * 2);
-                ctx.fillStyle = voiceColor;
+                ctx.fillStyle = nodeStrokeColor;
                 ctx.fill();
                 ctx.restore();
               }
 
               ctx.beginPath();
               ctx.arc(x, y, anchorRadius, 0, Math.PI * 2);
-              ctx.fillStyle = voiceColor;
+              ctx.fillStyle = nodeStrokeColor;
               ctx.fill();
 
               ctx.shadowBlur = 0;
+              lastPhraseSemitone = null;
               continue;
             }
+
+            lastPhraseSemitone = nodeSemitone;
 
             // Regular node circle with opaque fill
             ctx.beginPath();
@@ -1190,52 +1238,57 @@ export function useGridRenderer({
                 ctx.stroke();
                 ctx.restore();
               }
-            }
-          }
 
-          // Create mode hover preview (phantom node) — only draw once (not per tile)
-          if (k === kStart) {
-            const isDraggingAnchor = !!dragState?.isDragging && dragState.voiceId === voice.id && !!voice.nodes.find((n) => n.term && n.t16 === dragState.originalT16);
+              const hoverPreview = hoverPreviewRef.current;
+              if (hoverPreview && hoverPreview.voiceId === voice.id) {
+                const preview = hoverPreview.point;
+                const previewWorldT = preview.t16 + tileOffset;
+                const px = wToX(previewWorldT);
+                const py = preview.semi !== undefined
+                  ? semitoneToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+                  : degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
-            if (mode === 'create' && hoverPreviewRef.current?.voiceId === voice.id && !onlyChords && !isDraggingAnchor) {
-              const preview = hoverPreviewRef.current.point;
-              // For create-mode hover, use the nearest visible tile to show the preview
-              const previewWorldT = preview.t16 + kStart * loopLengthT;
-              const px = wToX(previewWorldT);
-              const py = preview.semi !== undefined
-                ? semitoneToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-                : degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+                const previewSemi = preview.semi !== undefined
+                  ? preview.semi
+                  : degreeToSemitoneOffset(preview.deg, preview.octave, arrangement.scale);
 
-              ctx.save();
-              ctx.globalAlpha = 0.35;
+                const previewStrokeColor = isScaleDegreeNodeMode
+                  ? getScaleDegreeColor(semitoneToLabel(previewSemi))
+                  : nodeStrokeColor;
 
-              ctx.beginPath();
-              ctx.arc(px, py, nodeRadius, 0, Math.PI * 2);
-              ctx.fillStyle = nodeFillColor;
-              ctx.fill();
+                const previewFillColor = isSynthMuted
+                  ? 'rgba(90, 90, 90, 1)'
+                  : (previewStrokeColor.startsWith('#') ? darkenColor(previewStrokeColor, 35) : previewStrokeColor);
 
-              ctx.strokeStyle = nodeStrokeColor;
-              ctx.lineWidth = 1.5;
-              ctx.stroke();
+                ctx.save();
+                ctx.globalAlpha = 0.35;
 
-              if (display.showNoteLabels) {
-                const labelFontSize = Math.round(12 * display.noteSize);
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                ctx.font = `bold ${labelFontSize}px system-ui`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
+                ctx.beginPath();
+                ctx.arc(px, py, nodeRadius, 0, Math.PI * 2);
+                ctx.fillStyle = previewFillColor;
+                ctx.fill();
 
-                let previewLabel: string;
-                if (preview.semi !== undefined) {
-                  if (display.labelFormat === 'solfege') {
-                    previewLabel = semitoneToSolfege(preview.semi);
-                  } else if (display.labelFormat === 'noteName') {
-                    previewLabel = semitoneToLetterName(preview.semi, arrangement.tonic || 'C', transposition);
-                  } else {
-                    previewLabel = semitoneToLabel(preview.semi);
-                  }
-                } else {
-                  if (display.labelFormat === 'solfege') {
+                ctx.strokeStyle = previewStrokeColor;
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                if (display.showNoteLabels) {
+                  const labelFontSize = Math.round(12 * display.noteSize);
+                  ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                  ctx.font = `bold ${labelFontSize}px system-ui`;
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'middle';
+
+                  let previewLabel: string;
+                  if (preview.semi !== undefined) {
+                    if (display.labelFormat === 'solfege') {
+                      previewLabel = semitoneToSolfege(preview.semi);
+                    } else if (display.labelFormat === 'noteName') {
+                      previewLabel = semitoneToLetterName(preview.semi, arrangement.tonic || 'C', transposition);
+                    } else {
+                      previewLabel = semitoneToLabel(preview.semi);
+                    }
+                  } else if (display.labelFormat === 'solfege') {
                     const semi = degreeToSemitoneOffset(preview.deg, 0, arrangement.scale);
                     previewLabel = semitoneToSolfege(semi);
                   } else if (display.labelFormat === 'noteName') {
@@ -1244,12 +1297,12 @@ export function useGridRenderer({
                   } else {
                     previewLabel = String(preview.deg);
                   }
+
+                  ctx.fillText(previewLabel, px, py + 0.5);
                 }
 
-                ctx.fillText(previewLabel, px, py + 0.5);
+                ctx.restore();
               }
-
-              ctx.restore();
             }
           }
         }
