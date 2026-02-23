@@ -771,6 +771,7 @@ export function useGridRenderer({
               baseContourWidth,
               splitStackedContours,
               display.contourColorMode,
+              tonicSemitone,
               voiceColor,
               display.noteSize,
               unisonDialKitParams
@@ -785,7 +786,7 @@ export function useGridRenderer({
             ctx.shadowBlur = 10 * display.glowIntensity;
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, voiceColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, tonicSemitone, voiceColor, display.noteSize, unisonDialKitParams);
           }
 
           // Main line - Smooth 3D Tube Rendering logic
@@ -795,7 +796,7 @@ export function useGridRenderer({
             // Muted state: Flat desaturated line
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, voiceColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, tonicSemitone, voiceColor, display.noteSize, unisonDialKitParams);
           } else {
             // Use DialKit parameters if available, otherwise fall back to initial 3-pass defaults
             const tube = tubeParams || {
@@ -813,7 +814,7 @@ export function useGridRenderer({
             ctx.strokeStyle = shadowColor;
             ctx.globalAlpha = tube.shadowOpacity;
             ctx.lineWidth = contourLineWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, shadowColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, tonicSemitone, shadowColor, display.noteSize, unisonDialKitParams);
             ctx.globalAlpha = 1.0;
 
             // 2) TRANSITION PASSES (Smoothing)
@@ -830,14 +831,14 @@ export function useGridRenderer({
 
                 ctx.strokeStyle = softColor;
                 ctx.lineWidth = w;
-                drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, softColor, display.noteSize, unisonDialKitParams);
+                drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, tonicSemitone, softColor, display.noteSize, unisonDialKitParams);
               }
             }
 
             // 3) BODY LAYER (Main color)
             ctx.strokeStyle = voiceColor;
             ctx.lineWidth = contourLineWidth * tube.bodyWidth;
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, voiceColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, tonicSemitone, voiceColor, display.noteSize, unisonDialKitParams);
 
             // 4) HIGHLIGHT LAYER (Gloss)
             // Multiple thin passes for a soft specular glow
@@ -850,7 +851,7 @@ export function useGridRenderer({
               ctx.shadowColor = 'white';
             }
 
-            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, hlColor, display.noteSize, unisonDialKitParams);
+            drawVoiceContour(ctx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, display.contourColorMode, tonicSemitone, hlColor, display.noteSize, unisonDialKitParams);
 
             if (tube.blurAmount > 0) {
               ctx.restore();
@@ -906,7 +907,7 @@ export function useGridRenderer({
             const voiceSegmentStackMap = contourStackLookup.get(voice.id);
 
             maskCtx.lineWidth = contourLineWidth;
-            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, 'voice', '#ffffff', display.noteSize, unisonDialKitParams);
+            drawVoiceContour(maskCtx, voice, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale, tileOffset, camLeftSnapped, pxPerT, gridLeft, loopLengthT, voiceSegmentStackMap, baseContourWidth, splitStackedContours, 'voice', tonicSemitone, '#ffffff', display.noteSize, unisonDialKitParams);
           }
         }
         maskCtx.restore();
@@ -1094,7 +1095,9 @@ export function useGridRenderer({
             // In scale-degree mode, each node uses the same degree-based color system
             // as the contour lines. Term anchors inherit the most recent phrase pitch.
             const degreeColor = isScaleDegreeNodeMode
-              ? getScaleDegreeColor(semitoneToLabel(node.term ? (lastPhraseSemitone ?? nodeSemitone) : nodeSemitone))
+              ? getScaleDegreeColor(
+                semitoneToLabel((node.term ? (lastPhraseSemitone ?? nodeSemitone) : nodeSemitone) - tonicSemitone)
+              )
               : voiceColor;
 
             const nodeStrokeColor = degreeColor;

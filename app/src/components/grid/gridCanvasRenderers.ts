@@ -48,6 +48,7 @@ export function drawVoiceContour(
   stackLineWidth: number,
   splitStackedContours: boolean,
   contourColorMode: 'voice' | 'scaleDegree',
+  tonicSemitone: number,
   voiceColor: string,
   noteSize: number,
   unisonDialKitParams?: ReturnType<typeof useUnisonContourDialKit>
@@ -80,7 +81,8 @@ export function drawVoiceContour(
   // convert any semitone value to the matching reference color from the user's
   // Visualizer palette (1, b2, 2 ... 7).
   const getColorForSemitone = (semi: number): string => {
-    const degreeLabel = semitoneToLabel(semi);
+    const relativeSemi = semi - tonicSemitone;
+    const degreeLabel = semitoneToLabel(relativeSemi);
     return getScaleDegreeColor(degreeLabel);
   };
 
