@@ -700,11 +700,15 @@ export class PlaybackEngine {
   private getPreviewFrequency(deg: number, octaveOffset: number, semi?: number): number {
     if (!this.arrangement) return 440;
 
-    // If `semi` is provided, it is an absolute chromatic semitone offset from tonic.
+    // If `semi` is provided, interpret it based on arrangement import mode:
+    // - MIDI-imported arrangements store semi as absolute semitone from C4.
+    // - Non-MIDI arrangements keep legacy behavior (semi relative to tonic).
     if (semi !== undefined) {
-      const tonicMidi = noteNameToMidi(`${this.arrangement.tonic}4`) || 60;
-      const effectiveTonicMidi = tonicMidi + (this.transposition || 0);
-      return midiToFrequency(effectiveTonicMidi + semi);
+      const baseMidi = this.isAbsoluteSemiArrangement(this.arrangement)
+        ? 60 // C4 reference for imported MIDI semitone offsets
+        : (noteNameToMidi(`${this.arrangement.tonic}4`) || 60);
+      const effectiveBaseMidi = baseMidi + (this.transposition || 0);
+      return midiToFrequency(effectiveBaseMidi + semi);
     }
 
     let freq = scaleDegreeToFrequency(
@@ -1684,11 +1688,14 @@ export class PlaybackEngine {
   private getNodeFrequency(_voice: Voice, node: Node): number {
     if (!this.arrangement) return 440;
 
-    // If the node provides a chromatic semitone offset, use it directly.
+    // If the node provides a chromatic semitone offset, interpret it based on
+    // arrangement mode (absolute for MIDI imports, relative-to-tonic otherwise).
     if (node.semi !== undefined) {
-      const tonicMidi = noteNameToMidi(`${this.arrangement.tonic}4`) || 60;
-      const effectiveTonicMidi = tonicMidi + (this.transposition || 0);
-      return midiToFrequency(effectiveTonicMidi + node.semi);
+      const baseMidi = this.isAbsoluteSemiArrangement(this.arrangement)
+        ? 60
+        : (noteNameToMidi(`${this.arrangement.tonic}4`) || 60);
+      const effectiveBaseMidi = baseMidi + (this.transposition || 0);
+      return midiToFrequency(effectiveBaseMidi + node.semi);
     }
 
     // Otherwise use scale-degree mapping.
@@ -1703,6 +1710,14 @@ export class PlaybackEngine {
     // Apply transposition as a frequency ratio.
     freq = freq * Math.pow(2, this.transposition / 12);
     return freq;
+  }
+
+  /**
+   * Imported MIDI arrangements are tagged with "midi-import".
+   * In that mode, `semi` is absolute from C4 (MIDI 60), not tonic-relative.
+   */
+  private isAbsoluteSemiArrangement(arrangement: Arrangement): boolean {
+    return Array.isArray(arrangement.tags) && arrangement.tags.includes('midi-import');
   }
 
   /**

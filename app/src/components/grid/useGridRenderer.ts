@@ -4,6 +4,7 @@ import type { Arrangement, PitchPoint, Recording } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import {
   degreeToSemitoneOffset,
+  noteNameToMidi,
   SCALE_PATTERNS,
   semitoneToLabel,
   semitoneToLetterName,
@@ -291,6 +292,9 @@ export function useGridRenderer({
 
     // Get pitch range (now in semitones)
     const { minSemitone, maxSemitone, effectiveTonicMidi } = getPitchRange();
+    const tonicMidi = noteNameToMidi(`${arrangement.tonic || 'C'}4`) || 60;
+    const tonicSemitone = ((tonicMidi % 12) + 12) % 12;
+    const isMidiImportedArrangement = Array.isArray(arrangement.tags) && arrangement.tags.includes('midi-import');
 
     // ── Follow-mode camera setup ──
     // loopLengthT is the arrangement length in 16th notes (one full loop cycle).
@@ -367,9 +371,8 @@ export function useGridRenderer({
 
       for (let semi = Math.ceil(minSemitone); semi <= Math.floor(maxSemitone); semi++) {
         // Determine if this pitch is diatonic
-        // Normalize semi to 0-11 range relative to tonic
-        // minSemitone is relative to tonic, so semi is also relative to tonic
-        const noteInScale = ((semi % 12) + 12) % 12;
+        // Normalize to 0-11 relative to arrangement tonic.
+        const noteInScale = (((semi - tonicSemitone) % 12) + 12) % 12;
         const scalePattern = SCALE_PATTERNS[arrangement.scale] || SCALE_PATTERNS.major;
         const isDiatonic = scalePattern.includes(noteInScale);
 
@@ -379,7 +382,7 @@ export function useGridRenderer({
         const y = semitoneToY(semi, minSemitone, maxSemitone, gridTop, gridHeight);
 
         // Make tonic (1) and octave brighter for orientation
-        if (semi % 12 === 0) {
+        if (noteInScale === 0) {
           ctx.strokeStyle = pitchLineTonicColor;
           ctx.lineWidth = 1.5;
         } else {
@@ -1197,13 +1200,18 @@ export function useGridRenderer({
               // Determine label text based on labelFormat setting
               let labelText: string;
               if (node.semi !== undefined) {
-                // Node stored as raw semitone offset
+                // Node stored as chromatic semitone.
+                // For display labels, interpret relative to tonic so changing key
+                // re-labels degree/solfege without changing stored pitches.
+                const relativeSemi = node.semi - tonicSemitone;
                 if (display.labelFormat === 'solfege') {
-                  labelText = semitoneToSolfege(node.semi);
+                  labelText = semitoneToSolfege(relativeSemi);
                 } else if (display.labelFormat === 'noteName') {
-                  labelText = semitoneToLetterName(node.semi, arrangement.tonic || 'C', transposition);
+                  labelText = isMidiImportedArrangement
+                    ? semitoneToLetterName(node.semi, 'C', transposition)
+                    : semitoneToLetterName(node.semi, arrangement.tonic || 'C', transposition);
                 } else {
-                  labelText = semitoneToLabel(node.semi);
+                  labelText = semitoneToLabel(relativeSemi);
                 }
               } else {
                 // Node stored as scale degree
@@ -1281,12 +1289,15 @@ export function useGridRenderer({
 
                   let previewLabel: string;
                   if (preview.semi !== undefined) {
+                    const relativeSemi = preview.semi - tonicSemitone;
                     if (display.labelFormat === 'solfege') {
-                      previewLabel = semitoneToSolfege(preview.semi);
+                      previewLabel = semitoneToSolfege(relativeSemi);
                     } else if (display.labelFormat === 'noteName') {
-                      previewLabel = semitoneToLetterName(preview.semi, arrangement.tonic || 'C', transposition);
+                      previewLabel = isMidiImportedArrangement
+                        ? semitoneToLetterName(preview.semi, 'C', transposition)
+                        : semitoneToLetterName(preview.semi, arrangement.tonic || 'C', transposition);
                     } else {
-                      previewLabel = semitoneToLabel(preview.semi);
+                      previewLabel = semitoneToLabel(relativeSemi);
                     }
                   } else if (display.labelFormat === 'solfege') {
                     const semi = degreeToSemitoneOffset(preview.deg, 0, arrangement.scale);
