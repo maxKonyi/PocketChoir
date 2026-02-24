@@ -76,6 +76,28 @@ app/src/
 - **Purpose**: Per-voice controls for volume, mute, solo, recording arm
 - **When to modify**: Voice mixer functionality, recording workflow
 
+### CreateArrangementModal
+**File**: `components/modals/CreateArrangementModal.tsx`
+- **Purpose**: New arrangement creation and metadata editing
+- **Key Features**:
+  - MIDI file upload and parsing
+  - Track selection and issue review modal
+  - Auto-population of arrangement parameters from MIDI (tempo, time signature, key, scale, bars)
+  - Voice creation from selected MIDI tracks (up to 6 voices)
+- **When to modify**: MIDI import workflow, arrangement creation UI
+
+### MidiImportPreview
+**File**: `utils/midiImport.ts`
+- **Purpose**: Parse MIDI files and convert tracks to app-compatible voice data
+- **Key Features**:
+  - Binary MIDI parsing (header, track chunks, meta events, note on/off)
+  - MIDI key signature detection (Meta 0x59) with major/minor mode
+  - Best-guess key detection when signature is missing (pitch-class duration scoring)
+  - Monophonic track validation and percussion channel filtering
+  - Conversion to Node[] with chromatic semitone offsets (relative to C4)
+  - Preview metadata for UI review (issues, selectable tracks)
+- **When to modify**: MIDI parsing bugs, key detection heuristics, track validation rules
+
 ### Transport Bar
 **File**: `components/transport/TransportBar.tsx`
 - **Purpose**: Play/pause/stop controls, tempo, loop, metronome
@@ -93,7 +115,8 @@ app/src/
   - Handles recorded vocal playback
   - Provides timing callbacks for UI synchronization
   - Manages loop points, tempo, transposition
-- **When to modify**: Playback timing issues, audio synchronization problems, loop behavior
+  - **MIDI Import Mode**: For arrangements tagged `midi-import`, treats `node.semi` as absolute from C4 (not tonic-relative), so key changes re-label grid without transposing imported pitches
+- **When to modify**: Playback timing issues, audio synchronization problems, loop behavior, MIDI import pitch handling
 
 ### AudioService
 **File**: `services/AudioService.ts`
@@ -144,11 +167,12 @@ app/src/
 
 ### Core Types
 **File**: `types/arrangement.ts`
-- `Node` - Single pitch point in a voice
+- `Node` - Single pitch point in a voice (supports `deg`/`octave` or absolute `semi` offsets)
 - `Voice` - Complete voice with nodes and color
 - `Arrangement` - Full musical arrangement with multiple voices
 - `Chord` - Chord track entries
 - `LyricEntry` - Lyrics attached to Voice 1 nodes
+- **MIDI Import Tags**: Arrangements created from MIDI are tagged `midi-import` to enable absolute semitone handling
 
 ### Audio Types
 **File**: `types/performance.ts`
@@ -171,9 +195,10 @@ app/src/
 - `LibraryModal.tsx` - Browse/load arrangements
 - `MixerModal.tsx` - Advanced mixing controls
 - `MicSetupModal.tsx` - Microphone configuration
-- `DisplaySettingsModal.tsx` - Visual preferences
-- `CreateArrangementModal.tsx` - New arrangement creation
+- `DisplaySettingsModal.tsx` - Visual preferences (including scale-degree vs voice coloring)
+- `CreateArrangementModal.tsx` - New arrangement creation with MIDI import
 - `PresetBrowser.tsx` - Browse arrangement presets
+- `MidiReviewModal.tsx` - Track selection and issue review for MIDI imports
 
 ### Reusable UI (`components/ui/`)
 - `Button.tsx` - Styled button component
@@ -202,9 +227,10 @@ app/src/
 ### 🎨 Visual/Grid Rendering Issues
 **Check these files**:
 1. `components/grid/Grid.tsx` - Main canvas rendering
-2. `components/grid/gridCanvasRenderers.ts` - Drawing functions
+2. `components/grid/gridCanvasRenderers.ts` - Drawing functions (including scale-degree coloring)
 3. `components/grid/gridContourUtils.ts` - Contour calculations
 4. `components/grid/gridDataUtils.ts` - Data processing
+5. `utils/colors.ts` - Scale-degree color mapping (`SCALE_DEGREE_COLOR_MAP`)
 
 ### 🖱️ Interaction Problems
 **Check these files**:
@@ -296,11 +322,11 @@ app/src/
 3. Handle interaction in `components/grid/gridInteractionUtils.ts`
 4. Update display settings in `stores/appStore.ts`
 
-### Adding New Audio Features
-1. Implement core logic in appropriate `services/` file
-2. Add state management to `stores/appStore.ts`
-3. Create UI controls in relevant component
-4. Handle initialization in `App.tsx`
+### Adding MIDI Import Features
+1. Extend MIDI parsing in `utils/midiImport.ts`
+2. Update preview UI in `components/modals/CreateArrangementModal.tsx`
+3. Handle new metadata in arrangement creation flow
+4. Test with various MIDI file formats and edge cases
 
 ### Debugging Audio Issues
 1. Check browser console for Web Audio API errors
@@ -316,6 +342,30 @@ app/src/
 - `docs/grid_refactor_plan.md` - Detailed Grid component refactoring progress
 - `docs/FollowMode.md` - Camera and timeline behavior documentation
 - `docs/testing_workflow.md` - Testing procedures and guidelines
+
+---
+
+## 🎹 MIDI Import & Key-Aware Features (New)
+
+### MIDI Import Workflow
+1. **Upload**: User selects `.mid` file in CreateArrangementModal
+2. **Parse**: `midiImport.ts` extracts tempo, time signature, key signature (if any), and tracks
+3. **Detect Key**: If no key signature, best-guess from pitch distribution
+4. **Validate**: Filter out polyphonic/percussion tracks, report issues
+5. **Review**: Modal shows track list with issues, allows selection (max 6)
+6. **Import**: Selected tracks become voices with `Node[]` using `semi` offsets
+
+### Key-Aware Scale-Degree Coloring
+- **Problem**: Scale-degree colors were fixed to C, so changing key shifted colors
+- **Solution**: All scale-degree color mapping now offsets by arrangement tonic
+- **Files**: `gridCanvasRenderers.ts` (contours), `useGridRenderer.ts` (nodes)
+- **Result**: Tonic (1) is always blue in any key
+
+### MIDI Import Pitch Stability
+- **Tag**: Arrangements from MIDI are tagged `midi-import`
+- **Behavior**: `node.semi` treated as absolute from C4, not tonic-relative
+- **Effect**: Changing tonic in setup modal re-labels grid without transposing imported pitches
+- **Files**: `PlaybackEngine.ts` (audio), `useGridRenderer.ts` (labels)
 
 ---
 
