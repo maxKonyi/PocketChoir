@@ -69,6 +69,27 @@ interface PlaybackConfig {
 }
 
 /**
+ * Minimal vocal mix settings needed for offline export.
+ */
+export interface VocalExportVoiceState {
+  voiceId: string;
+  synthSolo: boolean;
+  vocalVolume: number;
+  vocalMuted: boolean;
+  vocalSolo: boolean;
+  vocalPan: number;
+}
+
+/**
+ * Options for exporting a vocal-only bounce.
+ */
+export interface VocalExportOptions {
+  voiceStates: VocalExportVoiceState[];
+  globalVolume: number;
+  globalReverb: number;
+}
+
+/**
  * PlaybackEngine manages the timeline and synth voices for an arrangement.
  */
 export class PlaybackEngine {
@@ -1758,6 +1779,196 @@ export class PlaybackEngine {
    */
   getIsPlaying(): boolean {
     return this.isPlaying;
+  }
+
+  /**
+   * Export the current vocal-only mix as a WAV Blob.
+   *
+   * Timeline bounds are intentionally fixed to match the recording workflow:
+   * - Start: 1 beat before arrangement start (to include early pickup recording)
+   * - End: 4 beats after arrangement end (2 beats vocal overrun + 2 beats reverb tail)
+   */
+  async exportVocalMix(options: VocalExportOptions): Promise<Blob | null> {
+    if (!this.arrangement) return null;
+
+    const voiceMixById = new Map(options.voiceStates.map((vs) => [vs.voiceId, vs]));
+    const voicesWithBuffers = Array.from(this.audioBuffers.keys()).filter((voiceId) => {
+      const buffer = this.audioBuffers.get(voiceId);
+      return !!buffer && !!voiceMixById.get(voiceId);
+    });
+
+    if (voicesWithBuffers.length === 0) {
+      return null;
+    }
+
+    const beatMs = 60000 / this.getEffectiveTempo();
+    const arrangementLengthMs = this.t16ToTimelineMs(this.arrangementEndT16);
+
+    const exportStartMs = -beatMs;
+    const exportEndMs = arrangementLengthMs + (4 * beatMs);
+    const renderDurationSec = Math.max(0.1, (exportEndMs - exportStartMs) / 1000);
+
+    const sampleRate = AudioService.isReady() ? AudioService.getSampleRate() : 44100;
+    const offlineCtx = new OfflineAudioContext(
+      2,
+      Math.ceil(renderDurationSec * sampleRate),
+      sampleRate
+    );
+
+    const masterGain = offlineCtx.createGain();
+    masterGain.gain.value = Math.max(0, Math.min(1, options.globalVolume));
+    masterGain.connect(offlineCtx.destination);
+
+    const dryBus = offlineCtx.createGain();
+    dryBus.gain.value = 1;
+    dryBus.connect(masterGain);
+
+    // Reverb bus amount is controlled globally to match the app's global reverb slider.
+    const wetBus = offlineCtx.createGain();
+    wetBus.gain.value = Math.max(0, Math.min(1, options.globalReverb));
+    wetBus.connect(masterGain);
+
+    // Simple generated impulse response so exported audio includes a natural reverb tail.
+    const convolver = offlineCtx.createConvolver();
+    convolver.buffer = this.createOfflineReverbImpulse(offlineCtx, 2.9);
+    convolver.connect(wetBus);
+
+    // Small pre-delay to align with the live reverb character in AudioService.
+    const reverbPreDelay = offlineCtx.createDelay(0.1);
+    reverbPreDelay.delayTime.value = 0.01;
+    reverbPreDelay.connect(convolver);
+
+    const anySoloActive = options.voiceStates.some((vs) => vs.synthSolo || vs.vocalSolo);
+    const lagMs = Math.max(0, this.config.recordingLagMs ?? 0);
+
+    for (const voiceId of voicesWithBuffers) {
+      const buffer = this.audioBuffers.get(voiceId);
+      const voiceState = voiceMixById.get(voiceId);
+      if (!buffer || !voiceState) continue;
+
+      const soloMultiplier = anySoloActive
+        ? (voiceState.vocalSolo ? 1 : this.soloDimMultiplier)
+        : 1;
+      const baseVolume = Math.max(0, Math.min(1, voiceState.vocalVolume));
+      const targetVolume = voiceState.vocalMuted ? 0 : (baseVolume * soloMultiplier);
+      if (targetVolume <= 0) continue;
+
+      const meta = this.audioBufferMetadata.get(voiceId) ?? { startPositionMs: 0, earlyFadeMs: 0 };
+      const bufferTimelineStartMs = meta.startPositionMs - meta.earlyFadeMs - lagMs;
+
+      let startOffsetSec = 0;
+      let renderStartSec = (bufferTimelineStartMs - exportStartMs) / 1000;
+
+      if (renderStartSec < 0) {
+        startOffsetSec = -renderStartSec;
+        renderStartSec = 0;
+      }
+
+      if (startOffsetSec >= buffer.duration) continue;
+      if (renderStartSec >= renderDurationSec) continue;
+
+      const source = offlineCtx.createBufferSource();
+      source.buffer = buffer;
+
+      const voiceGain = offlineCtx.createGain();
+      voiceGain.gain.setValueAtTime(0, 0);
+
+      // Count-in fade is defined on the timeline (not buffer offset), so it still works
+      // even if recording sync skips some leading samples.
+      const fadeStartSec = Math.max(0, (meta.startPositionMs - meta.earlyFadeMs - exportStartMs) / 1000);
+      const fadeEndSec = Math.max(fadeStartSec, (meta.startPositionMs - exportStartMs) / 1000);
+
+      if (meta.earlyFadeMs > 0 && fadeEndSec > 0) {
+        voiceGain.gain.setValueAtTime(0, fadeStartSec);
+        voiceGain.gain.linearRampToValueAtTime(targetVolume, fadeEndSec);
+      } else {
+        voiceGain.gain.setValueAtTime(0, renderStartSec);
+        voiceGain.gain.linearRampToValueAtTime(
+          targetVolume,
+          renderStartSec + this.recordingFadeSeconds
+        );
+      }
+
+      const panner = offlineCtx.createStereoPanner();
+      panner.pan.value = Math.max(-1, Math.min(1, voiceState.vocalPan));
+
+      source.connect(voiceGain);
+      voiceGain.connect(panner);
+      panner.connect(dryBus);
+      panner.connect(reverbPreDelay);
+
+      source.start(renderStartSec, startOffsetSec);
+    }
+
+    const renderedBuffer = await offlineCtx.startRendering();
+    return this.encodeWavBlob(renderedBuffer);
+  }
+
+  /**
+   * Build a simple stereo impulse response for offline reverb rendering.
+   */
+  private createOfflineReverbImpulse(ctx: OfflineAudioContext, decaySeconds: number): AudioBuffer {
+    const length = Math.max(1, Math.floor(ctx.sampleRate * decaySeconds));
+    const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+
+    for (let ch = 0; ch < impulse.numberOfChannels; ch++) {
+      const channelData = impulse.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        const decay = Math.pow(1 - (i / length), 2.2);
+        channelData[i] = ((Math.random() * 2) - 1) * decay;
+      }
+    }
+
+    return impulse;
+  }
+
+  /**
+   * Encode an AudioBuffer into a 16-bit PCM WAV blob for file download.
+   */
+  private encodeWavBlob(audioBuffer: AudioBuffer): Blob {
+    const channels = audioBuffer.numberOfChannels;
+    const sampleRate = audioBuffer.sampleRate;
+    const frameCount = audioBuffer.length;
+    const bytesPerSample = 2;
+    const blockAlign = channels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = frameCount * blockAlign;
+
+    const arrayBuffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(arrayBuffer);
+
+    // RIFF header
+    view.setUint32(0, 0x52494646, false); // "RIFF"
+    view.setUint32(4, 36 + dataSize, true);
+    view.setUint32(8, 0x57415645, false); // "WAVE"
+
+    // fmt chunk
+    view.setUint32(12, 0x666d7420, false); // "fmt "
+    view.setUint32(16, 16, true); // PCM chunk size
+    view.setUint16(20, 1, true); // PCM format
+    view.setUint16(22, channels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true); // bits per sample
+
+    // data chunk
+    view.setUint32(36, 0x64617461, false); // "data"
+    view.setUint32(40, dataSize, true);
+
+    const channelData = Array.from({ length: channels }, (_, ch) => audioBuffer.getChannelData(ch));
+    let offset = 44;
+
+    for (let i = 0; i < frameCount; i++) {
+      for (let ch = 0; ch < channels; ch++) {
+        const sample = Math.max(-1, Math.min(1, channelData[ch][i]));
+        const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        view.setInt16(offset, intSample, true);
+        offset += 2;
+      }
+    }
+
+    return new Blob([arrayBuffer], { type: 'audio/wav' });
   }
 
   /**

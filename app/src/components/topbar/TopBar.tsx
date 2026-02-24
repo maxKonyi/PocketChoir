@@ -11,6 +11,7 @@ import { useAppStore } from '../../stores/appStore';
 import { applyTheme, type ThemeName } from '../../utils/colors';
 import { AudioService } from '../../services/AudioService';
 import { LibraryService } from '../../services/LibraryService';
+import { playbackEngine } from '../../services/PlaybackEngine';
 
 /* ------------------------------------------------------------
    Theme options for the dropdown
@@ -36,6 +37,10 @@ export function TopBar() {
   const theme = useAppStore((state) => state.theme);
   const gridDivision = useAppStore((state) => state.createView.gridDivision);
   const editingLibraryItemId = useAppStore((state) => state.editingLibraryItemId);
+  const recordings = useAppStore((state) => state.recordings);
+  const voiceStates = useAppStore((state) => state.voiceStates);
+  const globalVolume = useAppStore((state) => state.globalVolume);
+  const globalReverb = useAppStore((state) => state.globalReverb);
 
   // Get actions from store
   const setLibraryOpen = useAppStore((state) => state.setLibraryOpen);
@@ -49,7 +54,11 @@ export function TopBar() {
   const setEditingLibraryItemId = useAppStore((state) => state.setEditingLibraryItemId);
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [isExportingAudio, setIsExportingAudio] = useState(false);
   const saveStatusResetTimerRef = useRef<number | null>(null);
+
+  // We only enable vocal audio export when at least one recording has actual audio data.
+  const hasRecordedAudio = Array.from(recordings.values()).some((rec) => (rec?.audioBlob?.size ?? 0) > 0);
 
   // Keep transient save feedback clean when arrangement changes.
   useEffect(() => {
@@ -63,6 +72,60 @@ export function TopBar() {
       }
     };
   }, []);
+
+  /**
+   * Export the vocal-only mix as a WAV file.
+   *
+   * This uses the current mixer settings (volume, pan, mute/solo, reverb)
+   * and renders offline so the user gets a single downloadable audio file.
+   */
+  const handleExportVocalAudio = async () => {
+    if (!arrangement) return;
+    if (!hasRecordedAudio) return;
+    if (isExportingAudio) return;
+
+    setIsExportingAudio(true);
+    try {
+      const blob = await playbackEngine.exportVocalMix({
+        voiceStates: voiceStates.map((vs) => ({
+          voiceId: vs.voiceId,
+          synthSolo: vs.synthSolo,
+          vocalVolume: vs.vocalVolume,
+          vocalMuted: vs.vocalMuted,
+          vocalSolo: vs.vocalSolo,
+          vocalPan: vs.vocalPan,
+        })),
+        globalVolume,
+        globalReverb,
+      });
+
+      if (!blob) {
+        alert('No vocal recordings found to export.');
+        return;
+      }
+
+      // Keep the requested naming style: "Pocket Choir - Arrangement Name".
+      const safeTitle = arrangement.title
+        .replace(/[\\/:*?"<>|]/g, '')
+        .trim()
+        .replace(/\s+/g, ' ');
+      const fileName = `Pocket Choir - ${safeTitle || 'Untitled'}.wav`;
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export vocal audio:', error);
+      alert('Audio export failed. Please try again.');
+    } finally {
+      setIsExportingAudio(false);
+    }
+  };
 
   const scheduleSaveStatusReset = (delayMs: number) => {
     if (saveStatusResetTimerRef.current !== null) {
@@ -192,6 +255,28 @@ export function TopBar() {
 
       {/* Center - Library / Arrangement selector */}
       <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
+        {/* Vocal mix export button: placed to the left of arrangement title as requested. */}
+        {arrangement && (
+          <button
+            onClick={() => { void handleExportVocalAudio(); }}
+            aria-label="Export Vocal Audio"
+            disabled={!hasRecordedAudio || isExportingAudio}
+            className="
+              h-9 px-3 rounded-full
+              bg-[var(--accent-primary)]/20 text-[var(--accent-primary)]
+              border border-[var(--accent-primary)]/30
+              hover:bg-[var(--accent-primary)]/30 hover:border-[var(--accent-primary)]/50
+              hover:shadow-[0_0_20px_-5px_var(--accent-primary-glow)]
+              transition-all duration-200 cursor-pointer
+              text-sm font-semibold
+              disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none
+            "
+            title={!hasRecordedAudio ? 'Record at least one vocal track to export audio' : 'Export vocal mix as WAV'}
+          >
+            {isExportingAudio ? 'Exporting...' : 'Export'}
+          </button>
+        )}
+
         <button
           onClick={() => {
             // In Create mode, clicking the arrangement name should edit the current arrangement
@@ -353,7 +438,7 @@ export function TopBar() {
           </select>
         </div>
 
-        {/* Export button (only in Create mode with arrangement) */}
+        {/* Arrangement JSON export button (Create mode only). */}
         {mode === 'create' && arrangement && (
           <button
             onClick={handleExportArrangement}
