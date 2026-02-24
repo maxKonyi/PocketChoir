@@ -77,6 +77,11 @@ export function drawVoiceContour(
   let activeOffsetY = 0;
   let segmentIndex = 0;
 
+  // Keep unanchored playback extension dashes visually stable even when users
+  // increase contour thickness in Display settings.
+  const UNANCHORED_DASH_WIDTH_PX = 2.5;
+  const UNANCHORED_DASH_PATTERN_PX: [number, number] = [8, 6];
+
   // Helper for the new scale-degree mode:
   // convert any semitone value to the matching reference color from the user's
   // Visualizer palette (1, b2, 2 ... 7).
@@ -426,7 +431,9 @@ export function drawVoiceContour(
       const holdColor = getColorForSemitone(lastSemitone);
       ctx.save();
       ctx.strokeStyle = holdColor;
-      ctx.setLineDash([6, 6]);
+      ctx.lineWidth = UNANCHORED_DASH_WIDTH_PX;
+      ctx.lineCap = 'butt';
+      ctx.setLineDash(UNANCHORED_DASH_PATTERN_PX);
       ctx.beginPath();
       ctx.moveTo(lastX, lastRenderedY);
       ctx.lineTo(endX, lastRenderedY);
@@ -697,7 +704,9 @@ export function drawVoiceContour(
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(lastX, lastRenderedY);
-      ctx.setLineDash([6, 6]);
+      ctx.lineWidth = UNANCHORED_DASH_WIDTH_PX;
+      ctx.lineCap = 'butt';
+      ctx.setLineDash(UNANCHORED_DASH_PATTERN_PX);
       ctx.lineTo(endX, lastRenderedY);
       ctx.stroke();
       ctx.restore();

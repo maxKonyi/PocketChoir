@@ -283,9 +283,65 @@ export function useGridInteractions({
     if (loopEnabledNow && e.button === 0) {
       const rect = containerRef.current?.getBoundingClientRect();
       if (rect) {
-        const mouseX = e.clientX - rect.left;
         const gridLeftPx = gridMargin.left;
+        const gridTopPx = gridMargin.top;
         const gridWidthPx = rect.width - gridMargin.left - gridMargin.right;
+        const gridHeightPx = rect.height - gridMargin.top - gridMargin.bottom;
+
+        // In Create mode, node interaction always wins over loop-boundary drag.
+        // If a node is under the pointer, skip loop-handle grabbing entirely.
+        if (mode === 'create') {
+          const editableVoiceId = selectedVoiceId || arrangement.voices[0]?.id;
+          if (editableVoiceId) {
+            const { minSemitone, maxSemitone } = getPitchRange();
+            const hitNode = getNodeHitAtMouseEvent(
+              e,
+              editableVoiceId,
+              0,
+              0,
+              gridLeftPx,
+              gridTopPx,
+              gridWidthPx,
+              gridHeightPx,
+              minSemitone,
+              maxSemitone,
+            );
+            if (hitNode) {
+              // Continue into normal node flow below.
+            } else {
+              const mouseX = e.clientX - rect.left;
+
+              // Compute screen X of the two loop boundaries.
+              // In Play mode, use the smart-cam camera center (not the playhead)
+              // so hit-testing is correct when the camera is in a static state.
+              const pxPerTVal = followMode.pxPerT;
+              const currentWorldT = followMode.pendingWorldT !== null
+                ? followMode.pendingWorldT
+                : getCameraCenterWorldT();
+              const { loopStartX, loopEndX } = getLoopBoundaryScreenPositions({
+                loopStartT: loopStartNow,
+                loopEndT: loopEndNow,
+                gridLeftPx,
+                gridWidthPx,
+                pxPerT: pxPerTVal,
+                worldT: currentWorldT,
+              });
+
+              // Hit threshold in pixels for grabbing a loop handle
+              const handleHitPx = 8;
+              const nearestHandle = getNearestLoopHandle(mouseX, loopStartX, loopEndX, handleHitPx);
+
+              if (nearestHandle) {
+                loopHandleDragRef.current = nearestHandle;
+                isHoveringLoopHandleRef.current = true;
+                setIsHoveringLoopHandle(true);
+                e.preventDefault();
+                return;
+              }
+            }
+          }
+        } else {
+        const mouseX = e.clientX - rect.left;
 
         // Compute screen X of the two loop boundaries.
         // In Play mode, use the smart-cam camera center (not the playhead)
@@ -313,6 +369,7 @@ export function useGridInteractions({
           setIsHoveringLoopHandle(true);
           e.preventDefault();
           return;
+        }
         }
       }
     }
@@ -726,8 +783,30 @@ export function useGridInteractions({
       if (rect) {
         const mouseX = e.clientX - rect.left;
         const gridLeftPx = gridMargin.left;
+        const gridTopPx = gridMargin.top;
         const gridWidthPx = rect.width - gridMargin.left - gridMargin.right;
+        const gridHeightPx = rect.height - gridMargin.top - gridMargin.bottom;
         const pxPerTVal = followMode.pxPerT;
+
+        let hoveringNodeInCreate = false;
+        if (mode === 'create') {
+          const editableVoiceId = selectedVoiceId || arrangement.voices[0]?.id;
+          if (editableVoiceId) {
+            const { minSemitone, maxSemitone } = getPitchRange();
+            hoveringNodeInCreate = !!getNodeHitAtMouseEvent(
+              e,
+              editableVoiceId,
+              0,
+              0,
+              gridLeftPx,
+              gridTopPx,
+              gridWidthPx,
+              gridHeightPx,
+              minSemitone,
+              maxSemitone,
+            );
+          }
+        }
 
         // In Play mode, the camera center may differ from the playhead
         // (smart-cam static states), so read from the ref.
@@ -745,7 +824,7 @@ export function useGridInteractions({
         });
 
         const handleHitPx = 8;
-        const hovering = isMouseNearLoopHandle(mouseX, loopStartX, loopEndX, handleHitPx);
+        const hovering = !hoveringNodeInCreate && isMouseNearLoopHandle(mouseX, loopStartX, loopEndX, handleHitPx);
 
         if (hovering !== isHoveringLoopHandleRef.current) {
           isHoveringLoopHandleRef.current = hovering;

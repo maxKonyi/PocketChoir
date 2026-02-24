@@ -25,7 +25,6 @@ import {
   type LyricHoldSpan,
   type LyricUiEntry,
   degreeToY,
-  isChordDiatonic,
   lightenCssColorTowardWhite,
   localT16ToNearestWorldT,
   semitoneToY,
@@ -271,12 +270,8 @@ export function useGridRenderer({
     const textColor = cssColors.text;
     const chordFillTop = cssColors.chordFillTop;
     const chordFillBottom = cssColors.chordFillBottom;
-    const chordFillTensionTop = cssColors.chordFillTensionTop;
-    const chordFillTensionBottom = cssColors.chordFillTensionBot;
     const chordStroke = cssColors.chordStroke;
-    const chordStrokeTension = cssColors.chordStrokeTension;
     const chordText = cssColors.chordText;
-    const chordTextTension = cssColors.chordTextTension;
 
     // Canvas was already cleared above (in device pixels)
 
@@ -513,7 +508,6 @@ export function useGridRenderer({
       for (let k = kStart; k <= kEnd; k++) {
         for (let i = 0; i < arrangement.chords.length; i++) {
           const chord = arrangement.chords[i];
-          const isDiatonicChord = isChordDiatonic(chord, arrangement);
 
           // Convert chord local times to world time for this tile
           const chordStartWT = tileLocalToWorldT(chord.t16, k, loopLengthT);
@@ -535,13 +529,8 @@ export function useGridRenderer({
 
           // Build the main fill gradient
           const gradient = ctx.createLinearGradient(bStartX, blockY, bStartX, blockY + blockHeight);
-          if (isDiatonicChord) {
-            gradient.addColorStop(0, chordFillTop);
-            gradient.addColorStop(1, chordFillBottom);
-          } else {
-            gradient.addColorStop(0, chordFillTensionTop);
-            gradient.addColorStop(1, chordFillTensionBottom);
-          }
+          gradient.addColorStop(0, chordFillTop);
+          gradient.addColorStop(1, chordFillBottom);
 
           // Path for the rounded "chip".
           ctx.beginPath();
@@ -561,7 +550,7 @@ export function useGridRenderer({
           ctx.restore();
 
           // 2) Crisp outer stroke.
-          ctx.strokeStyle = isDiatonicChord ? chordStroke : chordStrokeTension;
+          ctx.strokeStyle = chordStroke;
           ctx.lineWidth = 1.25;
           ctx.stroke();
 
@@ -576,7 +565,7 @@ export function useGridRenderer({
 
           // Draw chord text centered in block.
           ctx.save();
-          ctx.fillStyle = isDiatonicChord ? chordText : chordTextTension;
+          ctx.fillStyle = chordText;
           ctx.font = '700 13px system-ui';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -1190,73 +1179,77 @@ export function useGridRenderer({
                 ctx.restore();
               }
 
-              const hoverPreview = hoverPreviewRef.current;
-              if (hoverPreview && hoverPreview.voiceId === voice.id) {
-                const preview = hoverPreview.point;
-                const previewWorldT = preview.t16 + tileOffset;
-                const px = wToX(previewWorldT);
-                const py = preview.semi !== undefined
-                  ? semitoneToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
-                  : degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
+            }
+          }
 
-                const previewSemi = preview.semi !== undefined
-                  ? preview.semi
-                  : degreeToSemitoneOffset(preview.deg, preview.octave, arrangement.scale);
+          // Draw hover preview once per voice/tile, even when the voice has no nodes.
+          if (mode === 'create' && k === kStart) {
+            const hoverPreview = hoverPreviewRef.current;
+            if (hoverPreview && hoverPreview.voiceId === voice.id) {
+              const preview = hoverPreview.point;
+              const previewWorldT = preview.t16 + tileOffset;
+              const px = wToX(previewWorldT);
+              const py = preview.semi !== undefined
+                ? semitoneToY(preview.semi, minSemitone, maxSemitone, gridTop, gridHeight)
+                : degreeToY(preview.deg, preview.octave, minSemitone, maxSemitone, gridTop, gridHeight, arrangement.scale);
 
-                const previewStrokeColor = isScaleDegreeNodeMode
-                  ? getScaleDegreeColor(semitoneToLabel(previewSemi))
-                  : nodeStrokeColor;
+              const previewSemi = preview.semi !== undefined
+                ? preview.semi
+                : degreeToSemitoneOffset(preview.deg, preview.octave, arrangement.scale);
 
-                const previewFillColor = isSynthMuted
-                  ? 'rgba(90, 90, 90, 1)'
-                  : (previewStrokeColor.startsWith('#') ? darkenColor(previewStrokeColor, 35) : previewStrokeColor);
+              const previewStrokeColor = isScaleDegreeNodeMode
+                ? getScaleDegreeColor(semitoneToLabel(previewSemi))
+                : voiceColor;
 
-                ctx.save();
-                ctx.globalAlpha = 0.35;
+              const previewFillColor = isSynthMuted
+                ? 'rgba(90, 90, 90, 1)'
+                : (previewStrokeColor.startsWith('#') ? darkenColor(previewStrokeColor, 35) : previewStrokeColor);
 
-                ctx.beginPath();
-                ctx.arc(px, py, nodeRadius, 0, Math.PI * 2);
-                ctx.fillStyle = previewFillColor;
-                ctx.fill();
+              ctx.save();
+              ctx.globalAlpha = 0.35;
 
-                ctx.strokeStyle = previewStrokeColor;
-                ctx.lineWidth = 1.5;
-                ctx.stroke();
+              ctx.beginPath();
+              ctx.arc(px, py, nodeRadius, 0, Math.PI * 2);
+              ctx.fillStyle = previewFillColor;
+              ctx.fill();
 
-                if (display.showNoteLabels) {
-                  const labelFontSize = Math.round(12 * display.noteSize);
-                  ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-                  ctx.font = `bold ${labelFontSize}px system-ui`;
-                  ctx.textAlign = 'center';
-                  ctx.textBaseline = 'middle';
+              ctx.strokeStyle = previewStrokeColor;
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
 
-                  let previewLabel: string;
-                  if (preview.semi !== undefined) {
-                    const relativeSemi = preview.semi - tonicSemitone;
-                    if (display.labelFormat === 'solfege') {
-                      previewLabel = semitoneToSolfege(relativeSemi);
-                    } else if (display.labelFormat === 'noteName') {
-                      previewLabel = isMidiImportedArrangement
-                        ? semitoneToLetterName(preview.semi, 'C', transposition)
-                        : semitoneToLetterName(preview.semi, arrangement.tonic || 'C', transposition);
-                    } else {
-                      previewLabel = semitoneToLabel(relativeSemi);
-                    }
-                  } else if (display.labelFormat === 'solfege') {
-                    const semi = degreeToSemitoneOffset(preview.deg, 0, arrangement.scale);
-                    previewLabel = semitoneToSolfege(semi);
+              if (display.showNoteLabels) {
+                const labelFontSize = Math.round(12 * display.noteSize);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                ctx.font = `bold ${labelFontSize}px system-ui`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                let previewLabel: string;
+                if (preview.semi !== undefined) {
+                  const relativeSemi = preview.semi - tonicSemitone;
+                  if (display.labelFormat === 'solfege') {
+                    previewLabel = semitoneToSolfege(relativeSemi);
                   } else if (display.labelFormat === 'noteName') {
-                    const semi = degreeToSemitoneOffset(preview.deg, 0, arrangement.scale);
-                    previewLabel = semitoneToLetterName(semi, arrangement.tonic || 'C', transposition);
+                    previewLabel = isMidiImportedArrangement
+                      ? semitoneToLetterName(preview.semi, 'C', transposition)
+                      : semitoneToLetterName(preview.semi, arrangement.tonic || 'C', transposition);
                   } else {
-                    previewLabel = String(preview.deg);
+                    previewLabel = semitoneToLabel(relativeSemi);
                   }
-
-                  ctx.fillText(previewLabel, px, py + 0.5);
+                } else if (display.labelFormat === 'solfege') {
+                  const semi = degreeToSemitoneOffset(preview.deg, 0, arrangement.scale);
+                  previewLabel = semitoneToSolfege(semi);
+                } else if (display.labelFormat === 'noteName') {
+                  const semi = degreeToSemitoneOffset(preview.deg, 0, arrangement.scale);
+                  previewLabel = semitoneToLetterName(semi, arrangement.tonic || 'C', transposition);
+                } else {
+                  previewLabel = String(preview.deg);
                 }
 
-                ctx.restore();
+                ctx.fillText(previewLabel, px, py + 0.5);
               }
+
+              ctx.restore();
             }
           }
         }

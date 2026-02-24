@@ -1233,6 +1233,25 @@ export const useAppStore = create<AppState & AppActions>()(
         const updatedVoices = state.arrangement.voices.map((voice) => {
           if (voice.id !== voiceId) return voice;
 
+          // Helper: anchors (term=true) are only valid if they have a real note before them.
+          // This guarantees we never keep orphaned anchors after any delete path.
+          const pruneOrphanAnchors = (nodes: ArrangementNode[]): ArrangementNode[] => {
+            const sorted = [...nodes].sort((a, b) => a.t16 - b.t16);
+            let seenRealNote = false;
+            const cleaned: ArrangementNode[] = [];
+            for (const node of sorted) {
+              if (!node.term) {
+                seenRealNote = true;
+                cleaned.push(node);
+                continue;
+              }
+              if (seenRealNote) {
+                cleaned.push(node);
+              }
+            }
+            return cleaned;
+          };
+
           // If the node being removed is a "real" note, we also remove its attached anchor
           // (the first termination node after it, up to the next real note).
           // This prevents leaving behind an orphaned anchor that still affects phrase logic.
@@ -1247,15 +1266,19 @@ export const useAppStore = create<AppState & AppActions>()(
               .sort((a, b) => a.t16 - b.t16)[0];
 
             const attachedAnchorT16 = attachedAnchor ? attachedAnchor.t16 : null;
+            const nodesAfterRemoval = voice.nodes.filter(
+              (n) => n.t16 !== t16 && (attachedAnchorT16 === null || n.t16 !== attachedAnchorT16),
+            );
             return {
               ...voice,
-              nodes: voice.nodes.filter((n) => n.t16 !== t16 && (attachedAnchorT16 === null || n.t16 !== attachedAnchorT16)),
+              nodes: pruneOrphanAnchors(nodesAfterRemoval),
             };
           }
 
+          const nodesAfterRemoval = voice.nodes.filter((n) => n.t16 !== t16);
           return {
             ...voice,
-            nodes: voice.nodes.filter((n) => n.t16 !== t16),
+            nodes: pruneOrphanAnchors(nodesAfterRemoval),
           };
         });
 

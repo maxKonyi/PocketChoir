@@ -1786,7 +1786,7 @@ export class PlaybackEngine {
    *
    * Timeline bounds are intentionally fixed to match the recording workflow:
    * - Start: 1 beat before arrangement start (to include early pickup recording)
-   * - End: 4 beats after arrangement end (2 beats vocal overrun + 2 beats reverb tail)
+   * - End: 2 beats after arrangement end (vocal overrun tail)
    */
   async exportVocalMix(options: VocalExportOptions): Promise<Blob | null> {
     if (!this.arrangement) return null;
@@ -1805,7 +1805,7 @@ export class PlaybackEngine {
     const arrangementLengthMs = this.t16ToTimelineMs(this.arrangementEndT16);
 
     const exportStartMs = -beatMs;
-    const exportEndMs = arrangementLengthMs + (4 * beatMs);
+    const exportEndMs = arrangementLengthMs + (2 * beatMs);
     const renderDurationSec = Math.max(0.1, (exportEndMs - exportStartMs) / 1000);
 
     const sampleRate = AudioService.isReady() ? AudioService.getSampleRate() : 44100;
@@ -1822,21 +1822,6 @@ export class PlaybackEngine {
     const dryBus = offlineCtx.createGain();
     dryBus.gain.value = 1;
     dryBus.connect(masterGain);
-
-    // Reverb bus amount is controlled globally to match the app's global reverb slider.
-    const wetBus = offlineCtx.createGain();
-    wetBus.gain.value = Math.max(0, Math.min(1, options.globalReverb));
-    wetBus.connect(masterGain);
-
-    // Simple generated impulse response so exported audio includes a natural reverb tail.
-    const convolver = offlineCtx.createConvolver();
-    convolver.buffer = this.createOfflineReverbImpulse(offlineCtx, 2.9);
-    convolver.connect(wetBus);
-
-    // Small pre-delay to align with the live reverb character in AudioService.
-    const reverbPreDelay = offlineCtx.createDelay(0.1);
-    reverbPreDelay.delayTime.value = 0.01;
-    reverbPreDelay.connect(convolver);
 
     const anySoloActive = options.voiceStates.some((vs) => vs.synthSolo || vs.vocalSolo);
     const lagMs = Math.max(0, this.config.recordingLagMs ?? 0);
@@ -1895,31 +1880,12 @@ export class PlaybackEngine {
       source.connect(voiceGain);
       voiceGain.connect(panner);
       panner.connect(dryBus);
-      panner.connect(reverbPreDelay);
 
       source.start(renderStartSec, startOffsetSec);
     }
 
     const renderedBuffer = await offlineCtx.startRendering();
     return this.encodeWavBlob(renderedBuffer);
-  }
-
-  /**
-   * Build a simple stereo impulse response for offline reverb rendering.
-   */
-  private createOfflineReverbImpulse(ctx: OfflineAudioContext, decaySeconds: number): AudioBuffer {
-    const length = Math.max(1, Math.floor(ctx.sampleRate * decaySeconds));
-    const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
-
-    for (let ch = 0; ch < impulse.numberOfChannels; ch++) {
-      const channelData = impulse.getChannelData(ch);
-      for (let i = 0; i < length; i++) {
-        const decay = Math.pow(1 - (i / length), 2.2);
-        channelData[i] = ((Math.random() * 2) - 1) * decay;
-      }
-    }
-
-    return impulse;
   }
 
   /**

@@ -8,7 +8,6 @@ import {
   worldTToScreenX,
 } from '../../utils/followCamera';
 import { getCameraCenterWorldT } from '../../utils/cameraState';
-import { isChordDiatonic } from './gridDataUtils';
 import { quantizeT16, type GridDivision } from '../../utils/timing';
 
 // Note: RefObject is kept for chordLaneRef; MutableRefObject for camera-track and drag refs.
@@ -281,7 +280,6 @@ export function GridChordLaneEditor({
                   const widthPx = Math.max(1, chord.duration16 * pxPerTVal);
 
                   const isEditing = editingChordIndex === idx;
-                  const isDiatonicChord = isChordDiatonic(chord, arrangement);
 
                   blocks.push(
                     <div
@@ -290,10 +288,8 @@ export function GridChordLaneEditor({
                       style={{
                         left: leftPx,
                         width: widthPx,
-                        background: isDiatonicChord
-                          ? 'linear-gradient(to bottom, var(--chord-fill-top), var(--chord-fill-bottom))'
-                          : 'linear-gradient(to bottom, var(--chord-fill-tension-top), var(--chord-fill-tension-bottom))',
-                        borderColor: isDiatonicChord ? 'var(--chord-stroke)' : 'var(--chord-stroke-tension)',
+                        background: 'linear-gradient(to bottom, var(--chord-fill-top), var(--chord-fill-bottom))',
+                        borderColor: 'var(--chord-stroke)',
                       }}
                       title="Shift+click to delete. Drag edges to stretch or overwrite."
                       onDoubleClick={(evt) => {
@@ -313,7 +309,7 @@ export function GridChordLaneEditor({
                           <input
                             value={editingChordName}
                             autoFocus
-                            className={`w-full bg-transparent text-center text-xs font-bold outline-none ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}
+                            className="w-full bg-transparent text-center text-xs font-bold outline-none text-[var(--chord-text)]"
                             onChange={(evt) => setEditingChordName(evt.target.value)}
                             onBlur={() => commitChordNameEdit()}
                             onKeyDown={(evt) => {
@@ -329,7 +325,7 @@ export function GridChordLaneEditor({
                             }}
                           />
                         ) : (
-                          <span className={`text-xs font-bold ${isDiatonicChord ? 'text-[var(--chord-text)]' : 'text-[var(--chord-text-tension)]'}`}>
+                          <span className="text-xs font-bold text-[var(--chord-text)]">
                             {chord.name}
                           </span>
                         )}

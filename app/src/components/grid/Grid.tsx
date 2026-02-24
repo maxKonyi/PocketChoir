@@ -380,6 +380,26 @@ export function Grid({
   const moveSelectedNodes = useAppStore((state) => state.moveSelectedNodes);
   const setGridDivision = useAppStore((state) => state.setGridDivision);
 
+  // When the user switches the editable voice in Create mode, immediately retarget
+  // the existing ghost preview to that voice so the preview does not appear to
+  // "wake up" only after the next click/drag interaction.
+  useEffect(() => {
+    if (mode !== 'create') return;
+    if (!arrangement) return;
+
+    const nextVoiceId = selectedVoiceId || arrangement.voices[0]?.id;
+    if (!nextVoiceId) return;
+
+    const currentPreview = hoverPreviewRef.current;
+    if (!currentPreview) return;
+    if (currentPreview.voiceId === nextVoiceId) return;
+
+    hoverPreviewRef.current = {
+      ...currentPreview,
+      voiceId: nextVoiceId,
+    };
+  }, [mode, arrangement, selectedVoiceId]);
+
   // Lookup used to vertically stack contour segments that are exactly overlapping.
   // Recomputed when arrangement content/order OR horizontal zoom changes.
   const contourStackLookup = useMemo<ContourStackLookup>(() => {
@@ -1860,52 +1880,71 @@ export function Grid({
   }, [arrangement, setMinPxPerT, setFollowViewportWidthPx]);
 
   useEffect(() => {
-    // Auto-fit on arrangement load in both Play and Create modes.
-    // (Continuous "zoom while editing" behavior is handled elsewhere.)
+    // On arrangement open, reset the camera/transport to a predictable start view:
+    // - playhead at t=0
+    // - smart camera mode
+    // - two bars visible to the right of the start (when possible)
     if (mode !== 'play' && mode !== 'create') return;
-    if (!arrangement) return;
-    const container = containerRef.current;
-    if (!container) return;
-    const gridW = container.getBoundingClientRect().width - GRID_MARGIN.left - GRID_MARGIN.right;
-    const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
-    if (gridW <= 0 || loopLenT <= 0) return;
-    setPxPerT(gridW / loopLenT);
-  }, [mode, arrangement?.id, setPxPerT]);
-
-  useEffect(() => {
-    if (mode !== 'play') return;
     if (!arrangement) return;
 
     let cancelled = false;
 
-    const tryFit = () => {
+    const applyStartView = () => {
       if (cancelled) return;
       const container = containerRef.current;
       if (!container) {
-        window.requestAnimationFrame(tryFit);
+        window.requestAnimationFrame(applyStartView);
         return;
       }
 
       const gridW = container.getBoundingClientRect().width - GRID_MARGIN.left - GRID_MARGIN.right;
       const loopLenT = arrangement.bars * arrangement.timeSig.numerator * 4;
-      if (gridW <= 0 || loopLenT <= 0) {
-        window.requestAnimationFrame(tryFit);
+      const barLenT = arrangement.timeSig.numerator * 4;
+      if (gridW <= 0 || loopLenT <= 0 || barLenT <= 0) {
+        window.requestAnimationFrame(applyStartView);
         return;
       }
 
-      // Keep the minimap in sync with the true grid viewport width.
-      setFollowViewportWidthPx(gridW);
+      // We want the arrangement start/playhead (t=0) centered on open,
+      // with two bars visible to the RIGHT of that center point.
+      // That means the full viewport should cover 4 bars when possible.
+      const fourBarsT = barLenT * 4;
+      const visibleSpanT = Math.max(1, Math.min(loopLenT, fourBarsT));
+      const targetPxPerT = gridW / visibleSpanT;
 
-      // Zoom-out floor: allow up to 2 loops visible.
+      // Keep follow/minimap geometry synced.
+      setFollowViewportWidthPx(gridW);
       setMinPxPerT(gridW / (loopLenT * 2));
-      setPxPerT(gridW / loopLenT);
+      setPxPerT(targetPxPerT);
+
+      // Reset transport and camera state.
+      setPosition(0);
+      playbackEngine.seekWorld(0);
+      setCameraMode('smart');
+      setFreeLook(false);
+      setFreeLookReact(false);
+      smartCamStateRef.current = 'FOLLOW_CENTER';
+      smartCamIsStaticRef.current = false;
+      setSmartCamIsStatic(false);
+
+      // Center the camera on arrangement start so two bars sit to the right.
+      setCameraCenterWorldT(0);
     };
 
-    tryFit();
+    applyStartView();
     return () => {
       cancelled = true;
     };
-  }, [mode, arrangement?.id, setMinPxPerT, setPxPerT, setFollowViewportWidthPx]);
+  }, [
+    arrangement?.id,
+    mode,
+    setCameraMode,
+    setFollowViewportWidthPx,
+    setMinPxPerT,
+    setPosition,
+    setPxPerT,
+    setSmartCamIsStatic,
+  ]);
 
   // Keyboard navigation + hotkeys
   useEffect(() => {

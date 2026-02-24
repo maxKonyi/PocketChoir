@@ -27,6 +27,26 @@ const NOTE_TO_SEMITONE: Record<string, number> = {
  */
 const SEMITONE_TO_NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
+// Major-scale spellings by tonic (including enharmonic keys) so note names
+// follow key context correctly instead of always defaulting to sharps.
+const MAJOR_SCALE_NOTES_BY_TONIC: Record<string, [string, string, string, string, string, string, string]> = {
+  C: ['C', 'D', 'E', 'F', 'G', 'A', 'B'],
+  G: ['G', 'A', 'B', 'C', 'D', 'E', 'F#'],
+  D: ['D', 'E', 'F#', 'G', 'A', 'B', 'C#'],
+  A: ['A', 'B', 'C#', 'D', 'E', 'F#', 'G#'],
+  E: ['E', 'F#', 'G#', 'A', 'B', 'C#', 'D#'],
+  B: ['B', 'C#', 'D#', 'E', 'F#', 'G#', 'A#'],
+  'F#': ['F#', 'G#', 'A#', 'B', 'C#', 'D#', 'E#'],
+  'C#': ['C#', 'D#', 'E#', 'F#', 'G#', 'A#', 'B#'],
+  F: ['F', 'G', 'A', 'Bb', 'C', 'D', 'E'],
+  Bb: ['Bb', 'C', 'D', 'Eb', 'F', 'G', 'A'],
+  Eb: ['Eb', 'F', 'G', 'Ab', 'Bb', 'C', 'D'],
+  Ab: ['Ab', 'Bb', 'C', 'Db', 'Eb', 'F', 'G'],
+  Db: ['Db', 'Eb', 'F', 'Gb', 'Ab', 'Bb', 'C'],
+  Gb: ['Gb', 'Ab', 'Bb', 'Cb', 'Db', 'Eb', 'F'],
+  Cb: ['Cb', 'Db', 'Eb', 'Fb', 'Gb', 'Ab', 'Bb'],
+};
+
 /**
  * Chromatic scale degree labels (relative to tonic).
  * Index 0 = tonic (1), index 1 = minor 2nd (b2), etc.
@@ -39,6 +59,58 @@ export const CHROMATIC_LABELS = ['1', 'b2', '2', 'b3', '3', '4', '#4', '5', 'b6'
  * Follows the same order as CHROMATIC_LABELS: 1-b2-2-b3-3-4-#4-5-b6-6-b7-7
  */
 export const SOLFEGE_LABELS = ['Do', 'Ra', 'Re', 'Me', 'Mi', 'Fa', 'Fi', 'Sol', 'Le', 'La', 'Te', 'Ti'];
+
+type DegreeSpelling = {
+  // 0-based diatonic degree index in the major scale (0=1, 1=2, ... 6=7)
+  degreeIndex: number;
+  // Accidental shift to apply to that diatonic degree (-1=flat, +1=sharp)
+  accidentalDelta: number;
+};
+
+const DEGREE_SPELLING_BY_CHROMATIC_INDEX: DegreeSpelling[] = [
+  { degreeIndex: 0, accidentalDelta: 0 },  // 1
+  { degreeIndex: 1, accidentalDelta: -1 }, // b2
+  { degreeIndex: 1, accidentalDelta: 0 },  // 2
+  { degreeIndex: 2, accidentalDelta: -1 }, // b3
+  { degreeIndex: 2, accidentalDelta: 0 },  // 3
+  { degreeIndex: 3, accidentalDelta: 0 },  // 4
+  { degreeIndex: 3, accidentalDelta: 1 },  // #4
+  { degreeIndex: 4, accidentalDelta: 0 },  // 5
+  { degreeIndex: 5, accidentalDelta: -1 }, // b6
+  { degreeIndex: 5, accidentalDelta: 0 },  // 6
+  { degreeIndex: 6, accidentalDelta: -1 }, // b7
+  { degreeIndex: 6, accidentalDelta: 0 },  // 7
+];
+
+function normalizeTonicName(tonic: string): string {
+  const trimmed = tonic.trim();
+  const match = trimmed.match(/^([A-Ga-g])([#b]?)/);
+  if (!match) return '';
+  return `${match[1].toUpperCase()}${match[2]}`;
+}
+
+function noteAccidentalToOffset(noteName: string): number {
+  let offset = 0;
+  for (let i = 1; i < noteName.length; i++) {
+    const ch = noteName[i];
+    if (ch === '#') offset += 1;
+    else if (ch === 'b') offset -= 1;
+  }
+  return offset;
+}
+
+function accidentalOffsetToSuffix(offset: number): string {
+  if (offset > 0) return '#'.repeat(offset);
+  if (offset < 0) return 'b'.repeat(Math.abs(offset));
+  return '';
+}
+
+function applyAccidentalDelta(noteName: string, accidentalDelta: number): string {
+  const letter = noteName.charAt(0);
+  const baseOffset = noteAccidentalToOffset(noteName);
+  const finalOffset = baseOffset + accidentalDelta;
+  return `${letter}${accidentalOffsetToSuffix(finalOffset)}`;
+}
 
 /**
  * Get the chromatic label for a semitone offset from tonic.
@@ -77,12 +149,24 @@ export function semitoneToSolfege(semitoneOffset: number): string {
  * @returns Letter name like "C", "F#", "Bb", etc.
  */
 export function semitoneToLetterName(semitoneOffset: number, tonic: string, transposition: number = 0): string {
-  const tonicSemitone = NOTE_TO_SEMITONE[tonic];
+  const tonicName = normalizeTonicName(tonic);
+  const tonicSemitone = NOTE_TO_SEMITONE[tonicName];
   if (tonicSemitone === undefined) return '?';
 
-  // Absolute semitone = tonic + offset + transposition, wrapped to 0-11
-  const absoluteSemitone = ((tonicSemitone + semitoneOffset + transposition) % 12 + 12) % 12;
-  return SEMITONE_TO_NOTE[absoluteSemitone];
+  // Convert to a chromatic degree index relative to tonic.
+  const chromaticIndex = ((semitoneOffset + transposition) % 12 + 12) % 12;
+  const spelling = DEGREE_SPELLING_BY_CHROMATIC_INDEX[chromaticIndex];
+
+  // Pick a key-aware major-scale spelling table for this tonic.
+  const scaleNotes = MAJOR_SCALE_NOTES_BY_TONIC[tonicName];
+  if (!scaleNotes) {
+    // Fallback if tonic spelling is unusual: preserve previous behavior.
+    const absoluteSemitone = ((tonicSemitone + semitoneOffset + transposition) % 12 + 12) % 12;
+    return SEMITONE_TO_NOTE[absoluteSemitone];
+  }
+
+  const baseDegreeNote = scaleNotes[spelling.degreeIndex];
+  return applyAccidentalDelta(baseDegreeNote, spelling.accidentalDelta);
 }
 
 /**
