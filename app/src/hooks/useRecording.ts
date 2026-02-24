@@ -49,7 +49,6 @@ export function useRecording() {
   const setPlaying = useAppStore((state) => state.setPlaying);
   const setPosition = useAppStore((state) => state.setPosition);
   const setMicrophoneState = useAppStore((state) => state.setMicrophoneState);
-  const recordingLagMs = useAppStore((state) => state.microphoneState.recordingLagMs);
   const lowLatencyPitch = useAppStore((state) => state.microphoneState.lowLatencyPitch);
 
   // Refs for services
@@ -90,6 +89,15 @@ export function useRecording() {
 
       // Keep the store in sync with the actual mic settings (including lag estimate).
       setMicrophoneState(MicrophoneService.getState());
+
+      // Mic Setup can rebuild microphone routing/processed streams.
+      // Recreate the detector each time so pitch tracing is always attached
+      // to the CURRENT processed stream, not a stale one.
+      if (pitchDetectorRef.current) {
+        pitchDetectorRef.current.stop();
+        pitchDetectorRef.current.dispose();
+        pitchDetectorRef.current = null;
+      }
 
       // Get the processed media stream (with gain and mono summing)
       const stream = MicrophoneService.getProcessedStream();
@@ -207,13 +215,11 @@ export function useRecording() {
     // Bail out if a newer session started while we were clearing.
     if (recordingSessionRef.current !== thisSession) return false;
 
-    // Initialize microphone if not already done
-    if (!pitchDetectorRef.current) {
-      const success = await initMicrophone();
-      if (!success) {
-        startInProgressRef.current = false;
-        return false;
-      }
+    // Always re-initialize the detector so it follows the latest processed stream.
+    const success = await initMicrophone();
+    if (!success) {
+      startInProgressRef.current = false;
+      return false;
     }
 
     // Re-apply in case the user toggled low-latency mode since the detector was created.
@@ -260,7 +266,9 @@ export function useRecording() {
 
       const pitchDetectorLatencyMs = pitchDetectorRef.current?.getEstimatedLatencyMs?.() ?? 0;
 
-      const time = Math.max(0, rawTime - (recordingLagMs ?? 0) - pitchDetectorLatencyMs);
+      // Recording Sync is for audio playback alignment only.
+      // Do not apply it to pitch-trace timestamps, or traces can shift off-grid/vanish.
+      const time = Math.max(0, rawTime - pitchDetectorLatencyMs);
 
       const point: PitchPoint = {
         time,
@@ -284,7 +292,7 @@ export function useRecording() {
     const currentVoiceId = voiceId as string;
     const currentTrace = pitchTraceRef;
 
-    playbackEngine.startRecordingVocal(currentVoiceId, async (vid, blob) => {
+    playbackEngine.startRecordingVocal(currentVoiceId, async (vid, blob, earlyFadeMs) => {
       // Ignore if this session has been superseded.
       if (recordingSessionRef.current !== thisSession) return;
 
@@ -296,13 +304,22 @@ export function useRecording() {
         audioBlob: blob,
         duration: finalTrace.length > 0 ? finalTrace[finalTrace.length - 1].time : 0,
         recordedAt: new Date().toISOString(),
+        // Keep the recording anchored to the same timeline start we sought before recording.
+        // This lets PlaybackEngine line up audio with the grid even when we start mic capture early.
+        startPositionMs: playbackEngine.getCurrentPositionMs() > 0 ? seekTarget : seekTarget,
+        earlyFadeMs,
       };
 
       // Save to store
       addRecording(vid, recording);
 
       // Update PlaybackEngine with the new audio buffer
-      await playbackEngine.setAudioRecording(vid, blob);
+      await playbackEngine.setAudioRecording(
+        vid,
+        blob,
+        recording.startPositionMs ?? seekTarget,
+        recording.earlyFadeMs ?? 0
+      );
 
       console.log('Recording saved with audio. Points:', finalTrace.length);
 
@@ -332,7 +349,7 @@ export function useRecording() {
 
     console.log('Recording started for voice:', currentVoiceId);
     return true;
-  }, [armedVoiceId, arrangement, recordings, clearRecording, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, setPosition, recordingLagMs, lowLatencyPitch]);
+  }, [armedVoiceId, arrangement, recordings, clearRecording, initMicrophone, setLivePitchTrace, addRecording, setRecording, setPlaying, setPosition, lowLatencyPitch]);
 
   /**
    * Toggle recording state.
@@ -369,10 +386,11 @@ export function useRecording() {
       if (elapsed < 1000) return;
 
       // When loop is enabled, stop at the user's loop end.
-      // When loop is disabled, stop at the full arrangement end.
+      // When loop is disabled, stop 2 beats past the full arrangement end.
+      const extraT16 = state.playback.loopEnabled ? 0 : 2 * (16 / (state.arrangement?.timeSig.denominator || 4));
       const effectiveEnd = state.playback.loopEnabled
         ? state.playback.loopEnd
-        : (playbackEngine.getArrangementEndT16());
+        : (playbackEngine.getArrangementEndT16() + extraT16);
       if (state.playback.position >= effectiveEnd - 0.2) {
         console.log('Auto-stopping recording at effective end:', effectiveEnd);
         // Keep playing if looping (seamless loop); stop fully if one-shot.

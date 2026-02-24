@@ -363,7 +363,12 @@ function App() {
 
       // Update the cache and tell the engine.
       synced.set(voice.id, blob);
-      playbackEngine.setAudioRecording(voice.id, blob ?? new Blob());
+      playbackEngine.setAudioRecording(
+        voice.id, 
+        blob ?? new Blob(),
+        recording?.startPositionMs ?? 0,
+        recording?.earlyFadeMs ?? 0
+      );
     });
   }, [recordings, arrangement]);
 

@@ -84,6 +84,7 @@ export class PlaybackEngine {
 
   // Recorded audio
   private audioBuffers: Map<string, AudioBuffer> = new Map();
+  private audioBufferMetadata: Map<string, { startPositionMs: number; earlyFadeMs: number }> = new Map();
   private activeAudioSources: Map<string, AudioBufferSourceNode> = new Map();
   // We schedule clicks ahead of time so they land exactly on the beat.
   private nextMetronomeBeatToSchedule: number = 0;
@@ -195,7 +196,7 @@ export class PlaybackEngine {
 
   // Recording trigger
   private recordingVoiceId: string | null = null;
-  private onRecordingComplete: ((voiceId: string, blob: Blob) => void) | null = null;
+  private onRecordingComplete: ((voiceId: string, blob: Blob, earlyFadeMs: number) => void) | null = null;
 
   // Vocal Gain Nodes
   private vocalGainNodes: Map<string, GainNode> = new Map();
@@ -477,12 +478,13 @@ export class PlaybackEngine {
    * Decodes the blob into an AudioBuffer for fast playback.
    * Automatically applies a tail fade to prevent pops at the end.
    */
-  async setAudioRecording(voiceId: string, blob: Blob): Promise<void> {
+  async setAudioRecording(voiceId: string, blob: Blob, startPositionMs: number = 0, earlyFadeMs: number = 0): Promise<void> {
     if (blob.size === 0) {
       // Clearing a recording can happen while audio is playing (ex: overwrite take).
       // Fade out briefly to avoid an abrupt stop click.
       this.stopAudioSourceWithFade(voiceId, this.recordingFadeSeconds);
       this.audioBuffers.delete(voiceId);
+      this.audioBufferMetadata.delete(voiceId);
       return;
     }
 
@@ -494,6 +496,7 @@ export class PlaybackEngine {
       this.applyTailFade(buffer, this.recordingFadeSeconds);
 
       this.audioBuffers.set(voiceId, buffer);
+      this.audioBufferMetadata.set(voiceId, { startPositionMs, earlyFadeMs });
       console.log(`Audio recording loaded for voice ${voiceId}, duration: ${buffer.duration.toFixed(2)}s`);
 
       // If we're already playing, start this source immediately
@@ -653,7 +656,7 @@ export class PlaybackEngine {
   /**
    * Start recording a vocal part synchronized with playback.
    */
-  startRecordingVocal(voiceId: string, onComplete: (voiceId: string, blob: Blob) => void): void {
+  startRecordingVocal(voiceId: string, onComplete: (voiceId: string, blob: Blob, earlyFadeMs: number) => void): void {
     this.recordingVoiceId = voiceId;
     this.onRecordingComplete = onComplete;
   }
@@ -963,15 +966,22 @@ export class PlaybackEngine {
       this.config.onStart();
     }
 
-    // Start recording if armed
+    // Start recording if armed (in case count-in was 0 bars)
+    if (this.recordingVoiceId && this.onRecordingComplete) {
+      this.triggerMicrophoneRecording(0);
+    }
+  }
+
+  private triggerMicrophoneRecording(earlyFadeMs: number): void {
     if (this.recordingVoiceId && this.onRecordingComplete) {
       const vid = this.recordingVoiceId;
       const callback = this.onRecordingComplete;
       MicrophoneService.startRecording((blob: Blob) => {
-        callback(vid, blob);
+        callback(vid, blob, earlyFadeMs);
       });
       // Clear trigger so it doesn't double-start on loop (loop is handled by hook)
       this.recordingVoiceId = null;
+      this.onRecordingComplete = null;
     }
   }
 
@@ -987,6 +997,11 @@ export class PlaybackEngine {
 
     for (let beat = 0; beat < totalBeats; beat++) {
       if (!this.isCountingIn) return false; // Cancelled
+
+      // Start recording 1 beat early during count-in
+      if (beat === totalBeats - 1 && this.recordingVoiceId && this.onRecordingComplete) {
+        this.triggerMicrophoneRecording(beatDurationMs);
+      }
 
       // Play click sound
       this.playClickSound(ctx.currentTime);
@@ -1148,48 +1163,66 @@ export class PlaybackEngine {
     if (!buffer || !this.isVocalAudible(voiceId)) return;
 
     const ctx = AudioService.getContext();
-    // Align recorded audio starts to the same clock as the playhead.
-    // If we're playing, compute the exact AudioContext time that corresponds
-    // to this timeline position.
-    const computedWhen = this.isPlaying ? this.getAudioTimeForTimelineMs(fromMs) : ctx.currentTime;
-    // Never schedule in the past (can cause immediate/late starts depending on browser).
-    const when = Math.max(ctx.currentTime, computedWhen);
-    // Recording lag compensation: recorded audio often starts "late" due to
-    // input + encoding latency. We compensate by skipping forward slightly in
-    // the buffer so the audible content lands on the beat.
+    const meta = this.audioBufferMetadata.get(voiceId) ?? { startPositionMs: 0, earlyFadeMs: 0 };
     const lagMs = Math.max(0, this.config.recordingLagMs ?? 0);
-    const offset = Math.max(0, (fromMs + lagMs) / 1000);
+    
+    // The timeline position corresponding to the very first sample in the buffer.
+    // Positive lag compensation should shift playback EARLIER by skipping late input onset.
+    const bufferTimelineStartMs = meta.startPositionMs - meta.earlyFadeMs - lagMs;
+
+    let offsetMs = 0;
+    let scheduleTimelineMs = bufferTimelineStartMs;
+
+    if (fromMs > bufferTimelineStartMs) {
+      // Playback is starting in the middle of the recording
+      offsetMs = fromMs - bufferTimelineStartMs;
+      scheduleTimelineMs = fromMs;
+    } else {
+      // Playback is starting before the recording, schedule it for the future
+      offsetMs = 0;
+      scheduleTimelineMs = bufferTimelineStartMs;
+    }
+
+    if (offsetMs >= buffer.duration * 1000) {
+      return; // Past the end of the buffer
+    }
+
+    const computedWhen = this.isPlaying ? this.getAudioTimeForTimelineMs(scheduleTimelineMs) : ctx.currentTime;
+    const when = Math.max(ctx.currentTime, computedWhen);
+    const offset = offsetMs / 1000;
 
     // Stop existing if any.
-    // We use a very short fade so restarting a source doesn't click.
     this.stopAudioSourceWithFade(voiceId, this.recordingFadeSeconds);
 
-    // Only play if the offset is within the buffer duration
-    if (offset < buffer.duration) {
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
 
-      // Connect to the per-voice gain node
-      const gainNode = this.vocalGainNodes.get(voiceId);
-      if (gainNode) {
-        // Fade in recorded audio very quickly so the source start doesn't click.
-        // We compute the intended target volume the same way as updateVoiceVolume.
-        const baseVolume = this.vocalVolumes.get(voiceId) ?? 0.8;
-        const targetVolume = this.isVocalAudible(voiceId) ? baseVolume : 0;
+    // Connect to the per-voice gain node
+    const gainNode = this.vocalGainNodes.get(voiceId);
+    if (gainNode) {
+      const baseVolume = this.vocalVolumes.get(voiceId) ?? 0.8;
+      const targetVolume = this.isVocalAudible(voiceId) ? baseVolume : 0;
 
-        gainNode.gain.cancelScheduledValues(when);
-        gainNode.gain.setValueAtTime(0, when);
-        gainNode.gain.linearRampToValueAtTime(targetVolume, when + this.recordingFadeSeconds);
-
-        source.connect(gainNode);
+      gainNode.gain.cancelScheduledValues(when);
+      gainNode.gain.setValueAtTime(0, when);
+      
+      // If this is the start of the recording (offset = 0) and we have an early fade
+      if (offset === 0 && meta.earlyFadeMs > 0) {
+        // Fade in over the early fade duration
+        const fadeEndWhen = when + (meta.earlyFadeMs / 1000);
+        gainNode.gain.linearRampToValueAtTime(targetVolume, fadeEndWhen);
       } else {
-        // Fallback to master if gain node missing
-        source.connect(AudioService.getMasterGain());
+        // Normal fast fade-in to prevent clicks
+        gainNode.gain.linearRampToValueAtTime(targetVolume, when + this.recordingFadeSeconds);
       }
 
-      source.start(when, offset);
-      this.activeAudioSources.set(voiceId, source);
+      source.connect(gainNode);
+    } else {
+      source.connect(AudioService.getMasterGain());
     }
+
+    source.start(when, offset);
+    this.activeAudioSources.set(voiceId, source);
   }
 
   /**

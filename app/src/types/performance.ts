@@ -25,4 +25,6 @@ export interface Recording {
   pitchTrace: PitchPoint[]; // Array of pitch detection points
   recordedAt: string;       // ISO date string when recorded
   duration: number;         // Duration in milliseconds
+  startPositionMs?: number; // Timeline position where this recording started
+  earlyFadeMs?: number;     // Milliseconds of early count-in to fade in
 }
