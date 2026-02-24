@@ -170,7 +170,7 @@ export class PlaybackEngine {
 
   // When any solo/focus is active, non-solo voices are dimmed (not muted).
   // 0.2 means they play at 20% of their normal track volume.
-  private readonly soloDimMultiplier: number = 0.2;
+  private readonly soloDimMultiplier: number = 0.1;
 
   // Used to prevent re-scheduling loop boundary fades multiple times per loop.
   private lastLoopBoundaryFadeLoopCount: number = -1;

@@ -177,6 +177,11 @@ export function DevControls() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  // Broadcast panel visibility so other dev-only tools can follow the same shortcut.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('dev-controls-toggle', { detail: { open } }));
+  }, [open]);
+
   // Whenever settings change:
   // - Apply them to CSS variables immediately (so the grid updates live)
   // - Save to localStorage

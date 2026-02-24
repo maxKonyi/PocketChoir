@@ -23,13 +23,38 @@ import { dragPixelsToTimeDelta } from './utils/followCamera';
 import { getCameraCenterWorldT, setCameraCenterWorldT, setFreeLook } from './utils/cameraState';
 import { sixPartStressTest } from './data/arrangements';
 import { useUnisonContourDialKit } from './components/grid/UnisonContourDialKit';
-import { useTubeStyleDialKit } from './components/grid/TubeStyleDialKit';
+
+type UnisonDialKitParams = ReturnType<typeof useUnisonContourDialKit>;
+
+function DevOnlyUnisonDialKit({
+  enabled,
+  onParamsChange,
+}: {
+  enabled: boolean;
+  onParamsChange: (params?: UnisonDialKitParams) => void;
+}) {
+  if (!enabled) return null;
+  return <DevOnlyUnisonDialKitInner onParamsChange={onParamsChange} />;
+}
+
+function DevOnlyUnisonDialKitInner({
+  onParamsChange,
+}: {
+  onParamsChange: (params?: UnisonDialKitParams) => void;
+}) {
+  const params = useUnisonContourDialKit();
+
+  useEffect(() => {
+    onParamsChange(params);
+    return () => onParamsChange(undefined);
+  }, [params, onParamsChange]);
+
+  return null;
+}
 
 function App() {
-  // Get DialKit parameters ONCE at the root level
-  // This ensures only ONE DialKit panel is created for unison contours
-  const unisonDialKitParams = useUnisonContourDialKit();
-  const tubeParams = useTubeStyleDialKit();
+  const [isDevControlsOpen, setIsDevControlsOpen] = useState(false);
+  const [unisonDialKitParams, setUnisonDialKitParams] = useState<UnisonDialKitParams | undefined>(undefined);
 
   // Get state and actions from store
   const arrangement = useAppStore((state) => state.arrangement);
@@ -640,6 +665,16 @@ function App() {
     return () => window.removeEventListener('keydown', handleUndoRedo);
   }, [mode, isAnyModalOpen, undo, redo, canUndo, canRedo]);
 
+  useEffect(() => {
+    const onDevControlsToggle = (e: Event) => {
+      const customEvent = e as CustomEvent<{ open: boolean }>;
+      setIsDevControlsOpen(Boolean(customEvent.detail?.open));
+    };
+
+    window.addEventListener('dev-controls-toggle', onDevControlsToggle as EventListener);
+    return () => window.removeEventListener('dev-controls-toggle', onDevControlsToggle as EventListener);
+  }, []);
+
   return (
     <div
       className="h-screen w-screen overflow-hidden relative"
@@ -670,6 +705,10 @@ function App() {
       </svg>
 
       <BackgroundVideo />
+      <DevOnlyUnisonDialKit
+        enabled={isDevControlsOpen}
+        onParamsChange={setUnisonDialKitParams}
+      />
 
       {/* Minimap - compressed contour preview above the chord bar, between top bar and grid */}
       {arrangement && showMinimap && (
@@ -691,11 +730,11 @@ function App() {
             Fades are applied inside Grid canvas rendering for consistent visuals.
           */}
           <div className="relative h-full w-full">
-            <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} unisonDialKitParams={unisonDialKitParams} tubeParams={tubeParams} />
+            <Grid arrangement={arrangement} className="h-full w-full" hideChords={true} unisonDialKitParams={unisonDialKitParams} />
 
             {/* Chord/Lyric overlay layer: side fades are handled in this layer's canvas draw pass. */}
             <div className="absolute inset-0 pointer-events-none">
-              <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} unisonDialKitParams={unisonDialKitParams} tubeParams={tubeParams} />
+              <Grid arrangement={arrangement} className="h-full w-full" onlyChords={true} unisonDialKitParams={unisonDialKitParams} />
             </div>
           </div>
 
