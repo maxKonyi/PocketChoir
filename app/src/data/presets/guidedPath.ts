@@ -1,163 +1,163 @@
 /* ============================================================
-   GUIDED PATH PRESETS
+  GUIDED PATH PRESETS
 
-   A structured learning journey from simple 2-voice intervals
-   all the way up to complex 6-voice jazz harmonies.
+  Curated learning journey for harmony singers.
+  The progression follows common teaching order used in choir training:
+  - start with unison and simple intervals,
+  - then add rhythmic and melodic independence,
+  - then build to triads, SATB writing, and jazz extensions.
 
-   Each "stage" groups arrangements by voice count and complexity.
-   The user works through them in order, building skills as they go.
-   ============================================================ */
+  Every arrangement includes a chord track.
+  Lyrics are intentionally omitted in this stock set.
+  ============================================================ */
 
 import type { Arrangement } from '../../types';
 import type { GuidedStage } from '../../types/library';
 
 /* ============================================================
    STAGE 1 — FIRST STEPS (2 Voices)
-   Simple intervals: unisons, thirds, fifths.
+   Unison, thirds, echo entries, and contrary motion.
    ============================================================ */
 
 const stage1Arrangements: Arrangement[] = [
   {
     id: 'gp_1_1',
-    title: 'Unison Warmup',
-    description: 'Sing the same melody together — get comfortable with the app',
-    tempo: 76,
+    title: 'Unison Compass',
+    description: 'Both voices sing one shared melody to lock pitch center and timing.',
+    tempo: 74,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
     tonic: 'C',
     scale: 'major',
     difficulty: 1,
-    tags: ['beginner', 'unison', 'warmup'],
+    tags: ['beginner', 'unison', 'intonation'],
     voices: [
       {
-        id: 'v1', name: 'Voice 1', color: '#ff6b9d',
+        id: 'v1', name: 'Leader', color: '#ff6b9d',
         nodes: [
           { t16: 0, deg: 1 }, { t16: 8, deg: 2 }, { t16: 16, deg: 3 },
-          { t16: 24, deg: 2 }, { t16: 32, deg: 1 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
+          { t16: 24, deg: 4 }, { t16: 32, deg: 5 }, { t16: 40, deg: 4 },
+          { t16: 48, deg: 3 }, { t16: 56, deg: 2 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
-        id: 'v2', name: 'Voice 2', color: '#4ecdc4',
+        id: 'v2', name: 'Partner', color: '#4ecdc4',
         nodes: [
           { t16: 0, deg: 1 }, { t16: 8, deg: 2 }, { t16: 16, deg: 3 },
-          { t16: 24, deg: 2 }, { t16: 32, deg: 1 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
+          { t16: 24, deg: 4 }, { t16: 32, deg: 5 }, { t16: 40, deg: 4 },
+          { t16: 48, deg: 3 }, { t16: 56, deg: 2 }, { t16: 60, deg: 1, term: true },
         ],
       },
     ],
     chords: [
       { t16: 0, duration16: 16, name: 'C' },
       { t16: 16, duration16: 16, name: 'F' },
-      { t16: 32, duration16: 32, name: 'C' },
-    ],
-  },
-  {
-    id: 'gp_1_2',
-    title: 'Parallel Thirds',
-    description: 'Two voices moving together a third apart — the foundation of harmony',
-    tempo: 80,
-    timeSig: { numerator: 4, denominator: 4 },
-    bars: 4,
-    tonic: 'C',
-    scale: 'major',
-    difficulty: 1,
-    tags: ['beginner', 'thirds', 'parallel'],
-    voices: [
-      {
-        id: 'v1', name: 'High Voice', color: '#ff6b9d',
-        nodes: [
-          { t16: 0, deg: 5 }, { t16: 8, deg: 6 }, { t16: 16, deg: 7 },
-          { t16: 24, deg: 8 }, { t16: 32, deg: 7 }, { t16: 40, deg: 6 },
-          { t16: 48, deg: 5 }, { t16: 56, deg: 5, term: true },
-        ],
-      },
-      {
-        id: 'v2', name: 'Low Voice', color: '#4ecdc4',
-        nodes: [
-          { t16: 0, deg: 3 }, { t16: 8, deg: 4 }, { t16: 16, deg: 5 },
-          { t16: 24, deg: 6 }, { t16: 32, deg: 5 }, { t16: 40, deg: 4 },
-          { t16: 48, deg: 3 }, { t16: 56, deg: 3, term: true },
-        ],
-      },
-    ],
-    chords: [
-      { t16: 0, duration16: 16, name: 'C' },
-      { t16: 16, duration16: 16, name: 'G' },
-      { t16: 32, duration16: 16, name: 'Am' },
+      { t16: 32, duration16: 16, name: 'G' },
       { t16: 48, duration16: 16, name: 'C' },
     ],
   },
   {
-    id: 'gp_1_3',
-    title: 'Call and Response',
-    description: 'One voice leads, the other echoes — learn to listen and follow',
-    tempo: 84,
+    id: 'gp_1_2',
+    title: 'Thirds in Motion',
+    description: 'Parallel thirds train blend while keeping each line singable.',
+    tempo: 80,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
     tonic: 'G',
     scale: 'major',
     difficulty: 1,
-    tags: ['beginner', 'call-response'],
+    tags: ['beginner', 'thirds', 'blend'],
     voices: [
       {
-        id: 'v1', name: 'Leader', color: '#ff6b9d',
+        id: 'v1', name: 'Upper Voice', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 4, deg: 2 }, { t16: 8, deg: 3 },
-          { t16: 12, deg: 3, term: true },
-          { t16: 32, deg: 5 }, { t16: 36, deg: 4 }, { t16: 40, deg: 3 },
-          { t16: 44, deg: 3, term: true },
+          { t16: 0, deg: 3 }, { t16: 8, deg: 4 }, { t16: 16, deg: 5 },
+          { t16: 24, deg: 6 }, { t16: 32, deg: 5 }, { t16: 40, deg: 4 },
+          { t16: 48, deg: 3 }, { t16: 56, deg: 2 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
-        id: 'v2', name: 'Echo', color: '#4ecdc4',
+        id: 'v2', name: 'Lower Voice', color: '#4ecdc4',
         nodes: [
-          { t16: 16, deg: 1 }, { t16: 20, deg: 2 }, { t16: 24, deg: 3 },
-          { t16: 28, deg: 3, term: true },
-          { t16: 48, deg: 5 }, { t16: 52, deg: 4 }, { t16: 56, deg: 3 },
-          { t16: 60, deg: 3, term: true },
+          { t16: 0, deg: 1 }, { t16: 8, deg: 2 }, { t16: 16, deg: 3 },
+          { t16: 24, deg: 4 }, { t16: 32, deg: 3 }, { t16: 40, deg: 2 },
+          { t16: 48, deg: 1 }, { t16: 56, deg: 7, octave: -1 }, { t16: 60, deg: 1, term: true },
         ],
       },
     ],
     chords: [
       { t16: 0, duration16: 16, name: 'G' },
-      { t16: 16, duration16: 16, name: 'G' },
-      { t16: 32, duration16: 16, name: 'C' },
+      { t16: 16, duration16: 16, name: 'C' },
+      { t16: 32, duration16: 16, name: 'D' },
       { t16: 48, duration16: 16, name: 'G' },
     ],
   },
   {
-    id: 'gp_1_4',
-    title: 'Contrary Motion',
-    description: 'Voices move in opposite directions — builds independence',
-    tempo: 72,
+    id: 'gp_1_3',
+    title: 'Echo Entries',
+    description: 'Voice 2 answers one bar later to practice clear listening and entrances.',
+    tempo: 84,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
     tonic: 'D',
     scale: 'major',
-    difficulty: 2,
-    tags: ['beginner', 'contrary-motion'],
+    difficulty: 1,
+    tags: ['beginner', 'call-response', 'timing'],
     voices: [
       {
-        id: 'v1', name: 'Rising', color: '#ff6b9d',
+        id: 'v1', name: 'Caller', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 16, deg: 3 }, { t16: 32, deg: 5 },
-          { t16: 48, deg: 8 }, { t16: 60, deg: 8, term: true },
+          { t16: 0, deg: 1 }, { t16: 4, deg: 2 }, { t16: 8, deg: 3 }, { t16: 12, deg: 5, term: true },
+          { t16: 32, deg: 5 }, { t16: 36, deg: 4 }, { t16: 40, deg: 3 }, { t16: 44, deg: 2, term: true },
         ],
       },
       {
-        id: 'v2', name: 'Falling', color: '#4ecdc4',
+        id: 'v2', name: 'Echo', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 8 }, { t16: 16, deg: 6 }, { t16: 32, deg: 4 },
-          { t16: 48, deg: 1 }, { t16: 60, deg: 1, term: true },
+          { t16: 16, deg: 1 }, { t16: 20, deg: 2 }, { t16: 24, deg: 3 }, { t16: 28, deg: 5, term: true },
+          { t16: 48, deg: 5 }, { t16: 52, deg: 4 }, { t16: 56, deg: 3 }, { t16: 60, deg: 2, term: true },
         ],
       },
     ],
     chords: [
       { t16: 0, duration16: 16, name: 'D' },
-      { t16: 16, duration16: 16, name: 'Bm' },
+      { t16: 16, duration16: 16, name: 'A' },
       { t16: 32, duration16: 16, name: 'G' },
       { t16: 48, duration16: 16, name: 'D' },
+    ],
+  },
+  {
+    id: 'gp_1_4',
+    title: 'Contrary Arches',
+    description: 'Opposite-direction lines train independence while staying simple.',
+    tempo: 72,
+    timeSig: { numerator: 4, denominator: 4 },
+    bars: 4,
+    tonic: 'F',
+    scale: 'major',
+    difficulty: 2,
+    tags: ['beginner', 'contrary-motion', 'independence'],
+    voices: [
+      {
+        id: 'v1', name: 'Rising Voice', color: '#ff6b9d',
+        nodes: [
+          { t16: 0, deg: 1 }, { t16: 16, deg: 2 }, { t16: 32, deg: 3 },
+          { t16: 48, deg: 5 }, { t16: 60, deg: 5, term: true },
+        ],
+      },
+      {
+        id: 'v2', name: 'Falling Voice', color: '#4ecdc4',
+        nodes: [
+          { t16: 0, deg: 5 }, { t16: 16, deg: 4 }, { t16: 32, deg: 3 },
+          { t16: 48, deg: 2 }, { t16: 60, deg: 1, term: true },
+        ],
+      },
+    ],
+    chords: [
+      { t16: 0, duration16: 16, name: 'F' },
+      { t16: 16, duration16: 16, name: 'Bb' },
+      { t16: 32, duration16: 16, name: 'C' },
+      { t16: 48, duration16: 16, name: 'F' },
     ],
   },
 ];
@@ -170,112 +170,115 @@ const stage1Arrangements: Arrangement[] = [
 const stage2Arrangements: Arrangement[] = [
   {
     id: 'gp_2_1',
-    title: 'Melody & Drone',
-    description: 'Hold a steady note while the other voice moves freely',
-    tempo: 88,
+    title: 'Pedal and Melody',
+    description: 'One voice holds long tones while the other sings a moving phrase.',
+    tempo: 86,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
-    tonic: 'D',
+    tonic: 'C',
     scale: 'major',
     difficulty: 2,
-    tags: ['beginner', 'drone', 'melody'],
+    tags: ['beginner', 'pedal-tone', 'independence'],
     voices: [
       {
         id: 'v1', name: 'Melody', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 4, deg: 2 }, { t16: 8, deg: 3 },
-          { t16: 12, deg: 4 }, { t16: 16, deg: 5 }, { t16: 20, deg: 4 },
-          { t16: 24, deg: 3 }, { t16: 28, deg: 2 },
-          { t16: 32, deg: 1 }, { t16: 36, deg: 3 }, { t16: 40, deg: 5 },
-          { t16: 48, deg: 3 }, { t16: 56, deg: 1, term: true },
+          { t16: 0, deg: 1 }, { t16: 4, deg: 2 }, { t16: 8, deg: 3 }, { t16: 12, deg: 5 },
+          { t16: 16, deg: 6 }, { t16: 20, deg: 5 }, { t16: 24, deg: 3 }, { t16: 28, deg: 2 },
+          { t16: 32, deg: 4 }, { t16: 36, deg: 5 }, { t16: 40, deg: 6 }, { t16: 44, deg: 5 },
+          { t16: 48, deg: 3 }, { t16: 52, deg: 2 }, { t16: 56, deg: 1 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
-        id: 'v2', name: 'Drone', color: '#4ecdc4',
+        id: 'v2', name: 'Pedal Voice', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 5, octave: -1 },
-          { t16: 32, deg: 1 },
-          { t16: 56, deg: 5, octave: -1, term: true },
+          { t16: 0, deg: 1, octave: -1 },
+          { t16: 32, deg: 5, octave: -1 },
+          { t16: 60, deg: 1, octave: -1, term: true },
         ],
       },
     ],
     chords: [
-      { t16: 0, duration16: 16, name: 'D' },
-      { t16: 16, duration16: 16, name: 'A' },
-      { t16: 32, duration16: 16, name: 'Bm' },
-      { t16: 48, duration16: 16, name: 'D' },
+      { t16: 0, duration16: 16, name: 'C' },
+      { t16: 16, duration16: 16, name: 'Am' },
+      { t16: 32, duration16: 16, name: 'F' },
+      { t16: 48, duration16: 16, name: 'G' },
     ],
   },
   {
     id: 'gp_2_2',
-    title: 'Suspensions',
-    description: 'One voice holds while the other resolves — beautiful tension',
+    title: 'Suspension Practice',
+    description: 'Held tones create tension before stepwise resolution.',
     tempo: 72,
     timeSig: { numerator: 4, denominator: 4 },
-    bars: 4,
-    tonic: 'F',
-    scale: 'major',
-    difficulty: 2,
-    tags: ['intermediate', 'suspensions'],
-    voices: [
-      {
-        id: 'v1', name: 'Sustaining', color: '#ff6b9d',
-        nodes: [
-          { t16: 0, deg: 5 }, { t16: 16, deg: 4 },
-          { t16: 32, deg: 3 }, { t16: 48, deg: 3 },
-          { t16: 60, deg: 3, term: true },
-        ],
-      },
-      {
-        id: 'v2', name: 'Resolving', color: '#4ecdc4',
-        nodes: [
-          { t16: 0, deg: 3 }, { t16: 12, deg: 2 }, { t16: 16, deg: 1 },
-          { t16: 28, deg: 7, octave: -1 }, { t16: 32, deg: 1 },
-          { t16: 48, deg: 1 }, { t16: 60, deg: 1, term: true },
-        ],
-      },
-    ],
-    chords: [
-      { t16: 0, duration16: 16, name: 'F' },
-      { t16: 16, duration16: 16, name: 'Dm' },
-      { t16: 32, duration16: 16, name: 'C' },
-      { t16: 48, duration16: 16, name: 'F' },
-    ],
-  },
-  {
-    id: 'gp_2_3',
-    title: 'Waltz for Two',
-    description: 'A gentle 3/4 duet — practice singing in triple time',
-    tempo: 100,
-    timeSig: { numerator: 3, denominator: 4 },
     bars: 4,
     tonic: 'G',
     scale: 'major',
     difficulty: 2,
-    tags: ['beginner', 'waltz', '3/4'],
+    tags: ['intermediate', 'suspension', 'resolution'],
     voices: [
       {
-        id: 'v1', name: 'Voice 1', color: '#ff6b9d',
+        id: 'v1', name: 'Upper Line', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 5 }, { t16: 12, deg: 3 },
-          { t16: 24, deg: 4 }, { t16: 36, deg: 5 },
-          { t16: 44, deg: 5, term: true },
+          { t16: 0, deg: 5 }, { t16: 8, deg: 5 },
+          { t16: 16, deg: 4 }, { t16: 24, deg: 4 },
+          { t16: 32, deg: 3 }, { t16: 40, deg: 2 },
+          { t16: 48, deg: 2 }, { t16: 56, deg: 2 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
-        id: 'v2', name: 'Voice 2', color: '#4ecdc4',
+        id: 'v2', name: 'Resolving Line', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 12, deg: 1 },
-          { t16: 24, deg: 2 }, { t16: 36, deg: 3 },
-          { t16: 44, deg: 3, term: true },
+          { t16: 0, deg: 3 }, { t16: 8, deg: 2 },
+          { t16: 16, deg: 1 }, { t16: 24, deg: 7, octave: -1 },
+          { t16: 32, deg: 1 }, { t16: 40, deg: 2 },
+          { t16: 48, deg: 3 }, { t16: 56, deg: 2 }, { t16: 60, deg: 1, term: true },
         ],
       },
     ],
     chords: [
-      { t16: 0, duration16: 12, name: 'G' },
-      { t16: 12, duration16: 12, name: 'Em' },
-      { t16: 24, duration16: 12, name: 'C' },
-      { t16: 36, duration16: 12, name: 'G' },
+      { t16: 0, duration16: 16, name: 'G' },
+      { t16: 16, duration16: 16, name: 'D' },
+      { t16: 32, duration16: 16, name: 'C' },
+      { t16: 48, duration16: 16, name: 'G' },
+    ],
+  },
+  {
+    id: 'gp_2_3',
+    title: 'Waltz Weave',
+    description: 'Two independent lines in 3/4 to build steady triple-meter phrasing.',
+    tempo: 96,
+    timeSig: { numerator: 3, denominator: 4 },
+    bars: 4,
+    tonic: 'A',
+    scale: 'minor',
+    difficulty: 2,
+    tags: ['beginner', 'waltz', '3/4', 'minor'],
+    voices: [
+      {
+        id: 'v1', name: 'Upper Waltz Line', color: '#ff6b9d',
+        nodes: [
+          { t16: 0, deg: 5 }, { t16: 6, deg: 6 },
+          { t16: 12, deg: 5 }, { t16: 18, deg: 4 },
+          { t16: 24, deg: 3 }, { t16: 30, deg: 4 },
+          { t16: 36, deg: 5 }, { t16: 42, deg: 6 }, { t16: 46, deg: 5, term: true },
+        ],
+      },
+      {
+        id: 'v2', name: 'Lower Waltz Line', color: '#4ecdc4',
+        nodes: [
+          { t16: 0, deg: 3 }, { t16: 6, deg: 2 },
+          { t16: 12, deg: 1 }, { t16: 18, deg: 2 },
+          { t16: 24, deg: 3 }, { t16: 30, deg: 2 },
+          { t16: 36, deg: 1 }, { t16: 42, deg: 7, octave: -1 }, { t16: 46, deg: 1, term: true },
+        ],
+      },
+    ],
+    chords: [
+      { t16: 0, duration16: 12, name: 'Am' },
+      { t16: 12, duration16: 12, name: 'Dm' },
+      { t16: 24, duration16: 12, name: 'G' },
+      { t16: 36, duration16: 12, name: 'Am' },
     ],
   },
 ];
@@ -288,141 +291,125 @@ const stage2Arrangements: Arrangement[] = [
 const stage3Arrangements: Arrangement[] = [
   {
     id: 'gp_3_1',
-    title: 'Simple Triads',
-    description: 'Three voices forming basic major and minor chords',
+    title: 'Triad Flow',
+    description: 'Three voices move through core chords with clear, smooth spacing.',
     tempo: 72,
-    timeSig: { numerator: 4, denominator: 4 },
-    bars: 4,
-    tonic: 'G',
-    scale: 'major',
-    difficulty: 2,
-    tags: ['intermediate', 'triads', 'chords'],
-    voices: [
-      {
-        id: 'v1', name: 'Soprano', color: '#ff6b9d',
-        nodes: [
-          { t16: 0, deg: 5 }, { t16: 16, deg: 4 },
-          { t16: 32, deg: 3 }, { t16: 48, deg: 5 },
-          { t16: 60, deg: 5, term: true },
-        ],
-      },
-      {
-        id: 'v2', name: 'Alto', color: '#4ecdc4',
-        nodes: [
-          { t16: 0, deg: 3 }, { t16: 16, deg: 1 },
-          { t16: 32, deg: 1 }, { t16: 48, deg: 3 },
-          { t16: 60, deg: 3, term: true },
-        ],
-      },
-      {
-        id: 'v3', name: 'Tenor', color: '#ffe66d',
-        nodes: [
-          { t16: 0, deg: 1 }, { t16: 16, deg: 5, octave: -1 },
-          { t16: 32, deg: 5, octave: -1 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
-        ],
-      },
-    ],
-    chords: [
-      { t16: 0, duration16: 16, name: 'G' },
-      { t16: 16, duration16: 16, name: 'C' },
-      { t16: 32, duration16: 16, name: 'Em' },
-      { t16: 48, duration16: 16, name: 'G' },
-    ],
-  },
-  {
-    id: 'gp_3_2',
-    title: 'Row, Row, Row',
-    description: 'A classic three-part round — staggered entries build the harmony',
-    tempo: 96,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
     tonic: 'C',
     scale: 'major',
     difficulty: 2,
-    tags: ['intermediate', 'round', 'canon'],
-    voices: [
-      {
-        id: 'v1', name: 'Voice 1', color: '#ff6b9d',
-        nodes: [
-          { t16: 0, deg: 1 }, { t16: 4, deg: 1 }, { t16: 8, deg: 1 },
-          { t16: 10, deg: 2 }, { t16: 12, deg: 3 },
-          { t16: 16, deg: 3 }, { t16: 18, deg: 2 }, { t16: 20, deg: 3 },
-          { t16: 22, deg: 4 }, { t16: 24, deg: 5 },
-          { t16: 60, deg: 5, term: true },
-        ],
-      },
-      {
-        id: 'v2', name: 'Voice 2', color: '#4ecdc4',
-        nodes: [
-          { t16: 16, deg: 1 }, { t16: 20, deg: 1 }, { t16: 24, deg: 1 },
-          { t16: 26, deg: 2 }, { t16: 28, deg: 3 },
-          { t16: 32, deg: 3 }, { t16: 34, deg: 2 }, { t16: 36, deg: 3 },
-          { t16: 38, deg: 4 }, { t16: 40, deg: 5 },
-          { t16: 60, deg: 5, term: true },
-        ],
-      },
-      {
-        id: 'v3', name: 'Voice 3', color: '#ffe66d',
-        nodes: [
-          { t16: 32, deg: 1 }, { t16: 36, deg: 1 }, { t16: 40, deg: 1 },
-          { t16: 42, deg: 2 }, { t16: 44, deg: 3 },
-          { t16: 48, deg: 3 }, { t16: 50, deg: 2 }, { t16: 52, deg: 3 },
-          { t16: 54, deg: 4 }, { t16: 56, deg: 5 },
-          { t16: 60, deg: 5, term: true },
-        ],
-      },
-    ],
-    chords: [
-      { t16: 0, duration16: 16, name: 'C' },
-      { t16: 16, duration16: 16, name: 'C' },
-      { t16: 32, duration16: 16, name: 'C' },
-      { t16: 48, duration16: 16, name: 'C' },
-    ],
-  },
-  {
-    id: 'gp_3_3',
-    title: 'Hymn Style',
-    description: 'Smooth three-part voice leading in a chorale style',
-    tempo: 66,
-    timeSig: { numerator: 4, denominator: 4 },
-    bars: 4,
-    tonic: 'F',
-    scale: 'major',
-    difficulty: 3,
-    tags: ['intermediate', 'chorale', 'hymn'],
+    tags: ['intermediate', 'triads', 'voice-leading'],
     voices: [
       {
         id: 'v1', name: 'Soprano', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 5 }, { t16: 8, deg: 6 },
-          { t16: 16, deg: 5 }, { t16: 24, deg: 4 },
-          { t16: 32, deg: 3 }, { t16: 40, deg: 4 },
-          { t16: 48, deg: 5 }, { t16: 60, deg: 5, term: true },
+          { t16: 0, deg: 5 }, { t16: 16, deg: 6 }, { t16: 32, deg: 6 },
+          { t16: 48, deg: 5 }, { t16: 56, deg: 5 }, { t16: 60, deg: 5, term: true },
         ],
       },
       {
         id: 'v2', name: 'Alto', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 3 }, { t16: 8, deg: 4 },
-          { t16: 16, deg: 3 }, { t16: 24, deg: 2 },
-          { t16: 32, deg: 1 }, { t16: 40, deg: 2 },
-          { t16: 48, deg: 3 }, { t16: 60, deg: 3, term: true },
+          { t16: 0, deg: 3 }, { t16: 16, deg: 3 }, { t16: 32, deg: 4 },
+          { t16: 48, deg: 2 }, { t16: 56, deg: 3 }, { t16: 60, deg: 3, term: true },
         ],
       },
       {
         id: 'v3', name: 'Bass', color: '#ffe66d',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 16, deg: 1 },
-          { t16: 32, deg: 6, octave: -1 }, { t16: 40, deg: 7, octave: -1 },
-          { t16: 48, deg: 1 }, { t16: 60, deg: 1, term: true },
+          { t16: 0, deg: 1 }, { t16: 16, deg: 6, octave: -1 }, { t16: 32, deg: 4, octave: -1 },
+          { t16: 48, deg: 5, octave: -1 }, { t16: 56, deg: 1, octave: -1 }, { t16: 60, deg: 1, octave: -1, term: true },
+        ],
+      },
+    ],
+    chords: [
+      { t16: 0, duration16: 16, name: 'C' },
+      { t16: 16, duration16: 16, name: 'Am' },
+      { t16: 32, duration16: 16, name: 'F' },
+      { t16: 48, duration16: 8, name: 'G' },
+      { t16: 56, duration16: 8, name: 'C' },
+    ],
+  },
+  {
+    id: 'gp_3_2',
+    title: 'Round Entries',
+    description: 'A staggered three-part round for overlap listening and steady tempo.',
+    tempo: 92,
+    timeSig: { numerator: 4, denominator: 4 },
+    bars: 4,
+    tonic: 'C',
+    scale: 'major',
+    difficulty: 2,
+    tags: ['intermediate', 'canon', 'listening'],
+    voices: [
+      {
+        id: 'v1', name: 'Voice 1', color: '#ff6b9d',
+        nodes: [
+          { t16: 0, deg: 1 }, { t16: 4, deg: 2 }, { t16: 8, deg: 3 }, { t16: 12, deg: 2 },
+          { t16: 16, deg: 1 }, { t16: 24, deg: 3 }, { t16: 32, deg: 5 }, { t16: 48, deg: 3 }, { t16: 60, deg: 1, term: true },
+        ],
+      },
+      {
+        id: 'v2', name: 'Voice 2', color: '#4ecdc4',
+        nodes: [
+          { t16: 16, deg: 1 }, { t16: 20, deg: 2 }, { t16: 24, deg: 3 }, { t16: 28, deg: 2 },
+          { t16: 32, deg: 1 }, { t16: 40, deg: 3 }, { t16: 48, deg: 5 }, { t16: 56, deg: 3 }, { t16: 60, deg: 1, term: true },
+        ],
+      },
+      {
+        id: 'v3', name: 'Voice 3', color: '#ffe66d',
+        nodes: [
+          { t16: 32, deg: 1 }, { t16: 36, deg: 2 }, { t16: 40, deg: 3 }, { t16: 44, deg: 2 },
+          { t16: 48, deg: 1 }, { t16: 52, deg: 3 }, { t16: 56, deg: 5 }, { t16: 60, deg: 1, term: true },
+        ],
+      },
+    ],
+    chords: [
+      { t16: 0, duration16: 16, name: 'C' },
+      { t16: 16, duration16: 16, name: 'F' },
+      { t16: 32, duration16: 16, name: 'G' },
+      { t16: 48, duration16: 16, name: 'C' },
+    ],
+  },
+  {
+    id: 'gp_3_3',
+    title: 'Cadence Workshop',
+    description: 'Three voices shape clear pre-cadence tension and release.',
+    tempo: 68,
+    timeSig: { numerator: 4, denominator: 4 },
+    bars: 4,
+    tonic: 'F',
+    scale: 'major',
+    difficulty: 3,
+    tags: ['intermediate', 'cadence', 'chorale'],
+    voices: [
+      {
+        id: 'v1', name: 'Soprano', color: '#ff6b9d',
+        nodes: [
+          { t16: 0, deg: 5 }, { t16: 8, deg: 6 }, { t16: 16, deg: 5 }, { t16: 24, deg: 4 },
+          { t16: 32, deg: 3 }, { t16: 40, deg: 2 }, { t16: 48, deg: 2 }, { t16: 56, deg: 1 }, { t16: 60, deg: 1, term: true },
+        ],
+      },
+      {
+        id: 'v2', name: 'Alto', color: '#4ecdc4',
+        nodes: [
+          { t16: 0, deg: 3 }, { t16: 8, deg: 4 }, { t16: 16, deg: 3 }, { t16: 24, deg: 2 },
+          { t16: 32, deg: 1 }, { t16: 40, deg: 7, octave: -1 }, { t16: 48, deg: 1 }, { t16: 56, deg: 1 }, { t16: 60, deg: 1, term: true },
+        ],
+      },
+      {
+        id: 'v3', name: 'Bass', color: '#ffe66d',
+        nodes: [
+          { t16: 0, deg: 1 }, { t16: 16, deg: 4, octave: -1 }, { t16: 32, deg: 5, octave: -1 },
+          { t16: 48, deg: 1, octave: -1 }, { t16: 60, deg: 1, octave: -1, term: true },
         ],
       },
     ],
     chords: [
       { t16: 0, duration16: 16, name: 'F' },
-      { t16: 16, duration16: 16, name: 'Dm' },
-      { t16: 32, duration16: 16, name: 'Bb' },
+      { t16: 16, duration16: 16, name: 'Bb' },
+      { t16: 32, duration16: 16, name: 'C' },
       { t16: 48, duration16: 16, name: 'F' },
     ],
   },
@@ -436,158 +423,149 @@ const stage3Arrangements: Arrangement[] = [
 const stage4Arrangements: Arrangement[] = [
   {
     id: 'gp_4_1',
-    title: 'SATB Basics',
-    description: 'Soprano, Alto, Tenor, Bass — the classic four-part chorale',
+    title: 'SATB Cadence Lab',
+    description: 'Classic four-part writing with clean predominant and dominant motion.',
     tempo: 68,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
     tonic: 'C',
     scale: 'major',
     difficulty: 3,
-    tags: ['intermediate', 'satb', 'chorale'],
+    tags: ['intermediate', 'satb', 'cadence'],
     voices: [
       {
         id: 'v1', name: 'Soprano', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 5 }, { t16: 16, deg: 3 },
-          { t16: 32, deg: 4 }, { t16: 48, deg: 5 },
-          { t16: 60, deg: 5, term: true },
+          { t16: 0, deg: 5 }, { t16: 16, deg: 5 }, { t16: 32, deg: 6 },
+          { t16: 48, deg: 5 }, { t16: 56, deg: 5 }, { t16: 60, deg: 5, term: true },
         ],
       },
       {
         id: 'v2', name: 'Alto', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 3 }, { t16: 16, deg: 1 },
-          { t16: 32, deg: 2 }, { t16: 48, deg: 3 },
-          { t16: 60, deg: 3, term: true },
+          { t16: 0, deg: 3 }, { t16: 16, deg: 4 }, { t16: 32, deg: 4 },
+          { t16: 48, deg: 2 }, { t16: 56, deg: 3 }, { t16: 60, deg: 3, term: true },
         ],
       },
       {
         id: 'v3', name: 'Tenor', color: '#ffe66d',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 16, deg: 5, octave: -1 },
-          { t16: 32, deg: 7, octave: -1 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
+          { t16: 0, deg: 1 }, { t16: 16, deg: 1 }, { t16: 32, deg: 2 },
+          { t16: 48, deg: 7, octave: -1 }, { t16: 56, deg: 1 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
         id: 'v4', name: 'Bass', color: '#ff8c42',
         nodes: [
-          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 3, octave: -1 },
-          { t16: 32, deg: 5, octave: -1 }, { t16: 48, deg: 1, octave: -1 },
-          { t16: 60, deg: 1, octave: -1, term: true },
+          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 4, octave: -1 }, { t16: 32, deg: 2, octave: -1 },
+          { t16: 48, deg: 5, octave: -1 }, { t16: 56, deg: 1, octave: -1 }, { t16: 60, deg: 1, octave: -1, term: true },
         ],
       },
     ],
     chords: [
       { t16: 0, duration16: 16, name: 'C' },
-      { t16: 16, duration16: 16, name: 'Am' },
-      { t16: 32, duration16: 16, name: 'G' },
-      { t16: 48, duration16: 16, name: 'C' },
+      { t16: 16, duration16: 16, name: 'F' },
+      { t16: 32, duration16: 16, name: 'Dm' },
+      { t16: 48, duration16: 8, name: 'G' },
+      { t16: 56, duration16: 8, name: 'C' },
     ],
   },
   {
     id: 'gp_4_2',
-    title: 'Jazz Intro',
-    description: 'Your first taste of jazz — four voices with 7th chords',
-    tempo: 96,
+    title: 'Circle Motion',
+    description: 'Four parts follow a circle-style progression with smooth inner voices.',
+    tempo: 84,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
-    tonic: 'F',
+    tonic: 'G',
     scale: 'major',
     difficulty: 3,
-    tags: ['intermediate', 'jazz', '7ths'],
-    voices: [
-      {
-        id: 'v1', name: 'Voice 1', color: '#ff6b9d',
-        nodes: [
-          { t16: 0, deg: 7 }, { t16: 16, deg: 2, octave: 1 },
-          { t16: 32, deg: 6 }, { t16: 48, deg: 5 },
-          { t16: 60, deg: 5, term: true },
-        ],
-      },
-      {
-        id: 'v2', name: 'Voice 2', color: '#4ecdc4',
-        nodes: [
-          { t16: 0, deg: 5 }, { t16: 16, deg: 5 },
-          { t16: 32, deg: 4 }, { t16: 48, deg: 3 },
-          { t16: 60, deg: 3, term: true },
-        ],
-      },
-      {
-        id: 'v3', name: 'Voice 3', color: '#ffe66d',
-        nodes: [
-          { t16: 0, deg: 3 }, { t16: 16, deg: 3 },
-          { t16: 32, deg: 2 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
-        ],
-      },
-      {
-        id: 'v4', name: 'Voice 4', color: '#ff8c42',
-        nodes: [
-          { t16: 0, deg: 1 }, { t16: 16, deg: 7, octave: -1 },
-          { t16: 32, deg: 6, octave: -1 }, { t16: 48, deg: 5, octave: -1 },
-          { t16: 60, deg: 5, octave: -1, term: true },
-        ],
-      },
-    ],
-    chords: [
-      { t16: 0, duration16: 16, name: 'Fmaj7' },
-      { t16: 16, duration16: 16, name: 'Fmaj9' },
-      { t16: 32, duration16: 16, name: 'Gm7' },
-      { t16: 48, duration16: 16, name: 'C7' },
-    ],
-  },
-  {
-    id: 'gp_4_3',
-    title: 'Minor Moods',
-    description: 'Four voices in natural minor — melancholy and expressive',
-    tempo: 76,
-    timeSig: { numerator: 4, denominator: 4 },
-    bars: 4,
-    tonic: 'A',
-    scale: 'minor',
-    difficulty: 3,
-    tags: ['intermediate', 'minor', 'expressive'],
+    tags: ['intermediate', 'satb', 'circle-of-fifths'],
     voices: [
       {
         id: 'v1', name: 'Soprano', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 5 }, { t16: 16, deg: 4 },
-          { t16: 32, deg: 3 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
+          { t16: 0, deg: 5 }, { t16: 16, deg: 5 }, { t16: 32, deg: 6 },
+          { t16: 48, deg: 5 }, { t16: 56, deg: 4 }, { t16: 60, deg: 3, term: true },
         ],
       },
       {
         id: 'v2', name: 'Alto', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 3 }, { t16: 16, deg: 2 },
-          { t16: 32, deg: 1 }, { t16: 48, deg: 5, octave: -1 },
-          { t16: 60, deg: 5, octave: -1, term: true },
+          { t16: 0, deg: 3 }, { t16: 16, deg: 3 }, { t16: 32, deg: 4 },
+          { t16: 48, deg: 2 }, { t16: 56, deg: 2 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
         id: 'v3', name: 'Tenor', color: '#ffe66d',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 16, deg: 7, octave: -1 },
-          { t16: 32, deg: 5, octave: -1 }, { t16: 48, deg: 3, octave: -1 },
-          { t16: 60, deg: 3, octave: -1, term: true },
+          { t16: 0, deg: 1 }, { t16: 16, deg: 7, octave: -1 }, { t16: 32, deg: 1 },
+          { t16: 48, deg: 7, octave: -1 }, { t16: 56, deg: 7, octave: -1 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
         id: 'v4', name: 'Bass', color: '#ff8c42',
         nodes: [
-          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 5, octave: -2 },
-          { t16: 32, deg: 6, octave: -2 }, { t16: 48, deg: 1, octave: -1 },
-          { t16: 60, deg: 1, octave: -1, term: true },
+          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 6, octave: -1 }, { t16: 32, deg: 2, octave: -1 },
+          { t16: 48, deg: 5, octave: -1 }, { t16: 56, deg: 1, octave: -1 }, { t16: 60, deg: 1, octave: -1, term: true },
+        ],
+      },
+    ],
+    chords: [
+      { t16: 0, duration16: 16, name: 'G' },
+      { t16: 16, duration16: 16, name: 'Em' },
+      { t16: 32, duration16: 16, name: 'Am' },
+      { t16: 48, duration16: 8, name: 'D' },
+      { t16: 56, duration16: 8, name: 'G' },
+    ],
+  },
+  {
+    id: 'gp_4_3',
+    title: 'Minor Chorale',
+    description: 'A four-part minor setting with careful spacing and gentle voice motion.',
+    tempo: 74,
+    timeSig: { numerator: 4, denominator: 4 },
+    bars: 4,
+    tonic: 'A',
+    scale: 'minor',
+    difficulty: 3,
+    tags: ['intermediate', 'minor', 'chorale'],
+    voices: [
+      {
+        id: 'v1', name: 'Soprano', color: '#ff6b9d',
+        nodes: [
+          { t16: 0, deg: 5 }, { t16: 16, deg: 6 }, { t16: 32, deg: 4 },
+          { t16: 48, deg: 5 }, { t16: 56, deg: 2 }, { t16: 60, deg: 1, term: true },
+        ],
+      },
+      {
+        id: 'v2', name: 'Alto', color: '#4ecdc4',
+        nodes: [
+          { t16: 0, deg: 3 }, { t16: 16, deg: 1 }, { t16: 32, deg: 6 },
+          { t16: 48, deg: 7 }, { t16: 56, deg: 7 }, { t16: 60, deg: 1, term: true },
+        ],
+      },
+      {
+        id: 'v3', name: 'Tenor', color: '#ffe66d',
+        nodes: [
+          { t16: 0, deg: 1 }, { t16: 16, deg: 3 }, { t16: 32, deg: 4 },
+          { t16: 48, deg: 5 }, { t16: 56, deg: 5 }, { t16: 60, deg: 3, term: true },
+        ],
+      },
+      {
+        id: 'v4', name: 'Bass', color: '#ff8c42',
+        nodes: [
+          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 6, octave: -1 }, { t16: 32, deg: 4, octave: -1 },
+          { t16: 48, deg: 5, octave: -1 }, { t16: 56, deg: 1, octave: -1 }, { t16: 60, deg: 1, octave: -1, term: true },
         ],
       },
     ],
     chords: [
       { t16: 0, duration16: 16, name: 'Am' },
-      { t16: 16, duration16: 16, name: 'Em' },
-      { t16: 32, duration16: 16, name: 'F' },
-      { t16: 48, duration16: 16, name: 'Am' },
+      { t16: 16, duration16: 16, name: 'F' },
+      { t16: 32, duration16: 16, name: 'Dm' },
+      { t16: 48, duration16: 8, name: 'Em' },
+      { t16: 56, duration16: 8, name: 'Am' },
     ],
   },
 ];
@@ -600,121 +578,112 @@ const stage4Arrangements: Arrangement[] = [
 const stage5Arrangements: Arrangement[] = [
   {
     id: 'gp_5_1',
-    title: 'Five-Part Cluster',
-    description: 'Close-voiced five-part harmony — rich and lush',
+    title: 'Five-Part Chorale',
+    description: 'Expanded choir texture with stable spacing and gentle inner movement.',
     tempo: 66,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
-    tonic: 'Bb',
+    tonic: 'Eb',
     scale: 'major',
     difficulty: 4,
-    tags: ['advanced', 'five-part', 'cluster'],
+    tags: ['advanced', 'five-part', 'chorale'],
     voices: [
       {
-        id: 'v1', name: 'Soprano', color: '#ff6b9d',
+        id: 'v1', name: 'Soprano 1', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 5 }, { t16: 16, deg: 6 },
-          { t16: 32, deg: 5 }, { t16: 48, deg: 3 },
-          { t16: 60, deg: 3, term: true },
+          { t16: 0, deg: 5 }, { t16: 16, deg: 6 }, { t16: 32, deg: 5 },
+          { t16: 48, deg: 5 }, { t16: 56, deg: 5 }, { t16: 60, deg: 5, term: true },
         ],
       },
       {
-        id: 'v2', name: 'Mezzo', color: '#4ecdc4',
+        id: 'v2', name: 'Soprano 2', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 4 }, { t16: 16, deg: 4 },
-          { t16: 32, deg: 3 }, { t16: 48, deg: 2 },
-          { t16: 60, deg: 2, term: true },
+          { t16: 0, deg: 3 }, { t16: 16, deg: 3 }, { t16: 32, deg: 4 },
+          { t16: 48, deg: 2 }, { t16: 56, deg: 3 }, { t16: 60, deg: 3, term: true },
         ],
       },
       {
         id: 'v3', name: 'Alto', color: '#ffe66d',
         nodes: [
-          { t16: 0, deg: 3 }, { t16: 16, deg: 2 },
-          { t16: 32, deg: 1 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
+          { t16: 0, deg: 1 }, { t16: 16, deg: 1 }, { t16: 32, deg: 1 },
+          { t16: 48, deg: 7, octave: -1 }, { t16: 56, deg: 1 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
         id: 'v4', name: 'Tenor', color: '#ff8c42',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 16, deg: 7, octave: -1 },
-          { t16: 32, deg: 6, octave: -1 }, { t16: 48, deg: 5, octave: -1 },
-          { t16: 60, deg: 5, octave: -1, term: true },
+          { t16: 0, deg: 5, octave: -1 }, { t16: 16, deg: 5, octave: -1 }, { t16: 32, deg: 6, octave: -1 },
+          { t16: 48, deg: 5, octave: -1 }, { t16: 56, deg: 5, octave: -1 }, { t16: 60, deg: 5, octave: -1, term: true },
         ],
       },
       {
         id: 'v5', name: 'Bass', color: '#a78bfa',
         nodes: [
-          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 4, octave: -1 },
-          { t16: 32, deg: 1, octave: -1 }, { t16: 48, deg: 1, octave: -1 },
-          { t16: 60, deg: 1, octave: -1, term: true },
+          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 6, octave: -1 }, { t16: 32, deg: 4, octave: -1 },
+          { t16: 48, deg: 5, octave: -1 }, { t16: 56, deg: 1, octave: -1 }, { t16: 60, deg: 1, octave: -1, term: true },
         ],
       },
     ],
     chords: [
-      { t16: 0, duration16: 16, name: 'Bb' },
-      { t16: 16, duration16: 16, name: 'Eb' },
-      { t16: 32, duration16: 16, name: 'Bb' },
-      { t16: 48, duration16: 16, name: 'Bb' },
+      { t16: 0, duration16: 16, name: 'Eb' },
+      { t16: 16, duration16: 16, name: 'Cm' },
+      { t16: 32, duration16: 16, name: 'Ab' },
+      { t16: 48, duration16: 8, name: 'Bb' },
+      { t16: 56, duration16: 8, name: 'Eb' },
     ],
   },
   {
     id: 'gp_5_2',
-    title: 'ii-V-I Jazz',
-    description: 'The most important jazz progression — five voices, rich voicings',
-    tempo: 104,
+    title: 'ii-V-I Workshop',
+    description: 'Guide-tone focused jazz movement in five voices.',
+    tempo: 102,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
     tonic: 'C',
     scale: 'major',
     difficulty: 4,
-    tags: ['advanced', 'jazz', 'ii-V-I'],
+    tags: ['advanced', 'jazz', 'ii-V-I', 'guide-tones'],
     voices: [
       {
         id: 'v1', name: 'Lead', color: '#ff6b9d',
         nodes: [
           { t16: 0, deg: 6 }, { t16: 16, deg: 7 },
-          { t16: 32, deg: 1, octave: 1 }, { t16: 48, deg: 7 },
-          { t16: 60, deg: 7, term: true },
+          { t16: 32, deg: 1, octave: 1 }, { t16: 48, deg: 7 }, { t16: 60, deg: 1, octave: 1, term: true },
         ],
       },
       {
-        id: 'v2', name: 'High Harmony', color: '#4ecdc4',
+        id: 'v2', name: 'Upper Harmony', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 4 }, { t16: 16, deg: 5 },
-          { t16: 32, deg: 5 }, { t16: 48, deg: 5 },
-          { t16: 60, deg: 5, term: true },
+          { t16: 0, deg: 4 }, { t16: 16, deg: 4 },
+          { t16: 32, deg: 5 }, { t16: 48, deg: 5 }, { t16: 60, deg: 5, term: true },
         ],
       },
       {
-        id: 'v3', name: 'Mid Harmony', color: '#ffe66d',
+        id: 'v3', name: 'Middle Harmony', color: '#ffe66d',
         nodes: [
           { t16: 0, deg: 2 }, { t16: 16, deg: 2 },
-          { t16: 32, deg: 3 }, { t16: 48, deg: 3 },
-          { t16: 60, deg: 3, term: true },
+          { t16: 32, deg: 3 }, { t16: 48, deg: 3 }, { t16: 60, deg: 3, term: true },
         ],
       },
       {
-        id: 'v4', name: 'Low Harmony', color: '#ff8c42',
+        id: 'v4', name: 'Lower Harmony', color: '#ff8c42',
         nodes: [
           { t16: 0, deg: 7, octave: -1 }, { t16: 16, deg: 4 },
-          { t16: 32, deg: 1 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
+          { t16: 32, deg: 1 }, { t16: 48, deg: 1 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
         id: 'v5', name: 'Bass', color: '#a78bfa',
         nodes: [
           { t16: 0, deg: 2, octave: -1 }, { t16: 16, deg: 5, octave: -1 },
-          { t16: 32, deg: 1, octave: -1 }, { t16: 48, deg: 1, octave: -1 },
-          { t16: 60, deg: 1, octave: -1, term: true },
+          { t16: 32, deg: 1, octave: -1 }, { t16: 48, deg: 1, octave: -1 }, { t16: 60, deg: 1, octave: -1, term: true },
         ],
       },
     ],
     chords: [
-      { t16: 0, duration16: 16, name: 'Dm7' },
-      { t16: 16, duration16: 16, name: 'G7' },
-      { t16: 32, duration16: 32, name: 'Cmaj7' },
+      { t16: 0, duration16: 16, name: 'Dm9' },
+      { t16: 16, duration16: 16, name: 'G13' },
+      { t16: 32, duration16: 32, name: 'Cmaj9' },
     ],
   },
 ];
@@ -727,12 +696,12 @@ const stage5Arrangements: Arrangement[] = [
 const stage6Arrangements: Arrangement[] = [
   {
     id: 'gp_6_1',
-    title: 'Jazz Ballad',
-    description: 'Six-voice ballad with lush 9th and 13th chord voicings',
-    tempo: 72,
+    title: 'Jazz Ballad Spread',
+    description: 'Six voices sustain a wide, lush jazz ballad texture.',
+    tempo: 70,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
-    tonic: 'Eb',
+    tonic: 'Bb',
     scale: 'major',
     difficulty: 5,
     tags: ['advanced', 'jazz', 'ballad', 'six-part'],
@@ -740,125 +709,115 @@ const stage6Arrangements: Arrangement[] = [
       {
         id: 'v1', name: 'Soprano 1', color: '#ff6b9d',
         nodes: [
-          { t16: 0, deg: 2, octave: 1 }, { t16: 16, deg: 1, octave: 1 },
-          { t16: 32, deg: 6 }, { t16: 48, deg: 5 },
-          { t16: 60, deg: 5, term: true },
+          { t16: 0, deg: 2, octave: 1 }, { t16: 16, deg: 1, octave: 1 }, { t16: 32, deg: 7 },
+          { t16: 48, deg: 6 }, { t16: 56, deg: 5 }, { t16: 60, deg: 5, term: true },
         ],
       },
       {
         id: 'v2', name: 'Soprano 2', color: '#4ecdc4',
         nodes: [
-          { t16: 0, deg: 7 }, { t16: 16, deg: 5 },
-          { t16: 32, deg: 4 }, { t16: 48, deg: 3 },
-          { t16: 60, deg: 3, term: true },
+          { t16: 0, deg: 7 }, { t16: 16, deg: 6 }, { t16: 32, deg: 5 },
+          { t16: 48, deg: 4 }, { t16: 56, deg: 3 }, { t16: 60, deg: 3, term: true },
         ],
       },
       {
         id: 'v3', name: 'Alto', color: '#ffe66d',
         nodes: [
-          { t16: 0, deg: 5 }, { t16: 16, deg: 3 },
-          { t16: 32, deg: 2 }, { t16: 48, deg: 1 },
-          { t16: 60, deg: 1, term: true },
+          { t16: 0, deg: 5 }, { t16: 16, deg: 4 }, { t16: 32, deg: 3 },
+          { t16: 48, deg: 2 }, { t16: 56, deg: 1 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
         id: 'v4', name: 'Tenor 1', color: '#ff8c42',
         nodes: [
-          { t16: 0, deg: 3 }, { t16: 16, deg: 1 },
-          { t16: 32, deg: 7, octave: -1 }, { t16: 48, deg: 5, octave: -1 },
-          { t16: 60, deg: 5, octave: -1, term: true },
+          { t16: 0, deg: 3 }, { t16: 16, deg: 2 }, { t16: 32, deg: 1 },
+          { t16: 48, deg: 7, octave: -1 }, { t16: 56, deg: 1 }, { t16: 60, deg: 1, term: true },
         ],
       },
       {
         id: 'v5', name: 'Tenor 2', color: '#a78bfa',
         nodes: [
-          { t16: 0, deg: 1 }, { t16: 16, deg: 6, octave: -1 },
-          { t16: 32, deg: 5, octave: -1 }, { t16: 48, deg: 3, octave: -1 },
-          { t16: 60, deg: 3, octave: -1, term: true },
+          { t16: 0, deg: 1 }, { t16: 16, deg: 7, octave: -1 }, { t16: 32, deg: 6, octave: -1 },
+          { t16: 48, deg: 5, octave: -1 }, { t16: 56, deg: 3, octave: -1 }, { t16: 60, deg: 3, octave: -1, term: true },
         ],
       },
       {
         id: 'v6', name: 'Bass', color: '#34d399',
         nodes: [
-          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 4, octave: -1 },
-          { t16: 32, deg: 2, octave: -1 }, { t16: 48, deg: 1, octave: -1 },
-          { t16: 60, deg: 1, octave: -1, term: true },
+          { t16: 0, deg: 1, octave: -1 }, { t16: 16, deg: 6, octave: -1 }, { t16: 32, deg: 2, octave: -1 },
+          { t16: 48, deg: 5, octave: -1 }, { t16: 56, deg: 1, octave: -1 }, { t16: 60, deg: 1, octave: -1, term: true },
         ],
       },
     ],
     chords: [
-      { t16: 0, duration16: 16, name: 'Ebmaj9' },
-      { t16: 16, duration16: 16, name: 'Abmaj7' },
-      { t16: 32, duration16: 16, name: 'Fm9' },
-      { t16: 48, duration16: 16, name: 'Eb6/9' },
+      { t16: 0, duration16: 16, name: 'Bbmaj9' },
+      { t16: 16, duration16: 16, name: 'Gm9' },
+      { t16: 32, duration16: 16, name: 'Cm9' },
+      { t16: 48, duration16: 8, name: 'F13' },
+      { t16: 56, duration16: 8, name: 'Bb6/9' },
     ],
   },
   {
     id: 'gp_6_2',
-    title: 'Chromatic Cascade',
-    description: 'Six voices weaving through chromatic passing tones',
+    title: 'Chromatic Threads',
+    description: 'Six lines move with coordinated chromatic passing tones.',
     tempo: 80,
     timeSig: { numerator: 4, denominator: 4 },
     bars: 4,
     tonic: 'C',
     scale: 'chromatic',
     difficulty: 5,
-    tags: ['advanced', 'chromatic', 'six-part'],
+    tags: ['advanced', 'chromatic', 'six-part', 'jazz'],
     voices: [
       {
         id: 'v1', name: 'Voice 1', color: '#ff6b9d',
         nodes: [
-          { t16: 0, semi: 16 }, { t16: 8, semi: 17 },
-          { t16: 16, semi: 19 }, { t16: 32, semi: 16 },
-          { t16: 48, semi: 14 }, { t16: 60, semi: 14, term: true },
+          { t16: 0, semi: 16 }, { t16: 8, semi: 17 }, { t16: 16, semi: 16 }, { t16: 24, semi: 15 },
+          { t16: 32, semi: 14 }, { t16: 40, semi: 12 }, { t16: 48, semi: 11 }, { t16: 56, semi: 12 }, { t16: 60, semi: 12, term: true },
         ],
       },
       {
         id: 'v2', name: 'Voice 2', color: '#4ecdc4',
         nodes: [
-          { t16: 0, semi: 12 }, { t16: 16, semi: 14 },
-          { t16: 32, semi: 12 }, { t16: 48, semi: 11 },
-          { t16: 60, semi: 11, term: true },
+          { t16: 0, semi: 12 }, { t16: 8, semi: 12 }, { t16: 16, semi: 11 }, { t16: 24, semi: 10 },
+          { t16: 32, semi: 9 }, { t16: 40, semi: 9 }, { t16: 48, semi: 7 }, { t16: 56, semi: 7 }, { t16: 60, semi: 7, term: true },
         ],
       },
       {
         id: 'v3', name: 'Voice 3', color: '#ffe66d',
         nodes: [
-          { t16: 0, semi: 9 }, { t16: 16, semi: 10 },
-          { t16: 32, semi: 9 }, { t16: 48, semi: 7 },
-          { t16: 60, semi: 7, term: true },
+          { t16: 0, semi: 9 }, { t16: 8, semi: 10 }, { t16: 16, semi: 9 }, { t16: 24, semi: 8 },
+          { t16: 32, semi: 7 }, { t16: 40, semi: 5 }, { t16: 48, semi: 4 }, { t16: 56, semi: 4 }, { t16: 60, semi: 4, term: true },
         ],
       },
       {
         id: 'v4', name: 'Voice 4', color: '#ff8c42',
         nodes: [
-          { t16: 0, semi: 7 }, { t16: 16, semi: 7 },
-          { t16: 32, semi: 5 }, { t16: 48, semi: 4 },
-          { t16: 60, semi: 4, term: true },
+          { t16: 0, semi: 7 }, { t16: 8, semi: 7 }, { t16: 16, semi: 6 }, { t16: 24, semi: 5 },
+          { t16: 32, semi: 4 }, { t16: 40, semi: 4 }, { t16: 48, semi: 2 }, { t16: 56, semi: 2 }, { t16: 60, semi: 2, term: true },
         ],
       },
       {
         id: 'v5', name: 'Voice 5', color: '#a78bfa',
         nodes: [
-          { t16: 0, semi: 4 }, { t16: 16, semi: 5 },
-          { t16: 32, semi: 4 }, { t16: 48, semi: 2 },
-          { t16: 60, semi: 2, term: true },
+          { t16: 0, semi: 4 }, { t16: 8, semi: 5 }, { t16: 16, semi: 4 }, { t16: 24, semi: 3 },
+          { t16: 32, semi: 2 }, { t16: 40, semi: 1 }, { t16: 48, semi: 0 }, { t16: 56, semi: 0 }, { t16: 60, semi: 0, term: true },
         ],
       },
       {
         id: 'v6', name: 'Voice 6', color: '#34d399',
         nodes: [
-          { t16: 0, semi: 0 }, { t16: 16, semi: 2 },
-          { t16: 32, semi: 0 }, { t16: 48, semi: -1 },
-          { t16: 60, semi: -1, term: true },
+          { t16: 0, semi: 0 }, { t16: 8, semi: 0 }, { t16: 16, semi: -1 }, { t16: 24, semi: -2 },
+          { t16: 32, semi: -3 }, { t16: 40, semi: -3 }, { t16: 48, semi: -5 }, { t16: 56, semi: -5 }, { t16: 60, semi: -5, term: true },
         ],
       },
     ],
     chords: [
-      { t16: 0, duration16: 16, name: 'Cmaj7#11' },
-      { t16: 16, duration16: 16, name: 'D7alt' },
-      { t16: 32, duration16: 16, name: 'Cmaj9' },
-      { t16: 48, duration16: 16, name: 'Bmaj7' },
+      { t16: 0, duration16: 16, name: 'Cmaj9' },
+      { t16: 16, duration16: 16, name: 'A7alt' },
+      { t16: 32, duration16: 16, name: 'Dm9' },
+      { t16: 48, duration16: 8, name: 'G7alt' },
+      { t16: 56, duration16: 8, name: 'Cmaj9' },
     ],
   },
 ];
