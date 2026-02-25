@@ -23,6 +23,7 @@ import { dragPixelsToTimeDelta } from './utils/followCamera';
 import { getCameraCenterWorldT, setCameraCenterWorldT, setFreeLook } from './utils/cameraState';
 import { sixPartStressTest } from './data/arrangements';
 import { useUnisonContourDialKit } from './components/grid/UnisonContourDialKit';
+import treeLoop1Video from './data/backgrounds/Tree1(loop).mp4';
 
 type UnisonDialKitParams = ReturnType<typeof useUnisonContourDialKit>;
 
@@ -81,6 +82,8 @@ function App() {
   const setTransposition = useAppStore((state) => state.setTransposition);
   const mode = useAppStore((state) => state.mode);
   const showMinimap = useAppStore((state) => state.display.showMinimap);
+  const backgroundVideo = useAppStore((state) => state.display.backgroundVideo);
+  const setDisplaySettings = useAppStore((state) => state.setDisplaySettings);
   const setPlaying = useAppStore((state) => state.setPlaying);
   const voiceStates = useAppStore((state) => state.voiceStates);
   const undo = useAppStore((state) => state.undo);
@@ -145,9 +148,27 @@ function App() {
    */
   useEffect(() => {
     if (!arrangement) {
+      // Startup behavior: load the default arrangement in its original key so
+      // the intro animation is not blocked by an auto-transpose modal.
       setArrangement(sixPartStressTest);
+      setTransposition(0);
+      dismissAutoTranspositionPrompt();
+
+      // Startup visual default: restore Tree1(loop) when the saved value is disabled
+      // or is a legacy '/src/...' path from older builds.
+      const hasLegacySourcePath = backgroundVideo.startsWith('/src/data/backgrounds/');
+      if (backgroundVideo === 'none' || hasLegacySourcePath) {
+        setDisplaySettings({ backgroundVideo: treeLoop1Video });
+      }
     }
-  }, [setArrangement, arrangement]);
+  }, [
+    setArrangement,
+    arrangement,
+    setTransposition,
+    dismissAutoTranspositionPrompt,
+    backgroundVideo,
+    setDisplaySettings,
+  ]);
 
   /**
    * Initialize audio on first user interaction.
@@ -679,7 +700,7 @@ function App() {
 
   return (
     <div
-      className="h-screen w-screen overflow-hidden relative"
+      className="app-intro-root h-screen w-screen overflow-hidden relative"
       onClick={initializeAudio}
     >
       {/* Hidden SVG filter used by .glass-liquid CSS class for distortion */}
@@ -706,7 +727,13 @@ function App() {
         </defs>
       </svg>
 
-      <BackgroundVideo />
+      {/* Full black veil at startup; fades away quickly so the reveal feels cinematic but snappy. */}
+      <div className="app-intro-black-veil" aria-hidden="true" />
+
+      {/* Intro step 1: background layer fades in first. */}
+      <div className="app-intro-layer-bg absolute inset-0 z-0 overflow-hidden">
+        <BackgroundVideo />
+      </div>
       <DevOnlyUnisonDialKit
         enabled={isDevControlsOpen}
         onParamsChange={setUnisonDialKitParams}
@@ -714,14 +741,14 @@ function App() {
 
       {/* Minimap - compressed contour preview above the chord bar, between top bar and grid */}
       {arrangement && showMinimap && (
-        <div className="absolute top-[5.25rem] left-[calc(11rem+50px)] right-[calc(2rem+20px)] z-30">
+        <div className="app-intro-layer-grid absolute top-[5.25rem] left-[calc(11rem+50px)] right-[calc(2rem+20px)] z-30">
           <Minimap arrangement={arrangement} className="w-full" />
         </div>
       )}
 
       {/* Main grid visualization - background layer (masked lines/voices) */}
       {/* Extra top padding (pt-[7.5rem]) makes room for top bar + minimap above chord bar */}
-      <div className={`absolute inset-0 ${showMinimap ? 'pt-[9rem]' : 'pt-[6rem]'} pb-20 pl-44 pr-8`}>
+      <div className={`app-intro-layer-grid absolute inset-0 ${showMinimap ? 'pt-[9rem]' : 'pt-[6rem]'} pb-20 pl-44 pr-8`}>
         {/*
           This wrapper is the positioning context for any UI that must sit ABOVE the
           grid fade masks (for example, the Recenter pill).
@@ -759,9 +786,16 @@ function App() {
       </div>
 
       {/* UI Overlays - Floating panes */}
-      <TopBar />
-      <VoiceSidebar startRecording={startRecording} stopRecording={stopRecording} />
-      <TransportBar />
+      {/* Intro step 3: bars reveal in a short stagger with subtle upward settling motion. */}
+      <div className="app-intro-bar app-intro-bar-top">
+        <TopBar />
+      </div>
+      <div className="app-intro-bar app-intro-bar-sidebar">
+        <VoiceSidebar startRecording={startRecording} stopRecording={stopRecording} />
+      </div>
+      <div className="app-intro-bar app-intro-bar-transport">
+        <TransportBar />
+      </div>
       <DevControls />
 
       {/* Modals */}

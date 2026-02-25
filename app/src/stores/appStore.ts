@@ -28,6 +28,7 @@ import { evaluateAutoFitTranspose, noteNameToFrequency, degreeToSemitoneOffset }
 import { DEFAULT_VOICE_COLORS, normalizeHexColor } from '../utils/colors';
 import type { CameraMode } from '../utils/smartCam';
 import { quantizeT16, isT16Equal, type GridDivision } from '../utils/timing';
+import treeLoop1Video from '../data/backgrounds/Tree1(loop).mp4';
 
 /* ------------------------------------------------------------
    State Types
@@ -786,7 +787,8 @@ const initialDisplaySettings: DisplaySettings = {
   gridOpacity: 0.0,
   snapCameraToPixels: false,
   contourColorMode: 'voice',
-  backgroundVideo: '/src/data/backgrounds/Tree1(loop).mp4',
+  // Use an imported asset URL so this works in both dev and production builds.
+  backgroundVideo: treeLoop1Video,
   backgroundBlur: 0,
   backgroundBrightness: 1.0,
 };

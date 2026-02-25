@@ -34,8 +34,8 @@ export function DisplaySettingsModal() {
   /**
    * Dynamically discover background videos from the data folder.
    */
-  const backgrounds = Object.keys(import.meta.glob('../../data/backgrounds/*.mp4', { eager: true }))
-    .map(path => {
+  const backgrounds = Object.entries(import.meta.glob('../../data/backgrounds/*.mp4', { eager: true }))
+    .map(([path, module]) => {
       const fileName = path.split('/').pop() || '';
       const label = fileName
         .replace(/\.[^/.]+$/, "") // Remove extension
@@ -43,11 +43,18 @@ export function DisplaySettingsModal() {
         .replace(/([A-Z])/g, ' $1') // Add space before capital letters
         .trim();
 
+      // Vite exposes the final resolved asset URL at module.default.
+      // Using this URL prevents broken <video src> values in both dev and production builds.
+      const resolvedUrl = typeof module === 'string'
+        ? module
+        : (module as { default?: string }).default ?? '';
+
       return {
-        id: path.replace('../../', '/src/'), // Convert to absolute public path for <video> src
+        id: resolvedUrl,
         label
       };
-    });
+    })
+    .filter((bg) => bg.id.length > 0);
 
   /**
    * Handle toggle change.

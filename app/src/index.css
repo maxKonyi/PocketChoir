@@ -381,6 +381,131 @@
   }
 }
 
+/* ============================================================
+   APP STARTUP REVEAL
+   Fast staged intro: black veil -> background -> grid -> UI bars
+   ============================================================ */
+@keyframes introBlackVeil {
+  0% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes introBackgroundReveal {
+  0% {
+    opacity: 0;
+    transform: scale(1.02);
+    filter: blur(8px) saturate(1.08);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0) saturate(1);
+  }
+}
+
+@keyframes introGridReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(1.006);
+    filter: blur(4px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@keyframes introBarReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+    filter: blur(5px);
+  }
+
+  55% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+.app-intro-root {
+  isolation: isolate;
+}
+
+.app-intro-black-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: #000;
+  animation: introBlackVeil 760ms ease-out 80ms forwards;
+}
+
+.app-intro-layer-bg {
+  opacity: 0;
+  will-change: opacity, transform, filter;
+  animation: introBackgroundReveal 1200ms cubic-bezier(0.22, 0.61, 0.36, 1) 140ms forwards;
+}
+
+.app-intro-layer-grid {
+  opacity: 0;
+  will-change: opacity, transform, filter;
+  animation: introGridReveal 900ms cubic-bezier(0.2, 0.8, 0.2, 1) 1220ms forwards;
+}
+
+.app-intro-bar {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  will-change: opacity, transform, filter;
+  animation: introBarReveal 700ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.app-intro-bar > * {
+  pointer-events: auto;
+}
+
+.app-intro-bar-top {
+  animation-delay: 2140ms;
+}
+
+.app-intro-bar-sidebar {
+  animation-delay: 2360ms;
+}
+
+.app-intro-bar-transport {
+  animation-delay: 2580ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-intro-black-veil,
+  .app-intro-layer-bg,
+  .app-intro-layer-grid,
+  .app-intro-bar,
+  .app-intro-bar-top,
+  .app-intro-bar-sidebar,
+  .app-intro-bar-transport {
+    animation: none !important;
+    transform: none !important;
+    filter: none !important;
+    opacity: 1 !important;
+  }
+}
+
 .mask-vertical-fade {
   -webkit-mask-image: linear-gradient(to bottom,
       transparent 0,

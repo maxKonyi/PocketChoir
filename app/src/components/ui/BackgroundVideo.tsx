@@ -16,14 +16,14 @@ export function BackgroundVideo() {
     if (backgroundVideo === 'none') return null;
 
     return (
-        <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
+        <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
             <video
                 ref={videoRef}
                 autoPlay
                 loop
                 muted
                 playsInline
-                className="absolute min-w-full min-h-full object-cover transition-all duration-1000"
+                className="absolute inset-0 w-full h-full object-cover transition-all duration-1000"
                 style={{ filter: `blur(${backgroundBlur}px) brightness(${backgroundBrightness})` }}
             >
                 <source src={backgroundVideo} type="video/mp4" />
