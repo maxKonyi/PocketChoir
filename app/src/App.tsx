@@ -76,7 +76,9 @@ function App() {
   const theme = useAppStore((state) => state.theme);
   const setPosition = useAppStore((state) => state.setPosition);
   const transposition = useAppStore((state) => state.transposition);
-  const autoTranspositionNotice = useAppStore((state) => state.autoTranspositionNotice);
+  const autoTranspositionPrompt = useAppStore((state) => state.autoTranspositionPrompt);
+  const dismissAutoTranspositionPrompt = useAppStore((state) => state.dismissAutoTranspositionPrompt);
+  const setTransposition = useAppStore((state) => state.setTransposition);
   const mode = useAppStore((state) => state.mode);
   const showMinimap = useAppStore((state) => state.display.showMinimap);
   const setPlaying = useAppStore((state) => state.setPlaying);
@@ -770,17 +772,42 @@ function App() {
       <CreateArrangementModal />
       <HelpModal />
 
-      {/* Auto-transposition message (shows after picking an arrangement or closing mic setup) */}
-      {autoTranspositionNotice && (
-        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none animate-[fadeInUp_0.3s_ease-out]">
-          <div className="
-            px-5 py-2.5 rounded-full
-            bg-green-500/15 text-green-200 text-xs font-medium
-            border border-green-500/20
-            shadow-[0_8px_30px_rgba(0,0,0,0.3),0_0_20px_-5px_rgba(34,197,94,0.15)]
-            backdrop-blur-md
-          ">
-            {autoTranspositionNotice}
+      {/* Auto-transposition confirmation modal (only shown when a non-zero shift was applied). */}
+      {autoTranspositionPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm">
+          <div className="w-full max-w-md mx-4 rounded-2xl border border-white/10 bg-[rgba(17,19,26,0.92)] shadow-[0_24px_80px_rgba(0,0,0,0.55)] p-5">
+            <h3 className="text-base font-semibold text-[var(--text-primary)] mb-2">{autoTranspositionPrompt.title}</h3>
+            <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+              {autoTranspositionPrompt.message}
+            </p>
+
+            {autoTranspositionPrompt.details.length > 0 && (
+              <ul className="mt-3 space-y-1.5 text-xs text-[var(--text-secondary)] list-disc pl-4">
+                {autoTranspositionPrompt.details.map((detail, index) => (
+                  <li key={`${detail}-${index}`}>{detail}</li>
+                ))}
+              </ul>
+            )}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              {autoTranspositionPrompt.semitones !== 0 && (
+                <button
+                  onClick={() => {
+                    setTransposition(0);
+                    dismissAutoTranspositionPrompt();
+                  }}
+                  className="px-3.5 py-2 rounded-lg text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/8 transition-colors cursor-pointer"
+                >
+                  Revert to original key
+                </button>
+              )}
+              <button
+                onClick={dismissAutoTranspositionPrompt}
+                className="px-3.5 py-2 rounded-lg text-sm font-semibold bg-[var(--accent-primary)] text-white hover:brightness-110 transition-all cursor-pointer"
+              >
+                {autoTranspositionPrompt.semitones !== 0 ? 'Keep transposed key' : 'OK'}
+              </button>
+            </div>
           </div>
         </div>
       )}

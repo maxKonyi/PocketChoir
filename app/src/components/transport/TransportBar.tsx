@@ -6,7 +6,7 @@
    ============================================================ */
 
 import { useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Pause, Play, Repeat, SkipBack } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pause, Play, Repeat, RotateCcw, SkipBack } from 'lucide-react';
 
 import { useAppStore } from '../../stores/appStore';
 import { playbackEngine } from '../../services/PlaybackEngine';
@@ -73,7 +73,19 @@ export function TransportBar() {
           {arrangement && (
             <div className="flex items-center gap-0.5">
               <div className="flex flex-col items-center leading-none px-2.5 py-1 rounded-xl bg-white/5 w-[46px]">
-                <span className="text-[10px] text-[var(--text-dim)] font-semibold tracking-wide">Key</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-[var(--text-dim)] font-semibold tracking-wide">Key</span>
+                  {Boolean(transposition) && (
+                    <button
+                      onClick={() => setTransposition(0)}
+                      title="Reset to original key"
+                      aria-label="Reset to original key"
+                      className="w-3.5 h-3.5 flex items-center justify-center text-amber-300/90 hover:text-amber-200 transition-colors cursor-pointer"
+                    >
+                      <RotateCcw size={10} />
+                    </button>
+                  )}
+                </div>
                 <span className="text-sm font-bold text-[var(--text-primary)] tabular-nums text-center w-full">{effectiveTonic ?? arrangement.tonic}</span>
               </div>
               <div className="flex flex-col justify-center">

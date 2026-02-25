@@ -7,6 +7,8 @@
    - Transposition
    ============================================================ */
 
+import type { Arrangement, Node, Voice } from '../types';
+
 /**
  * Map of note names to semitones above C.
  * Used for converting note names to numeric values.
@@ -400,6 +402,388 @@ export function getArrangementFrequencyRange(
     maxFreq: midiToFrequency(maxMidi),
     minNote: midiToNoteName(Math.round(minMidi)),
     maxNote: midiToNoteName(Math.round(maxMidi)),
+  };
+}
+
+/**
+ * Auto-fit transpose outcome labels used by store/UI.
+ */
+export type AutoFitTransposeOutcome = 'auto-fit' | 'best-fit' | 'no-good-solution';
+
+/**
+ * Per-candidate range stats.
+ */
+export interface AutoFitRangeStats {
+  minPitch: number;
+  maxPitch: number;
+  maxLowBelow: number;
+  maxHighAbove: number;
+  pctLowBelow: number;
+  pctHighAbove: number;
+}
+
+/**
+ * Per-candidate mud stats.
+ */
+export interface AutoFitMudStats {
+  mudOk: boolean;
+  violationCount: number;
+  worstViolation: number;
+}
+
+/**
+ * Full evaluation stats for one transposition value.
+ */
+export interface AutoFitCandidateStats {
+  t: number;
+  range: AutoFitRangeStats;
+  mud: AutoFitMudStats;
+}
+
+/**
+ * Return value for the new beta auto-fit transposition evaluator.
+ */
+export interface AutoFitTransposeResult {
+  outcome: AutoFitTransposeOutcome;
+  tBest: number | null;
+  stats: {
+    userLowMidi: number;
+    userHighMidi: number;
+    arrangementMinMidi: number;
+    arrangementMaxMidi: number;
+    arrangementSpan: number;
+    userSpan: number;
+    spanGap: number;
+    sampleCount: number;
+    mudSafeCandidateCount: number;
+    fullFitCandidateCount: number;
+    chosen: AutoFitCandidateStats | null;
+  };
+}
+
+/**
+ * Centralized tuning/config values for beta auto-fit transpose.
+ *
+ * Keep all thresholds in ONE place so product tuning is easy.
+ */
+export const AUTO_FIT_TRANSPOSE_CONFIG = {
+  // Candidate search bounds.
+  minTranspose: -48,
+  maxTranspose: 48,
+
+  // Timeline sampling resolution for analysis.
+  sampleCount: 128,
+
+  // MIDI constants used by the mud rule.
+  midiFloors: {
+    G2: 43,
+    E2: 40,
+    D2: 38,
+  },
+
+  // Cost weights when no full fit exists.
+  bestFitWeights: {
+    maxLowBelow: 100,
+    maxHighAbove: 30,
+    pctLowBelow: 10,
+    pctHighAbove: 3,
+    absTranspose: 0.5,
+  },
+
+  // Heuristics for Outcome C (no good auto-apply).
+  noGoodSolution: {
+    spanGapAtLeast: 12,
+    bothEdgesFarAtLeast: 6,
+  },
+} as const;
+
+/**
+ * True when an arrangement's `semi` values are absolute offsets from C4.
+ * Imported MIDI arrangements use this mode.
+ */
+function isAbsoluteSemiArrangement(arrangement: Arrangement): boolean {
+  return Array.isArray(arrangement.tags) && arrangement.tags.includes('midi-import');
+}
+
+/**
+ * Convert one arrangement node to MIDI at transpose=0.
+ */
+function nodeToMidi(node: Node, arrangement: Arrangement): number {
+  if (node.semi !== undefined) {
+    const baseMidi = isAbsoluteSemiArrangement(arrangement)
+      ? 60 // C4 reference for MIDI-import absolute semitone mode
+      : (noteNameToMidi(`${arrangement.tonic}4`) ?? 60);
+    return baseMidi + node.semi;
+  }
+
+  const freq = scaleDegreeToFrequency(
+    node.deg ?? 0,
+    arrangement.tonic,
+    arrangement.scale,
+    4,
+    node.octave || 0
+  );
+  return frequencyToMidi(freq);
+}
+
+/**
+ * Return the currently active pitch MIDI values for all voices at a sample time.
+ *
+ * We mirror playback semantics:
+ * - most recent node at/before time is active
+ * - `term` node = silence until next real node
+ */
+function getActivePitchesAtTime(
+  voices: Voice[],
+  arrangement: Arrangement,
+  sampleT16: number,
+  transposeSemitones: number
+): number[] {
+  const pitches: number[] = [];
+
+  for (const voice of voices) {
+    let activeNode: Node | null = null;
+
+    for (const node of voice.nodes) {
+      if (node.t16 <= sampleT16) {
+        activeNode = node;
+      } else {
+        break;
+      }
+    }
+
+    if (!activeNode || activeNode.term) continue;
+    pitches.push(nodeToMidi(activeNode, arrangement) + transposeSemitones);
+  }
+
+  return pitches;
+}
+
+/**
+ * Return the base MIDI floor for mud checks by simple interval class.
+ */
+function getMudBaseFloorMidi(simpleIntervalClass: number): number | null {
+  const { G2, E2, D2 } = AUTO_FIT_TRANSPOSE_CONFIG.midiFloors;
+
+  if (simpleIntervalClass === 0 || simpleIntervalClass === 7) return null;
+  if (simpleIntervalClass === 1 || simpleIntervalClass === 2) return G2;
+  if (simpleIntervalClass === 3 || simpleIntervalClass === 4) return G2;
+  if (simpleIntervalClass === 5 || simpleIntervalClass === 6) return E2;
+  if (simpleIntervalClass === 8 || simpleIntervalClass === 9) return D2;
+  if (simpleIntervalClass === 10 || simpleIntervalClass === 11) return E2;
+
+  return null;
+}
+
+/**
+ * Evaluate one transpose candidate.
+ */
+function evaluateTransposeCandidate(
+  arrangement: Arrangement,
+  userLowMidi: number,
+  userHighMidi: number,
+  transposeSemitones: number,
+  sampleCount: number
+): AutoFitCandidateStats {
+  const totalT16 = arrangement.bars * arrangement.timeSig.numerator * 4;
+
+  let minPitch = Infinity;
+  let maxPitch = -Infinity;
+  let lowExceededSamples = 0;
+  let highExceededSamples = 0;
+
+  let mudViolationCount = 0;
+  let mudWorstViolation = 0;
+
+  for (let i = 0; i < sampleCount; i++) {
+    const sampleT16 = (i / sampleCount) * totalT16;
+    const activePitches = getActivePitchesAtTime(arrangement.voices, arrangement, sampleT16, transposeSemitones);
+    if (activePitches.length === 0) continue;
+
+    let sampleMin = Infinity;
+    let sampleMax = -Infinity;
+    let sampleHasLowViolation = false;
+    let sampleHasHighViolation = false;
+
+    for (const pitch of activePitches) {
+      sampleMin = Math.min(sampleMin, pitch);
+      sampleMax = Math.max(sampleMax, pitch);
+      if (pitch < userLowMidi) sampleHasLowViolation = true;
+      if (pitch > userHighMidi) sampleHasHighViolation = true;
+    }
+
+    minPitch = Math.min(minPitch, sampleMin);
+    maxPitch = Math.max(maxPitch, sampleMax);
+    if (sampleHasLowViolation) lowExceededSamples += 1;
+    if (sampleHasHighViolation) highExceededSamples += 1;
+
+    if (activePitches.length < 2) continue;
+
+    // Mud checker only needs the two lowest active voices at this time.
+    const sorted = [...activePitches].sort((a, b) => a - b);
+    const p0 = sorted[0];
+    const p1 = sorted[1];
+    const d = Math.round(p1 - p0);
+    if (d === 0) continue;
+
+    const oct = Math.floor(d / 12);
+    const simpleClass = ((d % 12) + 12) % 12;
+    const baseFloorMidi = getMudBaseFloorMidi(simpleClass);
+    if (baseFloorMidi === null) continue;
+
+    // Compound interval rule: one octave lower floor per extra octave spacing.
+    const requiredBassMin = baseFloorMidi - 12 * oct;
+    if (p0 < requiredBassMin) {
+      mudViolationCount += 1;
+      mudWorstViolation = Math.max(mudWorstViolation, requiredBassMin - p0);
+    }
+  }
+
+  // Guard empty/silent arrangements from Infinity math.
+  if (!Number.isFinite(minPitch) || !Number.isFinite(maxPitch)) {
+    minPitch = userLowMidi;
+    maxPitch = userLowMidi;
+  }
+
+  const maxLowBelow = Math.max(0, userLowMidi - minPitch);
+  const maxHighAbove = Math.max(0, maxPitch - userHighMidi);
+  const pctLowBelow = (lowExceededSamples / sampleCount) * 100;
+  const pctHighAbove = (highExceededSamples / sampleCount) * 100;
+
+  return {
+    t: transposeSemitones,
+    range: {
+      minPitch,
+      maxPitch,
+      maxLowBelow,
+      maxHighAbove,
+      pctLowBelow,
+      pctHighAbove,
+    },
+    mud: {
+      mudOk: mudViolationCount === 0,
+      violationCount: mudViolationCount,
+      worstViolation: mudWorstViolation,
+    },
+  };
+}
+
+/**
+ * Pick the candidate with smallest absolute transpose movement.
+ */
+function pickSmallestMovement(candidates: AutoFitCandidateStats[]): AutoFitCandidateStats {
+  return candidates.reduce((best, candidate) => {
+    const bestAbs = Math.abs(best.t);
+    const candidateAbs = Math.abs(candidate.t);
+    if (candidateAbs < bestAbs) return candidate;
+    if (candidateAbs > bestAbs) return best;
+    return candidate.t < best.t ? candidate : best;
+  });
+}
+
+/**
+ * Cost function used for best-fit (when full fit is impossible).
+ */
+function getBestFitCost(candidate: AutoFitCandidateStats): number {
+  const w = AUTO_FIT_TRANSPOSE_CONFIG.bestFitWeights;
+  return (
+    w.maxLowBelow * candidate.range.maxLowBelow
+    + w.maxHighAbove * candidate.range.maxHighAbove
+    + w.pctLowBelow * candidate.range.pctLowBelow
+    + w.pctHighAbove * candidate.range.pctHighAbove
+    + w.absTranspose * Math.abs(candidate.t)
+  );
+}
+
+/**
+ * Beta evaluator that picks an auto-fit transposition from arrangement + user range.
+ */
+export function evaluateAutoFitTranspose(
+  userRange: { lowFrequency: number; highFrequency: number },
+  arrangement: Arrangement
+): AutoFitTransposeResult {
+  const sampleCount = AUTO_FIT_TRANSPOSE_CONFIG.sampleCount;
+  const userLowMidi = frequencyToMidi(userRange.lowFrequency);
+  const userHighMidi = frequencyToMidi(userRange.highFrequency);
+
+  const allCandidates: AutoFitCandidateStats[] = [];
+  for (let t = AUTO_FIT_TRANSPOSE_CONFIG.minTranspose; t <= AUTO_FIT_TRANSPOSE_CONFIG.maxTranspose; t += 1) {
+    allCandidates.push(
+      evaluateTransposeCandidate(arrangement, userLowMidi, userHighMidi, t, sampleCount)
+    );
+  }
+
+  const originalStats = allCandidates.find((candidate) => candidate.t === 0) ?? allCandidates[0];
+  const arrangementMinMidi = originalStats.range.minPitch;
+  const arrangementMaxMidi = originalStats.range.maxPitch;
+  const arrangementSpan = arrangementMaxMidi - arrangementMinMidi;
+  const userSpan = userHighMidi - userLowMidi;
+  const spanGap = arrangementSpan - userSpan;
+
+  const mudSafeCandidates = allCandidates.filter((candidate) => candidate.mud.mudOk);
+  const fullFitCandidates = mudSafeCandidates.filter(
+    (candidate) => candidate.range.maxLowBelow === 0 && candidate.range.maxHighAbove === 0
+  );
+
+  const statsBase = {
+    userLowMidi,
+    userHighMidi,
+    arrangementMinMidi,
+    arrangementMaxMidi,
+    arrangementSpan,
+    userSpan,
+    spanGap,
+    sampleCount,
+    mudSafeCandidateCount: mudSafeCandidates.length,
+    fullFitCandidateCount: fullFitCandidates.length,
+  };
+
+  // Outcome C trigger #1: no mud-safe candidates at all.
+  if (mudSafeCandidates.length === 0) {
+    return {
+      outcome: 'no-good-solution',
+      tBest: null,
+      stats: {
+        ...statsBase,
+        chosen: null,
+      },
+    };
+  }
+
+  const chosen = fullFitCandidates.length > 0
+    ? pickSmallestMovement(fullFitCandidates)
+    : mudSafeCandidates.reduce((best, candidate) => (
+      getBestFitCost(candidate) < getBestFitCost(best) ? candidate : best
+    ));
+
+  // Outcome C trigger #2: arrangement span exceeds user range by >= 12 semitones.
+  const spanTooWide = spanGap >= AUTO_FIT_TRANSPOSE_CONFIG.noGoodSolution.spanGapAtLeast;
+
+  // Outcome C trigger #3: even best mud-safe choice is far outside both edges.
+  const farOutsideBothEdges = (
+    chosen.range.maxLowBelow >= AUTO_FIT_TRANSPOSE_CONFIG.noGoodSolution.bothEdgesFarAtLeast
+    && chosen.range.maxHighAbove >= AUTO_FIT_TRANSPOSE_CONFIG.noGoodSolution.bothEdgesFarAtLeast
+  );
+
+  if (spanTooWide || farOutsideBothEdges) {
+    return {
+      outcome: 'no-good-solution',
+      tBest: null,
+      stats: {
+        ...statsBase,
+        chosen,
+      },
+    };
+  }
+
+  const isFullFit = chosen.range.maxLowBelow === 0 && chosen.range.maxHighAbove === 0;
+  return {
+    outcome: isFullFit ? 'auto-fit' : 'best-fit',
+    tBest: chosen.t,
+    stats: {
+      ...statsBase,
+      chosen,
+    },
   };
 }
 

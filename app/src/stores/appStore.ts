@@ -24,7 +24,7 @@ import type {
   VocalRange,
 } from '../types';
 import type { ThemeName } from '../utils/colors';
-import { getArrangementFrequencyRange, noteNameToFrequency, suggestTranspositionToFitRange, degreeToSemitoneOffset } from '../utils/music';
+import { evaluateAutoFitTranspose, noteNameToFrequency, degreeToSemitoneOffset } from '../utils/music';
 import { DEFAULT_VOICE_COLORS, normalizeHexColor } from '../utils/colors';
 import type { CameraMode } from '../utils/smartCam';
 import { quantizeT16, isT16Equal, type GridDivision } from '../utils/timing';
@@ -442,9 +442,14 @@ interface AppState {
   arrangement: Arrangement | null;
   transposition: number;        // Semitones to transpose
 
-  // A short-lived UI message for auto-transposition events.
-  // (Shown after you close the mic modal or pick a new arrangement.)
-  autoTranspositionNotice: string | null;
+  // Pending auto-transposition confirmation modal payload.
+  // When present, UI should ask whether to keep the transposed key or reset to original.
+  autoTranspositionPrompt: {
+    semitones: number;
+    title: string;
+    message: string;
+    details: string[];
+  } | null;
 
   // Voice states (one per voice in arrangement)
   voiceStates: VoiceState[];
@@ -540,8 +545,9 @@ interface AppActions {
 
   // Auto-transpose helper
   // Calculates a transposition based on the current arrangement + vocal range.
-  // If `announce` is true, it also sets a short-lived UI notice.
-  applyAutoTranspositionIfPossible: (announce: boolean) => void;
+  // If `prompt` is true and a non-zero shift is needed, it opens a confirmation modal.
+  applyAutoTranspositionIfPossible: (prompt: boolean) => void;
+  dismissAutoTranspositionPrompt: () => void;
 
   // Create mode - node editing
   addNode: (voiceId: string, t16: number, deg: number, octave?: number, semi?: number) => void;
@@ -813,7 +819,7 @@ const initialCreateViewState: CreateViewState = {
 const initialState: AppState = {
   arrangement: null,
   transposition: 0,
-  autoTranspositionNotice: null,
+  autoTranspositionPrompt: null,
   voiceStates: [],
   voiceColorOverrides: {},
   playback: initialPlaybackState,
@@ -956,6 +962,7 @@ export const useAppStore = create<AppState & AppActions>()(
           arrangement,
           editingLibraryItemId: null,
           transposition: 0,
+          autoTranspositionPrompt: null,
           recordings: new Map(),
           livePitchTrace: [],
           livePitchTraceVoiceId: null,
@@ -1134,23 +1141,12 @@ export const useAppStore = create<AppState & AppActions>()(
         };
       }),
 
-      applyAutoTranspositionIfPossible: (announce) => {
+      applyAutoTranspositionIfPossible: (prompt) => {
         const arrangement = get().arrangement;
         const vocalRange = get().vocalRange;
 
         // Nothing to do if we don't have an arrangement loaded.
         if (!arrangement) return;
-
-        // Map voices so each node's deg defaults to 0 (the type expects deg: number, not deg?: number).
-        const voicesWithDeg = arrangement.voices.map((v) => ({
-          ...v,
-          nodes: v.nodes.map((n) => ({ ...n, deg: n.deg ?? 0 })),
-        }));
-        const arrangementRange = getArrangementFrequencyRange(
-          voicesWithDeg,
-          arrangement.tonic,
-          arrangement.scale
-        );
 
         // Prefer the stored frequencies (they are kept in sync in setVocalRange).
         const userRange = {
@@ -1158,24 +1154,66 @@ export const useAppStore = create<AppState & AppActions>()(
           highFrequency: vocalRange.highFrequency,
         };
 
-        const suggested = suggestTranspositionToFitRange(arrangementRange, userRange);
+        const evaluation = evaluateAutoFitTranspose(userRange, arrangement);
+        const chosen = evaluation.stats.chosen;
 
-        set({ transposition: suggested });
+        // Outcome C keeps original key (0) and still explains why auto-fit was skipped.
+        if (evaluation.outcome === 'no-good-solution') {
+          const details: string[] = [];
+          details.push(`Arrangement span: ${evaluation.stats.arrangementSpan.toFixed(1)} st`);
+          details.push(`Your range span: ${evaluation.stats.userSpan.toFixed(1)} st`);
+          details.push(`Mud-safe transpose options found: ${evaluation.stats.mudSafeCandidateCount}`);
 
-        if (!announce) return;
+          set({
+            transposition: 0,
+            autoTranspositionPrompt: prompt
+              ? {
+                  semitones: 0,
+                  title: 'Auto-fit was not applied',
+                  message: 'This arrangement is far outside your range, so Auto-fit kept the original key. You can still transpose manually if you want.',
+                  details,
+                }
+              : null,
+          });
+          return;
+        }
 
-        const msg = suggested === 0
-          ? 'Arrangement fits your vocal range — no transposition needed.'
-          : `Arrangement auto-transposed by ${suggested > 0 ? '+' : ''}${suggested} semitones to fit your range.`;
+        // Safety fallback: if evaluator returns A/B without a chosen candidate, do nothing.
+        if (!chosen || evaluation.tBest === null) {
+          set({ transposition: 0, autoTranspositionPrompt: null });
+          return;
+        }
 
-        set({ autoTranspositionNotice: msg });
-        window.setTimeout(() => {
-          // Only clear if nothing newer has replaced it.
-          if (get().autoTranspositionNotice === msg) {
-            set({ autoTranspositionNotice: null });
-          }
-        }, 4500);
+        const details: string[] = [];
+        if (chosen.range.maxLowBelow > 0) {
+          details.push(`Lowest note is ${chosen.range.maxLowBelow.toFixed(1)} semitones below your low note.`);
+        }
+        if (chosen.range.maxHighAbove > 0) {
+          details.push(`Highest note is ${chosen.range.maxHighAbove.toFixed(1)} semitones above your high note.`);
+        }
+
+        const isAutoFit = evaluation.outcome === 'auto-fit';
+        const semitoneText = `${evaluation.tBest > 0 ? '+' : ''}${evaluation.tBest}`;
+        const title = isAutoFit ? 'Auto-fit transposition applied' : 'Best-fit transposition applied';
+        const message = isAutoFit
+          ? `Auto-fit transposed by ${semitoneText} semitones to fit your range.`
+          : `Best fit transposed by ${semitoneText} semitones, but some notes are outside your range.`;
+
+        // Stage A/B transposition immediately. Modal lets user keep or revert.
+        set({
+          transposition: evaluation.tBest,
+          autoTranspositionPrompt: prompt
+            ? {
+                semitones: evaluation.tBest,
+                title,
+                message,
+                details,
+              }
+            : null,
+        });
       },
+
+      dismissAutoTranspositionPrompt: () => set({ autoTranspositionPrompt: null }),
 
       // -- Create Mode - Node Editing --
       addNode: (voiceId, t16, deg, octave = 0, semi) => set((state) => {
