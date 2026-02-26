@@ -227,28 +227,28 @@
 
 .glass-sidebar {
   /* -- Sidebar glass: heavy blur for deep frosted look -- */
-  backdrop-filter: blur(60px) saturate(180%) brightness(1.05);
   -webkit-backdrop-filter: blur(60px) saturate(180%) brightness(1.05);
+  backdrop-filter: blur(60px) saturate(180%) brightness(1.05);
   background: rgba(255, 255, 255, 0.05);
 }
 
 .glass-low {
   /* -- Light glass: minimal blur for subtle depth -- */
-  backdrop-filter: blur(var(--panel-blur-low)) saturate(130%) brightness(1.02);
   -webkit-backdrop-filter: blur(var(--panel-blur-low)) saturate(130%) brightness(1.02);
+  backdrop-filter: blur(var(--panel-blur-low)) saturate(130%) brightness(1.02);
 }
 
 .glass-med {
   /* -- Medium glass: balanced blur for top bar and transport -- */
-  backdrop-filter: blur(20px) saturate(160%) brightness(1.04);
   -webkit-backdrop-filter: blur(20px) saturate(160%) brightness(1.04);
+  backdrop-filter: blur(20px) saturate(160%) brightness(1.04);
   background: rgba(255, 255, 255, 0.04);
 }
 
 .glass-high {
   /* -- Heavy glass: strong blur for modals and overlays -- */
-  backdrop-filter: blur(40px) saturate(190%) brightness(1.06);
   -webkit-backdrop-filter: blur(40px) saturate(190%) brightness(1.06);
+  backdrop-filter: blur(40px) saturate(190%) brightness(1.06);
   background: rgba(255, 255, 255, 0.06);
 }
 
