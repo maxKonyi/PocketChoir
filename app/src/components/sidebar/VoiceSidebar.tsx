@@ -284,6 +284,7 @@ export function VoiceSidebar({ startRecording, stopRecording }: VoiceSidebarProp
           glass-pane glass-sidebar glass-noise rounded-[2.5rem]
           shadow-2xl border border-white/20
           shrink-0 w-[180px]
+          app-intro-bar-sidebar
         "
       >
 

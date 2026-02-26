@@ -787,15 +787,9 @@ function App() {
 
       {/* UI Overlays - Floating panes */}
       {/* Intro step 3: bars reveal in a short stagger with subtle upward settling motion. */}
-      <div className="app-intro-bar app-intro-bar-top">
-        <TopBar />
-      </div>
-      <div className="app-intro-bar app-intro-bar-sidebar">
-        <VoiceSidebar startRecording={startRecording} stopRecording={stopRecording} />
-      </div>
-      <div className="app-intro-bar app-intro-bar-transport">
-        <TransportBar />
-      </div>
+      <TopBar />
+      <VoiceSidebar startRecording={startRecording} stopRecording={stopRecording} />
+      <TransportBar />
       <DevControls />
 
       {/* Modals */}

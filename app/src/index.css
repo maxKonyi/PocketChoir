@@ -413,36 +413,25 @@
   0% {
     opacity: 0;
     transform: translateY(10px) scale(1.006);
-    filter: blur(4px);
   }
 
   100% {
     opacity: 1;
     transform: none;
-    filter: none;
   }
 }
 
 @keyframes introBarReveal {
-  0% {
-    opacity: 0;
-    transform: translateY(14px) scale(0.985);
-    filter: blur(5px);
-  }
-
-  55% {
-    opacity: 1;
-  }
-
-  100% {
-    opacity: 1;
-    transform: none;
-    filter: none;
-  }
+  0% { opacity: 0; transform: translateY(14px) scale(0.985); }
+  55% { opacity: 1; }
+  100% { opacity: 1; transform: none; }
 }
 
-.app-intro-root {
-  isolation: isolate;
+@keyframes introBarTransportReveal {
+  /* Keep X-centering out of keyframes; TransportBar already sets translate: -50% */
+  0% { opacity: 0; transform: translateY(14px) scale(0.985); }
+  55% { opacity: 1; }
+  100% { opacity: 1; transform: none; }
 }
 
 .app-intro-black-veil {
@@ -462,40 +451,32 @@
 
 .app-intro-layer-grid {
   opacity: 0;
-  will-change: opacity, transform, filter;
+  will-change: opacity, transform;
   animation: introGridReveal 900ms cubic-bezier(0.2, 0.8, 0.2, 1) 1220ms forwards;
 }
 
-.app-intro-bar {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0;
-  will-change: opacity, transform, filter;
-  animation: introBarReveal 700ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-}
-
-.app-intro-bar > * {
-  pointer-events: auto;
-}
-
 .app-intro-bar-top {
-  animation-delay: 2140ms;
+  opacity: 0;
+  will-change: opacity, transform;
+  animation: introBarReveal 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 2140ms forwards;
 }
 
 .app-intro-bar-sidebar {
-  animation-delay: 2360ms;
+  opacity: 0;
+  will-change: opacity, transform;
+  animation: introBarReveal 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 2360ms forwards;
 }
 
 .app-intro-bar-transport {
-  animation-delay: 2580ms;
+  opacity: 0;
+  will-change: opacity, transform;
+  animation: introBarTransportReveal 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 2580ms forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .app-intro-black-veil,
   .app-intro-layer-bg,
   .app-intro-layer-grid,
-  .app-intro-bar,
   .app-intro-bar-top,
   .app-intro-bar-sidebar,
   .app-intro-bar-transport {

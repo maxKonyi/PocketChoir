@@ -57,13 +57,16 @@ export function TransportBar() {
   };
 
   return (
-    <div className="
-      absolute bottom-4 left-[calc(50%+4.5rem+15px)] -translate-x-1/2
+    <div 
+      style={{ translate: "-50% 0" }}
+      className="
+      absolute bottom-4 left-[calc(50%+4.5rem+15px)]
       flex items-center justify-between px-8 h-[72px]
       w-auto min-w-[760px]
       glass-pane glass-med rounded-full shimmer
       shadow-[0_20px_60px_rgba(0,0,0,0.5),0_0_80px_-20px_rgba(139,92,246,0.08)] z-40
       border border-white/8
+      app-intro-bar-transport
     ">
 
       {/* LEFT SECTION: Key | BPM Metronome */}

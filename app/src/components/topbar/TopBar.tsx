@@ -228,6 +228,7 @@ export function TopBar() {
       glass-pane glass-med rounded-full
       flex items-center justify-between
       z-30 shadow-2xl shimmer
+      app-intro-bar-top
     ">
 
       {/* Left section - App title with gradient text */}
